@@ -251,7 +251,7 @@ function resetTauriMocks(exportPath: string | null = null) {
   });
   tauriMock.getModelsDir.mockResolvedValue({
     is_custom: false,
-    path: "C:\\Users\\sun\\.cache\\light-whisper-models",
+    path: "C:\\Users\\sun\\.cache\\speak-flow-models",
   });
   tauriMock.getOnlineAsrApiKey.mockResolvedValue("");
   tauriMock.getOnlineAsrEndpoint.mockResolvedValue({
@@ -474,7 +474,7 @@ describe("SettingsPage config export path", () => {
   });
 
   it("shows the saved export path and copies it from the small copy button", async () => {
-    const exportPath = "C:\\Users\\sun\\Downloads\\light-whisper-profile.json";
+    const exportPath = "C:\\Users\\sun\\Downloads\\speak-flow-profile.json";
     resetTauriMocks(exportPath);
 
     const { default: SettingsPage } = await import("@/pages/SettingsPage");
@@ -522,7 +522,7 @@ describe("SettingsPage config export path", () => {
   });
 
   it("reports a copy failure after an export path has been shown", async () => {
-    const exportPath = "C:\\Users\\sun\\Downloads\\light-whisper-profile.json";
+    const exportPath = "C:\\Users\\sun\\Downloads\\speak-flow-profile.json";
     tauriMock.exportUserProfile.mockResolvedValueOnce(exportPath);
     tauriMock.copyToClipboard.mockRejectedValueOnce(new Error("copy failed"));
 
@@ -570,7 +570,7 @@ describe("SettingsPage app updates", () => {
   });
 
   it("shows an available version and opens its release page on the follow-up action", async () => {
-    const releaseUrl = "https://github.com/sypsyp97/light-whisper/releases/tag/v1.6.0";
+    const releaseUrl = "https://github.com/khentmoba/KhentWhispr/releases/tag/v1.6.0";
     const updateInfo: AppUpdateInfo = {
       available: true,
       currentVersion: "1.5.9",
@@ -636,7 +636,7 @@ describe("SettingsPage app updates", () => {
       available: true,
       currentVersion: "1.5.9",
       latestVersion: "1.6.0",
-      releaseUrl: "https://github.com/sypsyp97/light-whisper/releases/tag/v1.6.0",
+      releaseUrl: "https://github.com/khentmoba/KhentWhispr/releases/tag/v1.6.0",
     } satisfies AppUpdateInfo);
     tauriMock.openAppReleasePage.mockRejectedValueOnce(new Error("browser unavailable"));
 

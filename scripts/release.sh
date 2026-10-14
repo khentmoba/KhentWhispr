@@ -21,7 +21,7 @@ CARGO_LOCK="src-tauri/Cargo.lock"
 PYPROJECT_TOML="pyproject.toml"
 UV_LOCK="uv.lock"
 ENGINE_ARCHIVE="src-tauri/resources/engine.tar.xz"
-INSTALLER="src-tauri/target/release/bundle/nsis/轻语 Whisper_${VERSION}_x64-setup.exe"
+INSTALLER="src-tauri/target/release/bundle/nsis/SpeakFlow_${VERSION}_x64-setup.exe"
 RELEASE_FILES=(
     "$PKG_JSON"
     "$TAURI_CONF"
@@ -121,7 +121,7 @@ for path_str in ("src-tauri/Cargo.toml", "pyproject.toml"):
 cargo_lock = Path("src-tauri/Cargo.lock")
 text = cargo_lock.read_text(encoding="utf-8")
 updated, count = re.subn(
-    r'(\[\[package\]\]\s+name = "light-whisper"\s+version = ")[^"]+("\s*)',
+    r'(\[\[package\]\]\s+name = "speak-flow"\s+version = ")[^"]+("\s*)',
     rf'\g<1>{version}\2',
     text,
     count=1,
@@ -329,7 +329,7 @@ main() {
     candidate_sha="$(git rev-parse HEAD)"
     wait_for_ci "$candidate_sha"
     publish_release "$candidate_sha"
-    echo "=== 发布完成: https://github.com/sypsyp97/light-whisper/releases/tag/${TAG} ==="
+    echo "=== 发布完成: https://github.com/khentmoba/KhentWhispr/releases/tag/${TAG} ==="
 }
 
 main "$@"

@@ -46,13 +46,13 @@ fn main() {
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
         println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
         // The application binary already receives its manifest from tauri_build.
-        println!("cargo:rustc-link-arg-bin=light-whisper=/MANIFEST:NO");
+        println!("cargo:rustc-link-arg-bin=speak-flow=/MANIFEST:NO");
     }
     let allow_placeholder = env::var("PROFILE").map_or(true, |profile| profile != "release");
     let engine_archive = select_engine_archive(&manifest_dir, allow_placeholder)
         .unwrap_or_else(|message| panic!("{message}"));
     println!(
-        "cargo:rustc-env=LIGHT_WHISPER_ENGINE_ARCHIVE_FINGERPRINT={}",
+        "cargo:rustc-env=SPEAK_FLOW_ENGINE_ARCHIVE_FINGERPRINT={}",
         compute_file_fingerprint(&engine_archive)
     );
 

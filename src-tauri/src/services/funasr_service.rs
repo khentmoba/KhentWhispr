@@ -116,7 +116,7 @@ const QWEN3_ASR_06_REPO_ID: &str = "handy-computer/Qwen3-ASR-0.6B-gguf";
 const QWEN3_ASR_06_FILENAME: &str = "Qwen3-ASR-0.6B-Q8_0.gguf";
 const R2T2_REPO_ID: &str = "davidxifeng/Confucius4-R2T2-gguf";
 const R2T2_FILENAME: &str = "r2t2-q8_0.gguf";
-const HF_COMPLETE_MANIFEST_NAME: &str = ".light_whisper_complete.json";
+const HF_COMPLETE_MANIFEST_NAME: &str = ".speak_flow_complete.json";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StartTicket {
@@ -187,7 +187,7 @@ const SERVER_EXIT_WRITE_TIMEOUT_MS: u64 = 300;
 const SERVER_EXIT_WAIT_TIMEOUT_SECS: u64 = 2;
 const INLINE_AUDIO_FORMAT_PCM_S16LE: &str = "pcm_s16le";
 const TARGET_SAMPLE_RATE_FOR_INLINE_AUDIO: u32 = 16_000;
-const ENGINE_ARCHIVE_FINGERPRINT: &str = env!("LIGHT_WHISPER_ENGINE_ARCHIVE_FINGERPRINT");
+const ENGINE_ARCHIVE_FINGERPRINT: &str = env!("SPEAK_FLOW_ENGINE_ARCHIVE_FINGERPRINT");
 static NEXT_SERVER_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_SERVER_START_OWNER: AtomicU64 = AtomicU64::new(1);
 
@@ -381,8 +381,8 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
     let models_dir = paths::strip_win_prefix(&paths::get_effective_models_dir());
     cmd.env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
-        .env("LIGHT_WHISPER_DATA_DIR", &data_dir)
-        .env("LIGHT_WHISPER_ASR_ENGINE", &ticket.engine)
+        .env("SPEAK_FLOW_DATA_DIR", &data_dir)
+        .env("SPEAK_FLOW_ASR_ENGINE", &ticket.engine)
         .env("HF_HUB_CACHE", &models_dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -402,7 +402,7 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
 
     if gpu_idle_at_spawn > 0 {
         cmd.env(
-            "LIGHT_WHISPER_GPU_IDLE_SECONDS",
+            "SPEAK_FLOW_GPU_IDLE_SECONDS",
             gpu_idle_at_spawn.to_string(),
         );
     }
@@ -678,7 +678,7 @@ fn create_temp_audio_path() -> std::path::PathBuf {
     static TEMP_AUDIO_COUNTER: AtomicU64 = AtomicU64::new(1);
     let counter = TEMP_AUDIO_COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "light_whisper_audio_{}_{}_{}.wav",
+        "speak_flow_audio_{}_{}_{}.wav",
         std::process::id(),
         now_unix_ms(),
         counter,
@@ -1375,7 +1375,7 @@ mod tests {
             audio_base64: Some("AQI=".to_string()),
             audio_format: Some("pcm_s16le".to_string()),
             sample_rate: Some(16_000),
-            hot_words: Some(vec!["light-whisper".to_string()]),
+            hot_words: Some(vec!["speak-flow".to_string()]),
         })
         .unwrap();
 
@@ -1385,7 +1385,7 @@ mod tests {
         assert_eq!(inline["audio_base64"], serde_json::json!("AQI="));
         assert_eq!(inline["audio_format"], serde_json::json!("pcm_s16le"));
         assert_eq!(inline["sample_rate"], serde_json::json!(16_000));
-        assert_eq!(inline["hot_words"], serde_json::json!(["light-whisper"]));
+        assert_eq!(inline["hot_words"], serde_json::json!(["speak-flow"]));
         assert!(inline.get("audio_path").is_none());
 
         let idle = serde_json::to_value(ServerCommand::SetGpuIdle { seconds: 0 }).unwrap();
@@ -1642,7 +1642,7 @@ mod tests {
     #[test]
     fn engine_extraction_preserves_existing_engine_until_archive_succeeds() {
         let root = std::env::temp_dir().join(format!(
-            "light_whisper_engine_replace_test_{}_{}",
+            "speak_flow_engine_replace_test_{}_{}",
             std::process::id(),
             super::now_unix_ms()
         ));

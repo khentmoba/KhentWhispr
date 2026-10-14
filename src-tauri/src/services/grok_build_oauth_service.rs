@@ -1299,7 +1299,7 @@ mod storage_tests {
     #[test]
     fn oauth_metadata_rejects_malformed_json_and_non_file_atomic_targets() {
         let root = std::env::temp_dir().join(format!(
-            "light-whisper-grok-oauth-{}-{}",
+            "speak-flow-grok-oauth-{}-{}",
             std::process::id(),
             now_ms()
         ));

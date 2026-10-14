@@ -1,5 +1,5 @@
 [package]
-name = "light-whisper"
+name = "speak-flow"
 version = "1.7.5"
 description = "轻语 - 本地与云端语音转文字桌面应用"
 authors = ["sun"]
@@ -7,7 +7,7 @@ license = "GPL-3.0-only"
 edition = "2021"
 
 [lib]
-name = "light_whisper_lib"
+name = "speak_flow_lib"
 crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]

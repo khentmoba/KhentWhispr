@@ -14,13 +14,13 @@ The certificate publisher would be SignPath Foundation.
 
 ## Responsibilities and release requirements
 
-[sypsyp97](https://github.com/sypsyp97), the repository owner, is the proposed
+[khentmoba](https://github.com/khentmoba), the repository owner, is the proposed
 author, reviewer and signing approver. External contributions must be reviewed
 before release. Source control and SignPath access must use multi-factor
 authentication before production signing is enabled. This is a requirement,
 not a claim that account configuration has already been verified.
 
-Signing is intended for the Light-Whisper application and its Windows installer.
+Signing is intended for the SpeakFlow application and its Windows installer.
 Upstream libraries must not be signed under this project's subscription.
 Their licenses and notices remain in [Third-party notices](../THIRD_PARTY_NOTICES.md).
 The NVIDIA CUDA and Microsoft runtime redistribution terms must be disclosed

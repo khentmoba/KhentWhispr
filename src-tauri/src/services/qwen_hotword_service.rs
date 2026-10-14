@@ -769,7 +769,7 @@ mod tests {
             .sum();
 
         println!(
-            "LIGHT_WHISPER_ALIAS_METRICS before={before}/{total} after={after}/{total} delta_events={}",
+            "SPEAK_FLOW_ALIAS_METRICS before={before}/{total} after={after}/{total} delta_events={}",
             after - before
         );
         assert_eq!(before, 47);
@@ -793,7 +793,7 @@ mod tests {
         }
         samples.sort_unstable();
         let p95_us = samples[949];
-        println!("LIGHT_WHISPER_HOTWORD_METRICS coverage=100 false_positive=0 p95_us={p95_us}");
+        println!("SPEAK_FLOW_HOTWORD_METRICS coverage=100 false_positive=0 p95_us={p95_us}");
         assert!(p95_us < 1000, "hotword correction p95 was {p95_us} us");
     }
 }

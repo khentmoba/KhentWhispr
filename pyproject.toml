@@ -1,5 +1,5 @@
 [project]
-name = "light-whisper"
+name = "speak-flow"
 version = "1.7.5"
 description = "轻量的本地与云端语音转文字桌面应用"
 readme = "README.md"

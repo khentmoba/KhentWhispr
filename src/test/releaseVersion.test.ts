@@ -24,10 +24,10 @@ function readTomlString(relativePath: string, key: string): string {
 function readUvProjectVersion(): string {
   const content = readRepoFile("uv.lock");
   const match = content.match(
-    /\[\[package\]\]\r?\nname = "light-whisper"\r?\nversion = "([^"]+)"/,
+    /\[\[package\]\]\r?\nname = "speak-flow"\r?\nversion = "([^"]+)"/,
   );
   if (!match) {
-    throw new Error("uv.lock is missing the light-whisper root package");
+    throw new Error("uv.lock is missing the speak-flow root package");
   }
   return match[1];
 }
@@ -35,10 +35,10 @@ function readUvProjectVersion(): string {
 function readCargoLockProjectVersion(): string {
   const content = readRepoFile("src-tauri/Cargo.lock");
   const match = content.match(
-    /\[\[package\]\]\r?\nname = "light-whisper"\r?\nversion = "([^"]+)"/,
+    /\[\[package\]\]\r?\nname = "speak-flow"\r?\nversion = "([^"]+)"/,
   );
   if (!match) {
-    throw new Error("src-tauri/Cargo.lock is missing the light-whisper root package");
+    throw new Error("src-tauri/Cargo.lock is missing the speak-flow root package");
   }
   return match[1];
 }

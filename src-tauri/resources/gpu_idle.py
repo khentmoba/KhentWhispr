@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-GPU_IDLE_ENV = "LIGHT_WHISPER_GPU_IDLE_SECONDS"
+GPU_IDLE_ENV = "SPEAK_FLOW_GPU_IDLE_SECONDS"
 # One week is a fat-finger cap, not a product default.
 MAX_GPU_IDLE_SECONDS = 7 * 24 * 60 * 60
 

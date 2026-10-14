@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::utils::AppError;
 
 const GITHUB_RELEASE_API: &str =
-    "https://api.github.com/repos/sypsyp97/light-whisper/releases/latest";
-const GITHUB_RELEASES_URL: &str = "https://github.com/sypsyp97/light-whisper/releases";
-const UPDATER_USER_AGENT: &str = concat!("light-whisper/", env!("CARGO_PKG_VERSION"));
+    "https://api.github.com/repos/khentmoba/KhentWhispr/releases/latest";
+const GITHUB_RELEASES_URL: &str = "https://github.com/khentmoba/KhentWhispr/releases";
+const UPDATER_USER_AGENT: &str = concat!("speak-flow/", env!("CARGO_PKG_VERSION"));
 const UPDATER_REQUEST_TIMEOUT_SECS: u64 = 15;
 /// 限制 `open_app_release_page` 可打开的 host 白名单。命令是从前端传 URL
 /// 进来的，不加白名单等于把"打开任意外部 URL"的能力暴露给 IPC。

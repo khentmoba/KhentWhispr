@@ -34,17 +34,17 @@ struct IntegrationEnv {
 
 impl IntegrationEnv {
     fn from_process() -> TestResult<Self> {
-        let python = required_path("LIGHT_WHISPER_R2T2_TEST_PYTHON")?;
-        let resources = required_path("LIGHT_WHISPER_R2T2_TEST_RESOURCES")?;
-        let cache = required_path("LIGHT_WHISPER_R2T2_TEST_CACHE")?;
-        let audio = required_path("LIGHT_WHISPER_R2T2_TEST_AUDIO")?;
-        let data = required_path("LIGHT_WHISPER_R2T2_TEST_DATA")?;
+        let python = required_path("SPEAK_FLOW_R2T2_TEST_PYTHON")?;
+        let resources = required_path("SPEAK_FLOW_R2T2_TEST_RESOURCES")?;
+        let cache = required_path("SPEAK_FLOW_R2T2_TEST_CACHE")?;
+        let audio = required_path("SPEAK_FLOW_R2T2_TEST_AUDIO")?;
+        let data = required_path("SPEAK_FLOW_R2T2_TEST_DATA")?;
 
-        require_file("LIGHT_WHISPER_R2T2_TEST_PYTHON", &python)?;
-        require_dir("LIGHT_WHISPER_R2T2_TEST_RESOURCES", &resources)?;
-        require_dir("LIGHT_WHISPER_R2T2_TEST_CACHE", &cache)?;
-        require_file("LIGHT_WHISPER_R2T2_TEST_AUDIO", &audio)?;
-        require_dir("LIGHT_WHISPER_R2T2_TEST_DATA", &data)?;
+        require_file("SPEAK_FLOW_R2T2_TEST_PYTHON", &python)?;
+        require_dir("SPEAK_FLOW_R2T2_TEST_RESOURCES", &resources)?;
+        require_dir("SPEAK_FLOW_R2T2_TEST_CACHE", &cache)?;
+        require_file("SPEAK_FLOW_R2T2_TEST_AUDIO", &audio)?;
+        require_dir("SPEAK_FLOW_R2T2_TEST_DATA", &data)?;
         require_file("engine.py", &resources.join("engine.py"))?;
 
         Ok(Self {
@@ -124,8 +124,8 @@ impl RunningServer {
             .current_dir(&config.resources)
             .env("HF_HUB_CACHE", &config.cache)
             .env("HF_HUB_OFFLINE", "1")
-            .env("LIGHT_WHISPER_DATA_DIR", &config.data)
-            .env("LIGHT_WHISPER_ASR_ENGINE", "confucius4-r2t2")
+            .env("SPEAK_FLOW_DATA_DIR", &config.data)
+            .env("SPEAK_FLOW_ASR_ENGINE", "confucius4-r2t2")
             .env("PYTHONUTF8", "1")
             .env("PYTHONIOENCODING", "utf-8")
             .stdin(Stdio::piped())

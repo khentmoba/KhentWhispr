@@ -175,7 +175,7 @@ pub async fn run_download(
     let models_dir = paths::strip_win_prefix(&paths::get_effective_models_dir());
     cmd.env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
-        .env("LIGHT_WHISPER_DATA_DIR", &data_dir)
+        .env("SPEAK_FLOW_DATA_DIR", &data_dir)
         .env("HF_HUB_CACHE", &models_dir)
         .stdout(Stdio::piped())
         .stderr({

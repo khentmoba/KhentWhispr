@@ -64,10 +64,10 @@ def apply_hf_env_defaults() -> None:
 
 def get_log_path(log_filename: str) -> str:
     """Resolve the server log path under app data dir or temp fallback."""
-    if "LIGHT_WHISPER_DATA_DIR" in os.environ:
-        log_dir = os.path.join(os.environ["LIGHT_WHISPER_DATA_DIR"], "logs")
+    if "SPEAK_FLOW_DATA_DIR" in os.environ:
+        log_dir = os.path.join(os.environ["SPEAK_FLOW_DATA_DIR"], "logs")
     else:
-        log_dir = os.path.join(tempfile.gettempdir(), "light_whisper_logs")
+        log_dir = os.path.join(tempfile.gettempdir(), "speak_flow_logs")
 
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, log_filename)

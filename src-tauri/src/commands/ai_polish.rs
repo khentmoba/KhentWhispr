@@ -328,7 +328,7 @@ fn parse_models_payload(
                 .ok_or_else(|| "Codex 模型目录格式不正确：缺少 models 数组".to_string())?
                 .iter()
                 .filter_map(|item| {
-                    // Light Whisper sends selected models through the Responses
+                    // SpeakFlow sends selected models through the Responses
                     // API path, so Codex-only picker entries stay hidden until
                     // that inference route is supported here.
                     if item["visibility"].as_str() != Some("list") {

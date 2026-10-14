@@ -285,7 +285,7 @@ test("representative work stays fast without removing motion", async () => {
         + segmentation.grapheme_segment_batch_median_ms,
     );
 
-    console.log(`LIGHT_WHISPER_FLUIDITY_METRICS ${JSON.stringify({
+    console.log(`SPEAK_FLOW_FLUIDITY_METRICS ${JSON.stringify({
       lower_is_better: [
         "history_mount_median_ms",
         "history_update_median_ms",

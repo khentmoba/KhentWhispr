@@ -304,7 +304,7 @@ describe("Grok Build backend wiring contract", () => {
     expect(grokOauthSource).toContain("http://127.0.0.1:56121/callback");
     expect(grokOauthSource).toContain("KEYRING_SERVICE");
     expect(readRepo("src-tauri/src/services/llm_provider.rs")).toContain(
-      'pub const KEYRING_SERVICE: &str = "light-whisper"',
+      'pub const KEYRING_SERVICE: &str = "speak-flow"',
     );
     expect(grokOauthSource).toContain("grok-build-oauth");
     expect(grokOauthSource).toContain("grok-build-oauth-refresh-token");

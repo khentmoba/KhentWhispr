@@ -19,7 +19,7 @@ pub struct LlmEndpoint {
     pub api_format: ApiFormat,
 }
 
-pub const KEYRING_SERVICE: &str = "light-whisper";
+pub const KEYRING_SERVICE: &str = "speak-flow";
 
 const CEREBRAS: &str = "cerebras";
 const OPENAI: &str = "openai";

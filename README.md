@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme-banner.svg" alt="Light-Whisper — voice to text, right where you work" width="100%" />
+  <img src="assets/readme-banner.svg" alt="SpeakFlow — voice to text, right where you work" width="100%" />
 </p>
 
 <p align="center">
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sypsyp97/light-whisper/releases/latest"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/khentmoba/KhentWhispr/releases/latest"><strong>Download for Windows</strong></a>
   &nbsp; · &nbsp; <a href="#get-started">Get started</a>
   &nbsp; · &nbsp; <a href="README.zh-CN.md">简体中文</a>
 </p>
@@ -17,7 +17,7 @@
 
 ## Get started
 
-1. **Install.** Download the Windows 10/11 x64 `*_x64-setup.exe` from [Releases](https://github.com/sypsyp97/light-whisper/releases/latest). The recognition runtime is bundled; no separate Python or build tools are needed.
+1. **Install.** Download the Windows 10/11 x64 `*_x64-setup.exe` from [Releases](https://github.com/khentmoba/KhentWhispr/releases/latest). The recognition runtime is bundled; no separate Python or build tools are needed.
 2. **Choose an engine.** Open Settings, select your microphone, then download a local model or configure a cloud API key and region.
 3. **Speak.** Focus the app you want to type into, hold <kbd>F2</kbd>, speak, then release. You can change the hotkey or switch to toggle recording in Settings.
 
@@ -96,7 +96,7 @@ was submitted on October 7, 2026; review is pending. Approval and a verified
 hosted build are required before signed downloads can be published.
 See the [Code signing policy](docs/code-signing.md).
 
-[Download releases](https://github.com/sypsyp97/light-whisper/releases/latest).
+[Download releases](https://github.com/khentmoba/KhentWhispr/releases/latest).
 
 ## For developers
 
@@ -104,4 +104,4 @@ See the [Code signing policy](docs/code-signing.md).
 
 Built with Tauri, React and Rust, using Qwen3-ASR / transcribe.cpp, Confucius4-R2T2 / audio.cpp and FireRedVAD.
 
-Light-Whisper is open-source software under [GPL-3.0-only](LICENSE). Third-party code and models retain their own terms; see [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+SpeakFlow is open-source software under [GPL-3.0-only](LICENSE). Third-party code and models retain their own terms; see [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

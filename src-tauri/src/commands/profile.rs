@@ -9,7 +9,7 @@ use crate::state::user_profile::*;
 use crate::state::AppState;
 use crate::utils::paths;
 
-const PROFILE_EXPORT_FILE_NAME: &str = "light-whisper-profile.json";
+const PROFILE_EXPORT_FILE_NAME: &str = "speak-flow-profile.json";
 
 #[tauri::command]
 pub async fn submit_user_correction(

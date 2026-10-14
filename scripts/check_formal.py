@@ -236,7 +236,7 @@ def main() -> int:
         model = case["model"]
         source = ROOT / "formal" / f"{model}.tla"
         config = ROOT / "formal" / case.get("config", f"{model}.cfg")
-        with tempfile.TemporaryDirectory(prefix="light-whisper-negative-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="speak-flow-negative-") as temporary:
             if "replace" in case:
                 original, replacement = case["replace"]
                 content = source.read_text(encoding="utf-8")

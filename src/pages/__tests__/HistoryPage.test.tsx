@@ -81,7 +81,7 @@ const record = {
   language: "zh",
   engine: "sensevoice",
   appProcess: "Code.exe",
-  appWindowTitle: "light-whisper — Visual Studio Code",
+  appWindowTitle: "speak-flow — Visual Studio Code",
   appRuleName: "代码编辑器",
   audioAvailable: true,
   asrMs: 240,

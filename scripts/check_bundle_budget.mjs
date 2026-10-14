@@ -80,7 +80,7 @@ const budgets = {
   },
 };
 
-console.log(`LIGHT_WHISPER_BUNDLE_METRICS ${JSON.stringify(metrics)}`);
+console.log(`SPEAK_FLOW_BUNDLE_METRICS ${JSON.stringify(metrics)}`);
 const failures = Object.entries(budgets)
   .filter(([key, budget]) => typeof metrics[key] !== "number" || metrics[key] > budget.limit)
   .map(
