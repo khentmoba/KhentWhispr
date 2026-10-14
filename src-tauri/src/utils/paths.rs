@@ -6,15 +6,15 @@ use std::sync::{
 
 use tauri::Manager;
 
-const APP_IDENTIFIER: &str = "com.light-whisper.app";
+const APP_IDENTIFIER: &str = "com.speak-flow.app";
 
 pub fn get_data_dir() -> &'static PathBuf {
     static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
     DATA_DIR.get_or_init(|| {
-        let app_dir = std::env::var_os("LIGHT_WHISPER_DATA_DIR")
+        let app_dir = std::env::var_os("SPEAK_FLOW_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
-                let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".light-whisper"));
+                let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".speak-flow"));
                 base.join(APP_IDENTIFIER)
             });
         if let Err(err) = std::fs::create_dir_all(&app_dir) {
@@ -567,13 +567,13 @@ mod tests {
     #[test]
     fn gpu_idle_timeout_survives_disable_and_restart() {
         // A fresh process isolates DATA_DIR's OnceLock from every other test.
-        if std::env::var_os("LIGHT_WHISPER_GPU_IDLE_TEST_CHILD").is_none() {
+        if std::env::var_os("SPEAK_FLOW_GPU_IDLE_TEST_CHILD").is_none() {
             let nonce = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
             let dir = std::env::temp_dir().join(format!(
-                "light-whisper-gpu-idle-{}-{nonce}",
+                "speak-flow-gpu-idle-{}-{nonce}",
                 std::process::id()
             ));
             std::fs::create_dir_all(&dir).unwrap();
@@ -583,8 +583,8 @@ mod tests {
                     "utils::paths::tests::gpu_idle_timeout_survives_disable_and_restart",
                     "--nocapture",
                 ])
-                .env("LIGHT_WHISPER_DATA_DIR", &dir)
-                .env("LIGHT_WHISPER_GPU_IDLE_TEST_CHILD", "1")
+                .env("SPEAK_FLOW_DATA_DIR", &dir)
+                .env("SPEAK_FLOW_GPU_IDLE_TEST_CHILD", "1")
                 .output()
                 .unwrap();
             assert!(
@@ -599,8 +599,8 @@ mod tests {
                     "utils::paths::tests::gpu_idle_timeout_survives_disable_and_restart",
                     "--nocapture",
                 ])
-                .env("LIGHT_WHISPER_DATA_DIR", &dir)
-                .env("LIGHT_WHISPER_GPU_IDLE_TEST_CHILD", "restart")
+                .env("SPEAK_FLOW_DATA_DIR", &dir)
+                .env("SPEAK_FLOW_GPU_IDLE_TEST_CHILD", "restart")
                 .output()
                 .unwrap();
             assert!(
@@ -613,7 +613,7 @@ mod tests {
             std::fs::remove_dir(dir).unwrap();
             return;
         }
-        if std::env::var("LIGHT_WHISPER_GPU_IDLE_TEST_CHILD").as_deref() == Ok("restart") {
+        if std::env::var("SPEAK_FLOW_GPU_IDLE_TEST_CHILD").as_deref() == Ok("restart") {
             assert_eq!(super::read_gpu_idle_seconds(), 0);
             assert_eq!(super::read_gpu_idle_timeout_seconds(), 75);
             super::write_gpu_idle_seconds(super::read_gpu_idle_timeout_seconds(), None).unwrap();

@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn shortens_editor_window_titles_for_prompt_context() {
         let app = ForegroundApp {
-            window_title: "RELEASE_GUIDE.md - light-whisper - Visual Studio Code".to_string(),
+            window_title: "RELEASE_GUIDE.md - speak-flow - Visual Studio Code".to_string(),
             process_name: "Code.exe".to_string(),
         };
 

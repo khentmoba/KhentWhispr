@@ -16,7 +16,7 @@ impl TestDir {
             .expect("system clock should be after Unix epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "light-whisper-engine-policy-{name}-{}-{nonce}",
+            "speak-flow-engine-policy-{name}-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir_all(path.join("resources")).expect("create test resources directory");

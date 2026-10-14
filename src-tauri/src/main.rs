@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    light_whisper_lib::run()
+    speak_flow_lib::run()
 }

@@ -42,7 +42,7 @@ sharing them. Data and log locations are documented in
 
 Network services can receive your IP address and request metadata and apply
 their own retention and processing rules. Requests are made directly to the
-configured services, not through a Light-Whisper maintainer server. Custom
+configured services, not through a SpeakFlow maintainer server. Custom
 providers and download endpoints can change the destination.
 
 To keep speech content on your computer, use a local engine and disable cloud
@@ -80,7 +80,7 @@ Use the policy for your selected service, account and region:
 
 ## Questions and voluntary reports
 
-The project maintainer is [sypsyp97](https://github.com/sypsyp97). You can contact
+The project maintainer is [khentmoba](https://github.com/khentmoba). You can contact
 the maintainer through the public repository. GitHub issues and attachments are
 public: do not include credentials, private recordings or personal transcripts.
 Information you voluntarily share there is subject to GitHub's policies.

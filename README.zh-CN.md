@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme-banner.svg" alt="Light-Whisper 轻语 — 在你正在使用的应用中，把声音变成文字" width="100%" />
+  <img src="assets/readme-banner.svg" alt="SpeakFlow 轻语 — 在你正在使用的应用中，把声音变成文字" width="100%" />
 </p>
 
 <p align="center">
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sypsyp97/light-whisper/releases/latest"><strong>下载 Windows 安装包</strong></a>
+  <a href="https://github.com/khentmoba/KhentWhispr/releases/latest"><strong>下载 Windows 安装包</strong></a>
   &nbsp; · &nbsp; <a href="#快速开始">快速开始</a>
   &nbsp; · &nbsp; <a href="README.md">English</a>
 </p>
@@ -17,7 +17,7 @@
 
 ## 快速开始
 
-1. **安装**。从 [Releases](https://github.com/sypsyp97/light-whisper/releases/latest) 下载 Windows 10/11 x64 的 `*_x64-setup.exe`。识别运行时已内置，无需另装 Python 或编译工具。
+1. **安装**。从 [Releases](https://github.com/khentmoba/KhentWhispr/releases/latest) 下载 Windows 10/11 x64 的 `*_x64-setup.exe`。识别运行时已内置，无需另装 Python 或编译工具。
 2. **选择引擎**。打开设置，选择麦克风，然后下载本地模型，或配置云端 API Key 与区域。
 3. **开始说话**。将焦点放到目标应用，按住 <kbd>F2</kbd> 说话，松开后输出文字。热键可以修改，也可以改用点击切换录音。
 
@@ -94,7 +94,7 @@ v1.7.4 Windows 安装包目前未签名。已于 2026 年 10 月 7 日提交 Sig
 免费签名申请，正在等待审核；通过审核并完成可验证的托管构建后，才能发布签名安装包。
 详见[代码签名政策](docs/code-signing.md)。
 
-[下载已发布版本](https://github.com/sypsyp97/light-whisper/releases/latest)。
+[下载已发布版本](https://github.com/khentmoba/KhentWhispr/releases/latest)。
 
 ## 开发文档
 
@@ -102,4 +102,4 @@ v1.7.4 Windows 安装包目前未签名。已于 2026 年 10 月 7 日提交 Sig
 
 基于 Tauri、React 和 Rust 构建，使用 Qwen3-ASR / transcribe.cpp、Confucius4-R2T2 / audio.cpp 和 FireRedVAD。
 
-Light-Whisper 是采用 [GPL-3.0-only](LICENSE) 许可证的开源软件。第三方代码与模型继续适用各自条款，详见 [NOTICE](NOTICE) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+SpeakFlow 是采用 [GPL-3.0-only](LICENSE) 许可证的开源软件。第三方代码与模型继续适用各自条款，详见 [NOTICE](NOTICE) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

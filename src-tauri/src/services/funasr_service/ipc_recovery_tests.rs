@@ -13,7 +13,7 @@ use tokio::process::Command;
 #[test]
 #[ignore = "subprocess fixture, invoked by the IPC recovery tests"]
 fn ipc_test_server() {
-    let Ok(mode) = std::env::var("LIGHT_WHISPER_TEST_IPC_MODE") else {
+    let Ok(mode) = std::env::var("SPEAK_FLOW_TEST_IPC_MODE") else {
         return;
     };
     if mode == "closed_stdin" {
@@ -55,7 +55,7 @@ async fn test_process(mode: &str) -> FunasrProcess {
             "--ignored",
             "--nocapture",
         ])
-        .env("LIGHT_WHISPER_TEST_IPC_MODE", mode)
+        .env("SPEAK_FLOW_TEST_IPC_MODE", mode)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

@@ -105,7 +105,7 @@ describe("release workflow contract", () => {
   });
 
   it("rejects missing, empty, non-XZ and truncated engine archives before packaging", () => {
-    const directory = mkdtempSync(join(tmpdir(), "light-whisper-engine-check-"));
+    const directory = mkdtempSync(join(tmpdir(), "speak-flow-engine-check-"));
     const archive = join(directory, "engine.tar.xz");
     const verify = () =>
       spawnSync(

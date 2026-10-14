@@ -38,7 +38,7 @@ class Qwen3ASRServer(BaseASRServer):
     """
 
     def __init__(self, engine=None):
-        engine = engine or os.environ.get("LIGHT_WHISPER_ASR_ENGINE", "qwen3-asr-0.6b")
+        engine = engine or os.environ.get("SPEAK_FLOW_ASR_ENGINE", "qwen3-asr-0.6b")
         if engine not in QWEN3_ASR_MODELS:
             raise ValueError(f"不支持的 Qwen3-ASR 引擎: {engine}")
         self.model_config = QWEN3_ASR_MODELS[engine]

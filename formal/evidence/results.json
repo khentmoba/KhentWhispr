@@ -2,7 +2,7 @@
   "schema": 1,
   "verified_utc": "2026-10-01T15:44:58.950889+00:00",
   "baseline_commit": "83e113f714f2ad02abb93f9227d0a479d0ae4c55",
-  "pull_request": "https://github.com/sypsyp97/light-whisper/pull/10",
+  "pull_request": "https://github.com/khentmoba/KhentWhispr/pull/10",
   "pr_head_reviewed": "004087d25c7bd3d790cd51c6abe5fd7ebbfb77da",
   "scope": "Application state/protocol contracts and GPU idle-unload implementation regressions; not compiler refinement or native dependency proof.",
   "inventory": {

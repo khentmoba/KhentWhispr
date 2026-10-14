@@ -25,7 +25,7 @@ DEFAULT_HF_FALLBACK_ENDPOINT = "https://hf-mirror.com"
 
 HF_ENDPOINT = os.environ.get("HF_ENDPOINT", DEFAULT_HF_ENDPOINT).rstrip("/")
 HF_FALLBACK_ENDPOINT = os.environ.get("HF_FALLBACK_ENDPOINT", DEFAULT_HF_FALLBACK_ENDPOINT).rstrip("/")
-COMPLETE_MANIFEST_NAME = ".light_whisper_complete.json"
+COMPLETE_MANIFEST_NAME = ".speak_flow_complete.json"
 
 _progress = {}
 _completed_count = 0

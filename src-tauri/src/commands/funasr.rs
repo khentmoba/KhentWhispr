@@ -201,7 +201,7 @@ pub(crate) fn reload_online_asr_key(app_handle: &tauri::AppHandle, state: &AppSt
     let user = active_online_keyring_user();
     let key = app_handle
         .keyring()
-        .get_password("light-whisper", user)
+        .get_password("speak-flow", user)
         .ok()
         .flatten()
         .unwrap_or_default();
@@ -834,7 +834,7 @@ mod model_dir_migration_tests {
     #[test]
     fn cleanup_failure_is_reported_to_the_committed_result() {
         let missing = std::env::temp_dir().join(format!(
-            "light-whisper-missing-cleanup-{}-{}",
+            "speak-flow-missing-cleanup-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -851,7 +851,7 @@ mod model_dir_migration_tests {
     #[test]
     fn migration_prepare_keeps_source_until_config_commit() {
         let unique = format!(
-            "light-whisper-model-migration-{}-{}",
+            "speak-flow-model-migration-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -884,7 +884,7 @@ mod model_dir_migration_tests {
     #[test]
     fn migration_rejects_target_nested_inside_source() {
         let root = std::env::temp_dir().join(format!(
-            "light-whisper-nested-migration-{}-{}",
+            "speak-flow-nested-migration-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

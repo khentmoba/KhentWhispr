@@ -144,7 +144,7 @@ const inputOptions = [
   { key: "clipboard" as const, icon: ClipboardPaste, labelKey: "settings.clipboardPaste", descKey: "settings.clipboardPasteDesc" },
 ];
 
-const LLM_PROVIDER_DRAFTS_KEY = "light-whisper-llm-provider-drafts";
+const LLM_PROVIDER_DRAFTS_KEY = "speak-flow-llm-provider-drafts";
 
 const recordingModeOptions: Array<{
   key: "hold" | "toggle";

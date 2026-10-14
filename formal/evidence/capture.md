@@ -79,7 +79,7 @@ No unresolved test interface was introduced (`INTERFACE_PENDING`: none).
 Exact command (WSL2, supplied TLC jar, unique metadir):
 
 ```text
-wsl.exe bash -lc 'set -o pipefail; java -XX:+UseParallelGC -jar /mnt/c/Users/sun/AppData/Local/Temp/light-whisper-tla2tools-1.8.0.jar -noGenerateSpecTE -metadir /tmp/light-whisper-capture-final-nocoverage-restart-$(date +%s%N) -config /mnt/c/Users/sun/Downloads/light-whisper/formal/CapturePipeline.cfg /mnt/c/Users/sun/Downloads/light-whisper/formal/CapturePipeline.tla'
+wsl.exe bash -lc 'set -o pipefail; java -XX:+UseParallelGC -jar /mnt/c/Users/sun/AppData/Local/Temp/speak-flow-tla2tools-1.8.0.jar -noGenerateSpecTE -metadir /tmp/speak-flow-capture-final-nocoverage-restart-$(date +%s%N) -config /mnt/c/Users/sun/Downloads/speak-flow/formal/CapturePipeline.cfg /mnt/c/Users/sun/Downloads/speak-flow/formal/CapturePipeline.tla'
 ```
 
 Result:
@@ -100,14 +100,14 @@ action, including `NativeReady`, `NativeUnavailable`, `NativeDisconnected`,
 Exact coverage command:
 
 ```text
-wsl.exe bash -lc 'set -o pipefail; java -XX:+UseParallelGC -jar /mnt/c/Users/sun/AppData/Local/Temp/light-whisper-tla2tools-1.8.0.jar -noGenerateSpecTE -coverage 1 -metadir /tmp/light-whisper-capture-coverage-20260928-0827-restart -config /mnt/c/Users/sun/Downloads/light-whisper/formal/CapturePipeline.cfg /mnt/c/Users/sun/Downloads/light-whisper/formal/CapturePipeline.tla'
+wsl.exe bash -lc 'set -o pipefail; java -XX:+UseParallelGC -jar /mnt/c/Users/sun/AppData/Local/Temp/speak-flow-tla2tools-1.8.0.jar -noGenerateSpecTE -coverage 1 -metadir /tmp/speak-flow-capture-coverage-20260928-0827-restart -config /mnt/c/Users/sun/Downloads/speak-flow/formal/CapturePipeline.cfg /mnt/c/Users/sun/Downloads/speak-flow/formal/CapturePipeline.tla'
 ```
 
 ## Negative mutation and exact RED evidence
 
 The mutation was made only in this temporary copy outside the repository:
 
-`C:\Users\sun\AppData\Local\Temp\light-whisper-capture-negative-cedb634e8c5e434f9b1a2d4e909f15aa`
+`C:\Users\sun\AppData\Local\Temp\speak-flow-capture-negative-cedb634e8c5e434f9b1a2d4e909f15aa`
 
 `LateNativeReturn` was deliberately changed to append
 `AppendSamples(samples, "native", 1)` while the detached worker was returning.
@@ -117,7 +117,7 @@ the forbidden late-native write and leaves the repository files unchanged.
 Exact command:
 
 ```text
-wsl.exe bash -lc 'set -o pipefail; java -XX:+UseParallelGC -jar /mnt/c/Users/sun/AppData/Local/Temp/light-whisper-tla2tools-1.8.0.jar -noGenerateSpecTE -metadir /tmp/light-whisper-capture-negative-final-$(date +%s%N) -config /mnt/c/Users/sun/AppData/Local/Temp/light-whisper-capture-negative-cedb634e8c5e434f9b1a2d4e909f15aa/CapturePipeline.cfg /mnt/c/Users/sun/AppData/Local/Temp/light-whisper-capture-negative-cedb634e8c5e434f9b1a2d4e909f15aa/CapturePipeline.tla'
+wsl.exe bash -lc 'set -o pipefail; java -XX:+UseParallelGC -jar /mnt/c/Users/sun/AppData/Local/Temp/speak-flow-tla2tools-1.8.0.jar -noGenerateSpecTE -metadir /tmp/speak-flow-capture-negative-final-$(date +%s%N) -config /mnt/c/Users/sun/AppData/Local/Temp/speak-flow-capture-negative-cedb634e8c5e434f9b1a2d4e909f15aa/CapturePipeline.cfg /mnt/c/Users/sun/AppData/Local/Temp/speak-flow-capture-negative-cedb634e8c5e434f9b1a2d4e909f15aa/CapturePipeline.tla'
 ```
 
 The run failed semantically, not during parsing or type checking:

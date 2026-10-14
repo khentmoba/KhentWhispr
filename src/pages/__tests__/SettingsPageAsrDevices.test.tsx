@@ -254,7 +254,7 @@ function resetMocks(profile: UserProfile = baseProfile) {
   });
   tauriMock.getModelsDir.mockResolvedValue({
     is_custom: false,
-    path: "C:\\Users\\sun\\.cache\\light-whisper-models",
+    path: "C:\\Users\\sun\\.cache\\speak-flow-models",
   });
   tauriMock.getOnlineAsrApiKey.mockResolvedValue("");
   tauriMock.getOnlineAsrEndpoint.mockResolvedValue({
@@ -338,8 +338,8 @@ describe("SettingsPage ASR and device settings", () => {
     await waitFor(() => expect(container.querySelector('[data-nav-tab="startup"]')).toHaveAttribute("data-active", "true"));
   });
   it("loads the persisted engine, microphone, and model directory and applies a directory change", async () => {
-    const defaultModelsDir = "C:\\light-whisper\\models";
-    const customModelsDir = "D:\\light-whisper\\models";
+    const defaultModelsDir = "C:\\speak-flow\\models";
+    const customModelsDir = "D:\\speak-flow\\models";
     tauriMock.getEngine.mockResolvedValue("confucius4-r2t2");
     tauriMock.getModelsDir
       .mockResolvedValueOnce({ path: defaultModelsDir, is_custom: false })

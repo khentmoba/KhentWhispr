@@ -939,18 +939,18 @@
     "formal/lean/StateContracts.lean": "33fc664c9f3e56abc4f5c6d43403f04007d4b4829e3259950c5873b43f8073cb"
   },
   "raw_log_sha256": {
-    "light-whisper-profile-load-red-final-20261011.log": "9da3b5b5c0f186489989286cbbff936207b3d7ec34347d2453481b1f38661e43",
-    "light-whisper-settings-green-20261011.log": "0a72b62107552c0370588e2e0090be928a04b6bd0f4a272e5be6b7fb6090bceb",
-    "light-whisper-assistant-green-20261011.log": "d810ac1c5417be90bb6503c3c6dde2b526b9a344fbfb88c33707ccd8f9075319",
-    "light-whisper-history-percentile-green-20261011.log": "4fe352c28e896e211c77cc7b6f2481d371c5a6708b61fa4aad06a16a017564b3",
-    "light-whisper-pnpm-check-final-20261011.log": "6867deda9bfb8491984f36cff5976dc657f6f6202011eccbd154b4b165a6d582",
-    "light-whisper-rust-fmt-final-20261011.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "light-whisper-clippy-final-20261011.log": "bcbd04e8866e2cce84e88fc832970609251a2229c385bfefc229356efc7615e6",
-    "light-whisper-rust-all-final-20261011.log": "066d4336a3cdf218a440482e7b03626e4fcc5aff98b805ea048dccd8f0222750",
-    "light-whisper-formal-verifier-tests-final-20261011.log": "bce8a8c602d368e8510bd32a73bc90c5086f420f789e41392b1312302da8815c",
-    "light-whisper-optimization-formal-final-20261011.log": "89c5fb55cf7a026b59f0eba33c038b85561499614c8bb86660d93189e90136a9"
+    "speak-flow-profile-load-red-final-20261011.log": "9da3b5b5c0f186489989286cbbff936207b3d7ec34347d2453481b1f38661e43",
+    "speak-flow-settings-green-20261011.log": "0a72b62107552c0370588e2e0090be928a04b6bd0f4a272e5be6b7fb6090bceb",
+    "speak-flow-assistant-green-20261011.log": "d810ac1c5417be90bb6503c3c6dde2b526b9a344fbfb88c33707ccd8f9075319",
+    "speak-flow-history-percentile-green-20261011.log": "4fe352c28e896e211c77cc7b6f2481d371c5a6708b61fa4aad06a16a017564b3",
+    "speak-flow-pnpm-check-final-20261011.log": "6867deda9bfb8491984f36cff5976dc657f6f6202011eccbd154b4b165a6d582",
+    "speak-flow-rust-fmt-final-20261011.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "speak-flow-clippy-final-20261011.log": "bcbd04e8866e2cce84e88fc832970609251a2229c385bfefc229356efc7615e6",
+    "speak-flow-rust-all-final-20261011.log": "066d4336a3cdf218a440482e7b03626e4fcc5aff98b805ea048dccd8f0222750",
+    "speak-flow-formal-verifier-tests-final-20261011.log": "bce8a8c602d368e8510bd32a73bc90c5086f420f789e41392b1312302da8815c",
+    "speak-flow-optimization-formal-final-20261011.log": "89c5fb55cf7a026b59f0eba33c038b85561499614c8bb86660d93189e90136a9"
   },
-  "raw_formal_summary": "light-whisper-optimization-formal-20261011/summary.json",
+  "raw_formal_summary": "speak-flow-optimization-formal-20261011/summary.json",
   "limitations": [
     "Bounded state/protocol checks and reviewed source correspondence; not compiler refinement or native API proof.",
     "Foreground identity is sampled after preparation; OS focus may change after the read.",

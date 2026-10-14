@@ -37,7 +37,7 @@ LOCAL_ASR_MODELS = {**QWEN3_ASR_MODELS, "confucius4-r2t2": R2T2_MODEL}
 
 _WEIGHT_EXTS = (".pt", ".bin", ".safetensors", ".onnx", ".gguf")
 _MIN_WEIGHT_SIZE = 1_000_000  # 与 Rust 端阈值一致
-COMPLETE_MANIFEST_NAME = ".light_whisper_complete.json"
+COMPLETE_MANIFEST_NAME = ".speak_flow_complete.json"
 
 
 def get_hf_cache_root():

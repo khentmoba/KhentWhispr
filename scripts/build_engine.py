@@ -373,10 +373,11 @@ def create_tar_xz(engine_dir: Path, output: Path) -> float:
     return create_tar_xz_with_python(engine_dir, output)
 
 
-def validate_r2t2_runtime():
+def validate_r2t2_runtime(cpu_only=False):
     """Reject missing or modified native bundles before replacing engine output."""
     root = RESOURCES_DIR / "r2t2-native"
-    for backend in ("cpu", "cuda"):
+    backends = ("cpu",) if cpu_only else ("cpu", "cuda")
+    for backend in backends:
         directory = root / backend
         manifest_path = directory / "runtime-manifest.json"
         if not manifest_path.is_file():
@@ -433,12 +434,12 @@ def verify_archive_sources(archive: Path) -> None:
         raise RuntimeError(f"Missing bundled sources: {', '.join(sorted(missing))}; rebuild the engine")
 
 
-def main():
+def main(cpu_only=False):
     if not ENTRY_SCRIPT.exists():
         print(f"错误: 入口脚本不存在: {ENTRY_SCRIPT}", file=sys.stderr)
         sys.exit(1)
 
-    native_runtime = validate_r2t2_runtime()
+    native_runtime = validate_r2t2_runtime(cpu_only=cpu_only)
     ensure_qwen3_cuda_provider()
 
     # 清理旧构建
@@ -550,6 +551,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verify-archive", type=Path)
+    parser.add_argument("--cpu-only", action="store_true")
     args = parser.parse_args()
     if args.verify_archive is not None:
         try:
@@ -557,4 +559,4 @@ if __name__ == "__main__":
         except (OSError, RuntimeError, tarfile.TarError, EOFError) as error:
             parser.exit(1, f"{error}\nRun: uv run --locked python scripts/build_engine.py\n")
     else:
-        main()
+        main(cpu_only=args.cpu_only)

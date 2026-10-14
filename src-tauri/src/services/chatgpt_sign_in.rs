@@ -426,7 +426,7 @@ fn authorize_url(
         ("code_challenge_method", "S256"),
     ];
     if account.is_none() {
-        parameters.push(("agent_name_hint", "light-whisper"));
+        parameters.push(("agent_name_hint", "speak-flow"));
     } else if account
         .and_then(|r| r.registration)
         .is_some_and(|r| !r.plan_usage_enabled())

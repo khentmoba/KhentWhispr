@@ -151,7 +151,7 @@ pub fn grab_selected_text_robust(app_handle: &tauri::AppHandle) -> Option<String
                 return None;
             }
         };
-        let marker = format!("__light_whisper_selection_{:016x}__", rand::random::<u64>());
+        let marker = format!("__speak_flow_selection_{:016x}__", rand::random::<u64>());
         if app_handle.clipboard().write_text(&marker).is_err() {
             if let Ok(clipboard) = Clipboard::open() {
                 let _ = clipboard.restore(snapshot);

@@ -13,8 +13,8 @@ Build on Windows 10/11 x64:
 Python 3.11 is selected by `.python-version`; the project supports Python 3.11–3.12. `uv` manages this environment.
 
 ```bash
-git clone https://github.com/sypsyp97/light-whisper.git
-cd light-whisper
+git clone https://github.com/khentmoba/KhentWhispr.git
+cd speak-flow
 
 pnpm install --frozen-lockfile
 uv sync --frozen
@@ -91,12 +91,12 @@ use OS, compiler, lockfile and source hashes; cache hits still run every check.
 
 **Log locations**:
 
-- App log: `%LOCALAPPDATA%\com.light-whisper.desktop\logs\app.log`
-- ASR logs: `%APPDATA%\com.light-whisper.app\logs\{qwen3_asr_server,r2t2_asr_server}.log`
-- Python stderr fallback: `%APPDATA%\com.light-whisper.app\funasr_stderr.log`
+- App log: `%LOCALAPPDATA%\com.speak-flow.desktop\logs\app.log`
+- ASR logs: `%APPDATA%\com.speak-flow.app\logs\{qwen3_asr_server,r2t2_asr_server}.log`
+- Python stderr fallback: `%APPDATA%\com.speak-flow.app\funasr_stderr.log`
 
-`LIGHT_WHISPER_DATA_DIR` overrides the ASR data directory. Standalone Python
-servers use `%TEMP%\light_whisper_logs\` when it is unset.
+`SPEAK_FLOW_DATA_DIR` overrides the ASR data directory. Standalone Python
+servers use `%TEMP%\speak_flow_logs\` when it is unset.
 
 **Automatic decisions**: `app.log` records the selected decision provider,
 validated route/screen choices, probabilities and whether polishing was skipped.

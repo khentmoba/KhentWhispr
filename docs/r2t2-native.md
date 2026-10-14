@@ -36,7 +36,7 @@ The engine builder validates both manifests and shares byte-identical CUDA/CRT D
 
 Q8 was tested on an RTX 4070 SUPER 12 GB. Checks covered five public clips, five short truncations, silence, a 126.6-second recording, exact final audio accounting, cancellation and restart. The packaged R2T2 process passed 31 requests; packaged Qwen CUDA and R2T2 CPU also passed smoke tests. This is limited regression coverage, not a broad accuracy benchmark or AMD validation.
 
-Paired paced server playback for build `light-whisper-r2t2-5` measured:
+Paired paced server playback for build `speak-flow-r2t2-5` measured:
 
 | First caption after model readiness | Runtime 4 | Runtime 5 |
 |:--|--:|--:|
@@ -55,11 +55,11 @@ Capture scheduling was also simulated with real inference and 0, 20 and 150 ms o
 
 The ignored Rust integration tests require these environment variables:
 
-- `LIGHT_WHISPER_R2T2_TEST_PYTHON`: Python executable
-- `LIGHT_WHISPER_R2T2_TEST_RESOURCES`: resource directory
-- `LIGHT_WHISPER_R2T2_TEST_CACHE`: isolated model cache
-- `LIGHT_WHISPER_R2T2_TEST_AUDIO`: mono 16-kHz PCM16 Chinese fixture matching the assertions in `native_integration_tests.rs`
-- `LIGHT_WHISPER_R2T2_TEST_DATA`: writable test-data directory
+- `SPEAK_FLOW_R2T2_TEST_PYTHON`: Python executable
+- `SPEAK_FLOW_R2T2_TEST_RESOURCES`: resource directory
+- `SPEAK_FLOW_R2T2_TEST_CACHE`: isolated model cache
+- `SPEAK_FLOW_R2T2_TEST_AUDIO`: mono 16-kHz PCM16 Chinese fixture matching the assertions in `native_integration_tests.rs`
+- `SPEAK_FLOW_R2T2_TEST_DATA`: writable test-data directory
 
 Run sequentially with CUDA available; model downloads are disabled:
 

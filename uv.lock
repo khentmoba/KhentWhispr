@@ -234,7 +234,7 @@ wheels = [
 ]
 
 [[package]]
-name = "light-whisper"
+name = "speak-flow"
 version = "1.7.5"
 source = { virtual = "." }
 dependencies = [

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Adapted from FireRedTeam/FireRedVAD, licensed under Apache-2.0.
-# Modified by Light-Whisper contributors; see THIRD_PARTY_NOTICES.md.
+# Modified by SpeakFlow contributors; see THIRD_PARTY_NOTICES.md.
 
 """Small offline FireRedVAD runtime for the bundled Qwen3-ASR engines."""
 

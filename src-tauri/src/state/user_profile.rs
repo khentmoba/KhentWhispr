@@ -361,7 +361,7 @@ fn default_selection_translation_target() -> String {
 
 fn default_selection_excluded_apps() -> Vec<String> {
     [
-        "light-whisper.exe",
+        "speak-flow.exe",
         "snipaste.exe",
         "pixpin.exe",
         "sharex.exe",
@@ -1146,7 +1146,7 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = profile.resolve_app_profile("CODE.EXE", "README.md - light-whisper");
+        let resolved = profile.resolve_app_profile("CODE.EXE", "README.md - speak-flow");
         assert_eq!(resolved.rule_id.as_deref(), Some("specific"));
         assert_eq!(resolved.ai_polish_enabled, Some(true));
         assert_eq!(resolved.translation_target, Some(Some("English".into())));
@@ -1175,7 +1175,7 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = profile.resolve_app_profile("Code.exe", "main.rs - light-whisper");
+        let resolved = profile.resolve_app_profile("Code.exe", "main.rs - speak-flow");
         assert_eq!(resolved.rule_id.as_deref(), Some("fallback"));
         assert_eq!(resolved.screen_context_enabled, Some(false));
     }
