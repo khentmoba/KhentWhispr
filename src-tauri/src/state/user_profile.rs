@@ -1,0 +1,1182 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// 热词来源
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum HotWordSource {
+    /// 用户手动添加
+    User,
+    /// 从纠错中自动学习
+    Learned,
+}
+
+/// 纠错来源
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CorrectionSource {
+    /// AI 润色自动学习
+    #[default]
+    Ai,
+    /// 用户手动纠错
+    User,
+}
+
+/// 热词条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotWord {
+    pub text: String,
+    /// 权重 1-5，越高越优先
+    pub weight: u8,
+    pub source: HotWordSource,
+    pub use_count: u32,
+    /// Unix 时间戳（秒）
+    pub last_used: u64,
+}
+
+/// 纠错模式记录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorrectionPattern {
+    /// ASR 原始输出片段
+    pub original: String,
+    /// 纠正后的片段
+    pub corrected: String,
+    /// 出现次数
+    pub count: u32,
+    /// 最近一次出现的时间戳
+    pub last_seen: u64,
+    /// 纠错来源
+    #[serde(default)]
+    pub source: CorrectionSource,
+}
+
+/// 词频条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VocabEntry {
+    pub count: u32,
+    pub last_seen: u64,
+}
+
+/// Jev evaluation provider used by the optional ordinary-dictation gate.
+///
+/// The serde names are part of the persisted profile contract. Keep them
+/// lowercase so existing profiles and the frontend use the same values.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum JevProvider {
+    #[default]
+    TypeSafe,
+    OpenRouter,
+    Vercel,
+    Liquid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JevConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub provider: JevProvider,
+    #[serde(default)]
+    pub screen_routing: bool,
+    #[serde(default)]
+    pub correction_review: bool,
+    #[serde(default)]
+    pub search_routing: bool,
+    #[serde(default)]
+    pub polish_audit: bool,
+}
+
+impl Default for JevConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: JevProvider::TypeSafe,
+            screen_routing: false,
+            correction_review: false,
+            search_routing: false,
+            polish_audit: false,
+        }
+    }
+}
+
+/// 用户画像
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct R2T2Config {
+    #[serde(default)]
+    pub context: String,
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserProfile {
+    /// 开机自启动时隐藏主窗口，仅保留系统托盘入口。
+    #[serde(default)]
+    pub autostart_minimized: bool,
+    #[serde(default)]
+    pub r2t2: R2T2Config,
+    pub hot_words: Vec<HotWord>,
+    pub correction_patterns: Vec<CorrectionPattern>,
+    pub vocab_frequency: HashMap<String, VocabEntry>,
+    pub total_transcriptions: u64,
+    /// 上次更新时间（Unix 时间戳）
+    pub last_updated: u64,
+    /// LLM 后端配置
+    pub llm_provider: LlmProviderConfig,
+    /// Optional Jev gate configuration; provider credentials remain in the system keyring.
+    #[serde(default)]
+    pub jev: JevConfig,
+    /// 翻译目标语言（None = 关闭翻译，非空 = 开启并翻译为该语言）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_target: Option<String>,
+    /// 翻译模式独立热键
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_hotkey: Option<String>,
+    /// 用户自定义润色指令
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_prompt: Option<String>,
+    /// AI 润色对口述内容进行归类、重排和摘要的强度
+    #[serde(default)]
+    pub polish_structure_level: PolishStructureLevel,
+    /// 助手模式独立热键
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_hotkey: Option<String>,
+    /// 助手模式附加系统提示词
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_system_prompt: Option<String>,
+    /// 助手模式是否附带当前屏幕截图作为上下文
+    #[serde(default)]
+    pub assistant_screen_context_enabled: bool,
+    /// AI 润色是否附带当前屏幕截图作为上下文
+    #[serde(default)]
+    pub ai_polish_screen_context_enabled: bool,
+    /// 系统级划词助手配置
+    #[serde(default)]
+    pub selection_assistant: SelectionAssistantConfig,
+    /// 用户手动删除后，不再自动学习回来的热词黑名单
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_hot_words: Vec<String>,
+    /// 联网搜索配置（仅助手模式）
+    #[serde(default)]
+    pub web_search: WebSearchConfig,
+    /// 是否启用定期 LLM 审核纠错规则
+    #[serde(default)]
+    pub correction_validation_enabled: bool,
+    /// 上次 LLM 审核时间戳（Unix 秒）
+    #[serde(default)]
+    pub last_correction_validation: u64,
+    /// 本地转写历史的保留策略
+    #[serde(default)]
+    pub history_settings: HistorySettings,
+    /// 按前台应用匹配的听写覆盖规则；顺序即优先级，首个匹配项生效
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub app_profile_rules: Vec<AppProfileRule>,
+}
+
+fn default_history_enabled() -> bool {
+    false
+}
+
+fn default_history_retention_days() -> u32 {
+    90
+}
+
+/// 本地历史默认仅保存文本；音频需要用户主动开启。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistorySettings {
+    #[serde(default = "default_history_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub save_audio: bool,
+    /// 0 表示永久保留，否则按天清理文本和音频。
+    #[serde(default = "default_history_retention_days")]
+    pub retention_days: u32,
+}
+
+impl Default for HistorySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            save_audio: false,
+            retention_days: default_history_retention_days(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AppRuleOverride {
+    #[default]
+    Inherit,
+    Enabled,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AppTranslationOverride {
+    #[default]
+    Inherit,
+    Disabled,
+    Target,
+}
+
+fn default_app_rule_enabled() -> bool {
+    true
+}
+
+/// 针对一个 Windows 进程（并可进一步限定窗口标题）的听写覆盖规则。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppProfileRule {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_app_rule_enabled")]
+    pub enabled: bool,
+    pub process_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_title_contains: Option<String>,
+    #[serde(default)]
+    pub ai_polish: AppRuleOverride,
+    #[serde(default)]
+    pub translation: AppTranslationOverride,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_target: Option<String>,
+    #[serde(default)]
+    pub screen_context: AppRuleOverride,
+    #[serde(default)]
+    pub history: AppRuleOverride,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_prompt: Option<String>,
+}
+
+impl Default for AppProfileRule {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            enabled: true,
+            process_name: String::new(),
+            window_title_contains: None,
+            ai_polish: AppRuleOverride::Inherit,
+            translation: AppTranslationOverride::Inherit,
+            translation_target: None,
+            screen_context: AppRuleOverride::Inherit,
+            history: AppRuleOverride::Inherit,
+            custom_prompt: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolvedAppProfile {
+    pub rule_id: Option<String>,
+    pub rule_name: Option<String>,
+    pub ai_polish_enabled: Option<bool>,
+    pub translation_target: Option<Option<String>>,
+    pub screen_context_enabled: Option<bool>,
+    pub history_enabled: Option<bool>,
+    pub custom_prompt: Option<String>,
+}
+
+fn normalized_process_name(value: &str) -> String {
+    let normalized = value.trim().to_lowercase();
+    normalized
+        .strip_suffix(".exe")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
+impl AppProfileRule {
+    pub fn matches(&self, process_name: &str, window_title: &str) -> bool {
+        if !self.enabled || self.process_name.trim().is_empty() {
+            return false;
+        }
+        if normalized_process_name(&self.process_name) != normalized_process_name(process_name) {
+            return false;
+        }
+        match self
+            .window_title_contains
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(needle) => window_title.to_lowercase().contains(&needle.to_lowercase()),
+            None => true,
+        }
+    }
+
+    fn resolve(&self) -> ResolvedAppProfile {
+        let bool_override = |value: AppRuleOverride| match value {
+            AppRuleOverride::Inherit => None,
+            AppRuleOverride::Enabled => Some(true),
+            AppRuleOverride::Disabled => Some(false),
+        };
+        let translation_target = match self.translation {
+            AppTranslationOverride::Inherit => None,
+            AppTranslationOverride::Disabled => Some(None),
+            AppTranslationOverride::Target => self
+                .translation_target
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| Some(value.to_string())),
+        };
+        ResolvedAppProfile {
+            rule_id: Some(self.id.clone()),
+            rule_name: Some(self.name.clone()),
+            ai_polish_enabled: bool_override(self.ai_polish),
+            translation_target,
+            screen_context_enabled: bool_override(self.screen_context),
+            history_enabled: bool_override(self.history),
+            custom_prompt: self
+                .custom_prompt
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+        }
+    }
+}
+
+/// 系统级划词助手行为配置。默认关闭，避免升级后意外监听全局鼠标。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionAssistantConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_screenshot: bool,
+    #[serde(default)]
+    pub screenshot_routing: bool,
+    #[serde(default)]
+    pub custom_prompt: Option<String>,
+    #[serde(default = "default_selection_translation_target")]
+    pub translation_target: String,
+    #[serde(default = "default_selection_excluded_apps")]
+    pub excluded_apps: Vec<String>,
+}
+
+fn default_selection_translation_target() -> String {
+    "English".to_string()
+}
+
+fn default_selection_excluded_apps() -> Vec<String> {
+    [
+        "speak-flow.exe",
+        "snipaste.exe",
+        "pixpin.exe",
+        "sharex.exe",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+impl Default for SelectionAssistantConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_screenshot: false,
+            screenshot_routing: false,
+            custom_prompt: None,
+            translation_target: default_selection_translation_target(),
+            excluded_apps: default_selection_excluded_apps(),
+        }
+    }
+}
+
+/// 联网搜索方式
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSearchProvider {
+    /// 使用模型厂商内置搜索能力（OpenAI web_search / Anthropic web_search）
+    #[default]
+    ModelNative,
+    /// Bing public web search (no API key).
+    Bing,
+    /// Exa MCP (rate-limited free tier; optional API key).
+    Exa,
+    /// Tavily Search API（需要 API Key）
+    Tavily,
+    /// Gemini Grounding with Google Search（需要 Google AI API Key）
+    Google,
+}
+
+/// 联网搜索配置（仅在助手模式下生效）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSearchConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub provider: WebSearchProvider,
+    /// 搜索结果条数（1-10，默认 5）
+    #[serde(default = "default_max_results")]
+    pub max_results: u8,
+}
+
+fn default_max_results() -> u8 {
+    5
+}
+
+impl Default for WebSearchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: WebSearchProvider::default(),
+            max_results: default_max_results(),
+        }
+    }
+}
+
+/// API 协议格式
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiFormat {
+    #[default]
+    OpenaiCompat,
+    Anthropic,
+}
+
+/// OpenAI 认证方式选择（仅当 active / assistant provider 为 openai 时生效）
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenaiAuthMode {
+    /// 只使用用户填入的 API Key，忽略已登录的 OAuth session
+    ApiKey,
+    /// 只使用 OAuth session，忽略手填的 API Key
+    Oauth,
+}
+
+/// xAI 认证方式选择（仅当 active / assistant provider 为 xai 时生效）
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum XaiAuthMode {
+    ApiKey,
+    Oauth,
+}
+
+/// AI 润色的结构化改写强度。与模型推理深度彼此独立。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PolishStructureLevel {
+    /// 只校正和断句，不重排内容
+    #[default]
+    Off,
+    /// 只处理明确的列表、步骤和自然分段
+    Light,
+    /// 主动归类相关观点，使长口述更易扫读
+    Balanced,
+    /// 允许在忠实保留关键事实的前提下总结和重排
+    Strong,
+}
+
+/// 推理/思考模式（跨供应商抽象层）
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmReasoningMode {
+    /// 不下发任何推理参数，走供应商默认行为
+    #[default]
+    ProviderDefault,
+    /// 尽量关闭或压低思考
+    Off,
+    /// 偏轻量
+    Light,
+    /// 标准
+    Balanced,
+    /// 偏深度
+    Deep,
+}
+
+/// 用户自定义的 LLM 服务商
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomProvider {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub model: String,
+    #[serde(default)]
+    pub api_format: ApiFormat,
+}
+
+/// LLM 后端配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmProviderConfig {
+    /// 当前使用的后端: 预置 key 或 custom provider id
+    pub active: String,
+    /// 旧字段，迁移兼容
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_model: Option<String>,
+    /// 跨供应商的思考模式抽象层
+    #[serde(default)]
+    pub reasoning_mode: LlmReasoningMode,
+    /// AI 润色链路的独立思考模式；为空时回退到旧的 reasoning_mode
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polish_reasoning_mode: Option<LlmReasoningMode>,
+    /// AI 助手链路的独立思考模式；为空时回退到旧的 reasoning_mode
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_reasoning_mode: Option<LlmReasoningMode>,
+    /// AI 助手是否使用不同于润色的独立模型
+    #[serde(default)]
+    pub assistant_use_separate_model: bool,
+    /// AI 助手独立模型；仅在 assistant_use_separate_model = true 时生效
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_model: Option<String>,
+    /// AI 助手独立供应商；仅在 assistant_use_separate_model = true 时生效
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_provider: Option<String>,
+    /// 划词助手思考模式；为空时回退到润色思考模式
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_reasoning_mode: Option<LlmReasoningMode>,
+    /// 划词助手是否使用不同于润色的独立模型
+    #[serde(default)]
+    pub selection_use_separate_model: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_provider: Option<String>,
+    /// 用户自定义服务商列表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_providers: Vec<CustomProvider>,
+    /// 纠错审核是否使用独立供应商/模型
+    #[serde(default)]
+    pub validation_use_separate_model: bool,
+    /// 纠错审核独立供应商
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_provider: Option<String>,
+    /// 纠错审核独立模型
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_model: Option<String>,
+    /// 当前模型不支持图片输入时，是否启用独立视觉模型读取屏幕
+    #[serde(default)]
+    pub screen_vision_enabled: bool,
+    /// 屏幕视觉模型供应商
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_vision_provider: Option<String>,
+    /// 屏幕视觉模型
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_vision_model: Option<String>,
+    /// OpenAI 认证方式：None = 用户未显式选择（resolver 按 OAuth 登录状态推断智能默认）；
+    /// Some(ApiKey) / Some(Oauth) = 用户通过设置页明确选定后存进来
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openai_auth_mode: Option<OpenaiAuthMode>,
+    /// ChatGPT OAuth 快速模式：注入 service_tier="priority" 走优先处理通道。
+    /// 仅对已登录的 ChatGPT OAuth 会话生效，API Key 请求永不携带该标记。
+    /// 用户侧叫 "fast mode / 快速模式"，wire 值是 "priority"（对齐官方 Codex CLI）。
+    #[serde(default)]
+    pub openai_fast_mode: bool,
+    /// xAI 认证方式：None = 用户未显式选择（resolver 按 Grok Build 登录状态推断智能默认）；
+    /// Some(ApiKey) / Some(Oauth) = 用户通过设置页明确选定后存进来
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xai_auth_mode: Option<XaiAuthMode>,
+}
+
+impl Default for LlmProviderConfig {
+    fn default() -> Self {
+        Self {
+            active: "cerebras".to_string(),
+            custom_base_url: None,
+            custom_model: None,
+            reasoning_mode: LlmReasoningMode::ProviderDefault,
+            polish_reasoning_mode: None,
+            assistant_reasoning_mode: None,
+            assistant_use_separate_model: false,
+            assistant_model: None,
+            assistant_provider: None,
+            selection_reasoning_mode: None,
+            selection_use_separate_model: false,
+            selection_model: None,
+            selection_provider: None,
+            custom_providers: Vec::new(),
+            validation_use_separate_model: false,
+            validation_provider: None,
+            validation_model: None,
+            screen_vision_enabled: false,
+            screen_vision_provider: None,
+            screen_vision_model: None,
+            openai_auth_mode: None,
+            openai_fast_mode: false,
+            xai_auth_mode: None,
+        }
+    }
+}
+
+impl LlmProviderConfig {
+    pub(crate) fn is_builtin_provider(provider: &str) -> bool {
+        matches!(
+            provider,
+            "cerebras" | "openai" | "xai" | "deepseek" | "siliconflow" | "custom"
+        )
+    }
+
+    pub fn resolve_active_provider(&self) -> String {
+        if Self::is_builtin_provider(&self.active)
+            || self.custom_providers.iter().any(|p| p.id == self.active)
+        {
+            return self.active.clone();
+        }
+
+        self.custom_providers
+            .last()
+            .map(|provider| provider.id.clone())
+            .unwrap_or_else(|| "cerebras".to_string())
+    }
+
+    pub fn fallback_provider_after_removal(&self, removed_id: &str) -> String {
+        if self.active != removed_id {
+            return self.resolve_active_provider();
+        }
+
+        if let Some(index) = self
+            .custom_providers
+            .iter()
+            .position(|p| p.id == removed_id)
+        {
+            if index > 0 {
+                return self.custom_providers[index - 1].id.clone();
+            }
+
+            if let Some(next) = self
+                .custom_providers
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(idx, _)| *idx != index)
+                .map(|(_, provider)| provider.id.clone())
+            {
+                return next;
+            }
+        }
+
+        "cerebras".to_string()
+    }
+
+    pub fn polish_reasoning_mode(&self) -> LlmReasoningMode {
+        self.polish_reasoning_mode.unwrap_or(self.reasoning_mode)
+    }
+
+    pub fn assistant_reasoning_mode(&self) -> LlmReasoningMode {
+        self.assistant_reasoning_mode.unwrap_or(self.reasoning_mode)
+    }
+
+    pub fn assistant_model(&self) -> Option<&str> {
+        if !self.assistant_use_separate_model {
+            return None;
+        }
+        self.assistant_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn selection_reasoning_mode(&self) -> LlmReasoningMode {
+        if self.has_valid_separate_selection_model() {
+            self.selection_reasoning_mode
+                .unwrap_or_else(|| self.polish_reasoning_mode())
+        } else {
+            self.polish_reasoning_mode()
+        }
+    }
+
+    pub fn selection_model(&self) -> Option<&str> {
+        if !self.has_valid_separate_selection_model() {
+            return None;
+        }
+        self.selection_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn resolve_selection_provider(&self) -> String {
+        if self.has_valid_separate_selection_model() {
+            return self
+                .selection_provider
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
+        }
+        self.resolve_active_provider()
+    }
+
+    fn has_valid_separate_selection_model(&self) -> bool {
+        if !self.selection_use_separate_model {
+            return false;
+        }
+        let provider = self
+            .selection_provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let model_is_set = self
+            .selection_model
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        provider.is_some_and(|provider| {
+            Self::is_builtin_provider(provider)
+                || self.custom_providers.iter().any(|item| item.id == provider)
+        }) && model_is_set
+    }
+
+    pub fn validation_model(&self) -> Option<&str> {
+        if !self.validation_use_separate_model {
+            return None;
+        }
+        self.validation_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn resolve_validation_provider(&self) -> String {
+        if self.validation_use_separate_model {
+            if let Some(ref p) = self.validation_provider {
+                if Self::is_builtin_provider(p)
+                    || self.custom_providers.iter().any(|cp| cp.id == *p)
+                {
+                    return p.clone();
+                }
+            }
+        }
+        self.resolve_active_provider()
+    }
+
+    pub fn screen_vision_model(&self) -> Option<&str> {
+        if !self.has_valid_screen_vision_model() {
+            return None;
+        }
+        self.screen_vision_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn resolve_screen_vision_provider(&self) -> Option<String> {
+        if !self.has_valid_screen_vision_model() {
+            return None;
+        }
+        self.screen_vision_provider
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_string)
+    }
+
+    pub fn has_valid_screen_vision_model(&self) -> bool {
+        if !self.screen_vision_enabled {
+            return false;
+        }
+        let provider = self
+            .screen_vision_provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let model_is_set = self
+            .screen_vision_model
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        provider.is_some_and(|provider| {
+            Self::is_builtin_provider(provider)
+                || self.custom_providers.iter().any(|item| item.id == provider)
+        }) && model_is_set
+    }
+
+    /// 解析助手实际使用的 provider（独立配置 > 润色 active）
+    pub fn resolve_assistant_provider(&self) -> String {
+        if self.assistant_use_separate_model {
+            if let Some(ref p) = self.assistant_provider {
+                if Self::is_builtin_provider(p)
+                    || self.custom_providers.iter().any(|cp| cp.id == *p)
+                {
+                    return p.clone();
+                }
+            }
+        }
+        self.resolve_active_provider()
+    }
+}
+
+impl UserProfile {
+    pub fn screen_context_enabled(&self) -> bool {
+        self.ai_polish_screen_context_enabled || self.assistant_screen_context_enabled
+    }
+
+    pub fn resolve_app_profile(
+        &self,
+        process_name: &str,
+        window_title: &str,
+    ) -> ResolvedAppProfile {
+        self.app_profile_rules
+            .iter()
+            .find(|rule| rule.matches(process_name, window_title))
+            .map(AppProfileRule::resolve)
+            .unwrap_or_default()
+    }
+
+    /// 获取按权重排序的热词文本列表（用于 ASR 注入）
+    pub fn get_hot_word_texts(&self, limit: usize) -> Vec<String> {
+        let mut words: Vec<&HotWord> = self.hot_words.iter().collect();
+        words.sort_by(|a, b| b.weight.cmp(&a.weight).then(b.use_count.cmp(&a.use_count)));
+        words
+            .into_iter()
+            .take(limit)
+            .map(|w| w.text.clone())
+            .collect()
+    }
+
+    /// 根据输入文本动态检索相关纠错模式
+    ///
+    /// 策略：精确子串匹配优先（input 中包含 pattern.original），
+    /// 不足 limit 条时用高频纠错兜底。User 来源始终优先于 Ai。
+    pub fn get_relevant_corrections(&self, input: &str, limit: usize) -> Vec<&CorrectionPattern> {
+        let source_ord = |s: &CorrectionSource| match s {
+            CorrectionSource::User => 0,
+            CorrectionSource::Ai => 1,
+        };
+
+        // 仅注入与当前输入子串匹配的纠错，不注入无关高频规则
+        let mut matched: Vec<&CorrectionPattern> = self
+            .correction_patterns
+            .iter()
+            .filter(|p| !p.original.is_empty() && input.contains(&p.original))
+            .collect();
+        matched.sort_by(|a, b| {
+            source_ord(&a.source)
+                .cmp(&source_ord(&b.source))
+                .then(b.count.cmp(&a.count))
+        });
+        matched.truncate(limit);
+        matched
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ApiFormat, AppProfileRule, AppRuleOverride, AppTranslationOverride, CustomProvider,
+        HistorySettings, LlmProviderConfig, LlmReasoningMode, PolishStructureLevel,
+        SelectionAssistantConfig, UserProfile,
+    };
+
+    fn custom_provider(id: &str) -> CustomProvider {
+        CustomProvider {
+            id: id.to_string(),
+            name: id.to_string(),
+            base_url: format!("https://{id}.example.com"),
+            model: format!("model-{id}"),
+            api_format: ApiFormat::OpenaiCompat,
+        }
+    }
+
+    #[test]
+    fn autostart_minimized_defaults_off_for_legacy_profiles_and_round_trips() {
+        let mut value = serde_json::to_value(UserProfile::default()).unwrap();
+        value.as_object_mut().unwrap().remove("autostart_minimized");
+        let mut profile: UserProfile = serde_json::from_value(value).unwrap();
+        assert!(!profile.autostart_minimized);
+
+        profile.autostart_minimized = true;
+        let saved = serde_json::to_string(&profile).unwrap();
+        let restored: UserProfile = serde_json::from_str(&saved).unwrap();
+        assert!(restored.autostart_minimized);
+    }
+
+    #[test]
+    fn legacy_profile_without_structure_level_defaults_to_unstructured() {
+        let mut value = serde_json::to_value(UserProfile::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("polish_structure_level");
+
+        let profile: UserProfile = serde_json::from_value(value).unwrap();
+
+        assert_eq!(profile.polish_structure_level, PolishStructureLevel::Off);
+    }
+
+    #[test]
+    fn legacy_profile_without_screen_vision_defaults_to_disabled() {
+        let mut value = serde_json::to_value(UserProfile::default()).unwrap();
+        let llm_provider = value
+            .get_mut("llm_provider")
+            .and_then(serde_json::Value::as_object_mut)
+            .unwrap();
+        llm_provider.remove("screen_vision_enabled");
+        llm_provider.remove("screen_vision_provider");
+        llm_provider.remove("screen_vision_model");
+
+        let profile: UserProfile = serde_json::from_value(value).unwrap();
+
+        assert!(!profile.llm_provider.screen_vision_enabled);
+        assert!(!profile.llm_provider.has_valid_screen_vision_model());
+    }
+
+    #[test]
+    fn legacy_screen_context_flags_are_unified_when_either_is_enabled() {
+        let polish_only = UserProfile {
+            ai_polish_screen_context_enabled: true,
+            ..Default::default()
+        };
+        let assistant_only = UserProfile {
+            assistant_screen_context_enabled: true,
+            ..Default::default()
+        };
+
+        assert!(polish_only.screen_context_enabled());
+        assert!(assistant_only.screen_context_enabled());
+        assert!(!UserProfile::default().screen_context_enabled());
+    }
+
+    #[test]
+    fn screen_vision_requires_an_existing_provider_and_model() {
+        let valid = LlmProviderConfig {
+            screen_vision_enabled: true,
+            screen_vision_provider: Some("openai".to_string()),
+            screen_vision_model: Some("gpt-4.1-mini".to_string()),
+            ..Default::default()
+        };
+        let invalid = LlmProviderConfig {
+            screen_vision_provider: Some("missing".to_string()),
+            ..valid.clone()
+        };
+
+        assert!(valid.has_valid_screen_vision_model());
+        assert!(!invalid.has_valid_screen_vision_model());
+    }
+
+    #[test]
+    fn resolves_invalid_active_provider_to_latest_custom_provider() {
+        let config = LlmProviderConfig {
+            active: "missing".to_string(),
+            custom_providers: vec![custom_provider("a"), custom_provider("b")],
+            ..Default::default()
+        };
+
+        assert_eq!(config.resolve_active_provider(), "b");
+    }
+
+    #[test]
+    fn falls_back_to_previous_provider_after_removal() {
+        let config = LlmProviderConfig {
+            active: "b".to_string(),
+            custom_providers: vec![
+                custom_provider("a"),
+                custom_provider("b"),
+                custom_provider("c"),
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(config.fallback_provider_after_removal("b"), "a");
+    }
+
+    #[test]
+    fn falls_back_to_last_remaining_provider_when_removing_first() {
+        let config = LlmProviderConfig {
+            active: "a".to_string(),
+            custom_providers: vec![
+                custom_provider("a"),
+                custom_provider("b"),
+                custom_provider("c"),
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(config.fallback_provider_after_removal("a"), "c");
+    }
+
+    #[test]
+    fn split_reasoning_modes_fall_back_to_legacy_mode() {
+        let config = LlmProviderConfig {
+            active: "openai".to_string(),
+            reasoning_mode: LlmReasoningMode::Light,
+            ..Default::default()
+        };
+
+        assert_eq!(config.polish_reasoning_mode(), LlmReasoningMode::Light);
+        assert_eq!(config.assistant_reasoning_mode(), LlmReasoningMode::Light);
+    }
+
+    #[test]
+    fn selection_config_follows_polish_as_an_atomic_default() {
+        let config = LlmProviderConfig {
+            active: "deepseek".to_string(),
+            polish_reasoning_mode: Some(LlmReasoningMode::Light),
+            selection_reasoning_mode: Some(LlmReasoningMode::Deep),
+            selection_provider: Some("openai".to_string()),
+            selection_model: Some("gpt-5".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(config.resolve_selection_provider(), "deepseek");
+        assert_eq!(config.selection_model(), None);
+        assert_eq!(config.selection_reasoning_mode(), LlmReasoningMode::Light);
+    }
+
+    #[test]
+    fn selection_config_falls_back_atomically_when_provider_was_removed() {
+        let config = LlmProviderConfig {
+            active: "deepseek".to_string(),
+            polish_reasoning_mode: Some(LlmReasoningMode::Light),
+            selection_use_separate_model: true,
+            selection_provider: Some("removed-provider".to_string()),
+            selection_model: Some("stale-model".to_string()),
+            selection_reasoning_mode: Some(LlmReasoningMode::Deep),
+            ..Default::default()
+        };
+
+        assert_eq!(config.resolve_selection_provider(), "deepseek");
+        assert_eq!(config.selection_model(), None);
+        assert_eq!(config.selection_reasoning_mode(), LlmReasoningMode::Light);
+    }
+
+    #[test]
+    fn selection_config_uses_a_complete_custom_model_override() {
+        let config = LlmProviderConfig {
+            active: "deepseek".to_string(),
+            selection_use_separate_model: true,
+            selection_provider: Some("vision".to_string()),
+            selection_model: Some(" vision-v2 ".to_string()),
+            selection_reasoning_mode: Some(LlmReasoningMode::Off),
+            custom_providers: vec![custom_provider("vision")],
+            ..Default::default()
+        };
+
+        assert_eq!(config.resolve_selection_provider(), "vision");
+        assert_eq!(config.selection_model(), Some("vision-v2"));
+        assert_eq!(config.selection_reasoning_mode(), LlmReasoningMode::Off);
+    }
+
+    #[test]
+    fn automatic_selection_screenshots_are_opt_in() {
+        assert!(!SelectionAssistantConfig::default().auto_screenshot);
+        assert!(!SelectionAssistantConfig::default().screenshot_routing);
+        assert!(SelectionAssistantConfig::default().custom_prompt.is_none());
+
+        let legacy: SelectionAssistantConfig =
+            serde_json::from_value(serde_json::json!({ "enabled": true })).unwrap();
+        assert!(!legacy.auto_screenshot);
+        assert!(!legacy.screenshot_routing);
+        assert!(legacy.custom_prompt.is_none());
+    }
+
+    #[test]
+    fn selection_and_dictation_instructions_round_trip_independently() {
+        let profile = UserProfile {
+            custom_prompt: Some("Dictation instruction".to_string()),
+            selection_assistant: SelectionAssistantConfig {
+                custom_prompt: Some("Selection instruction".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let reloaded: UserProfile =
+            serde_json::from_value(serde_json::to_value(profile).unwrap()).unwrap();
+        assert_eq!(
+            reloaded.custom_prompt.as_deref(),
+            Some("Dictation instruction")
+        );
+        assert_eq!(
+            reloaded.selection_assistant.custom_prompt.as_deref(),
+            Some("Selection instruction")
+        );
+    }
+
+    #[test]
+    fn legacy_selection_length_limits_are_ignored() {
+        let config: SelectionAssistantConfig = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "min_chars": 4,
+            "max_chars": 900
+        }))
+        .unwrap();
+        let serialized = serde_json::to_value(config).unwrap();
+
+        assert!(serialized.get("min_chars").is_none());
+        assert!(serialized.get("max_chars").is_none());
+    }
+
+    /// TDD red-state: the new `openai_fast_mode` field must default to `false`
+    /// on `LlmProviderConfig`, so existing profiles without the key behave
+    /// exactly as before. The impl agent is responsible for adding the field
+    /// (serde-flagged as `#[serde(default)]`) and wiring its default.
+    #[test]
+    fn default_llm_provider_config_has_fast_mode_disabled() {
+        let config = LlmProviderConfig::default();
+
+        assert!(
+            !config.openai_fast_mode,
+            "openai_fast_mode must default to false so existing users do not silently start consuming fast-mode credits"
+        );
+    }
+
+    #[test]
+    fn history_is_opt_in_and_defaults_to_no_audio() {
+        let settings = HistorySettings::default();
+        assert!(!settings.enabled);
+        assert!(!settings.save_audio);
+        assert_eq!(settings.retention_days, 90);
+    }
+
+    #[test]
+    fn first_matching_app_rule_resolves_case_insensitively() {
+        let profile = UserProfile {
+            app_profile_rules: vec![
+                AppProfileRule {
+                    id: "specific".into(),
+                    name: "VS Code Markdown".into(),
+                    process_name: "Code.exe".into(),
+                    window_title_contains: Some("README".into()),
+                    ai_polish: AppRuleOverride::Enabled,
+                    translation: AppTranslationOverride::Target,
+                    translation_target: Some("English".into()),
+                    history: AppRuleOverride::Disabled,
+                    ..Default::default()
+                },
+                AppProfileRule {
+                    id: "fallback".into(),
+                    name: "VS Code".into(),
+                    process_name: "code".into(),
+                    ai_polish: AppRuleOverride::Disabled,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let resolved = profile.resolve_app_profile("CODE.EXE", "README.md - speak-flow");
+        assert_eq!(resolved.rule_id.as_deref(), Some("specific"));
+        assert_eq!(resolved.ai_polish_enabled, Some(true));
+        assert_eq!(resolved.translation_target, Some(Some("English".into())));
+        assert_eq!(resolved.history_enabled, Some(false));
+    }
+
+    #[test]
+    fn app_rule_with_nonmatching_title_falls_through() {
+        let profile = UserProfile {
+            app_profile_rules: vec![
+                AppProfileRule {
+                    id: "specific".into(),
+                    name: "Only README".into(),
+                    process_name: "Code.exe".into(),
+                    window_title_contains: Some("README".into()),
+                    ..Default::default()
+                },
+                AppProfileRule {
+                    id: "fallback".into(),
+                    name: "All VS Code".into(),
+                    process_name: "Code.exe".into(),
+                    screen_context: AppRuleOverride::Disabled,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let resolved = profile.resolve_app_profile("Code.exe", "main.rs - speak-flow");
+        assert_eq!(resolved.rule_id.as_deref(), Some("fallback"));
+        assert_eq!(resolved.screen_context_enabled, Some(false));
+    }
+}

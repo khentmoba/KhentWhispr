@@ -1,0 +1,4055 @@
+import { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ArrowLeft, Mic, Eye, Keyboard, ClipboardPaste, AudioLines, AudioWaveform, Zap, Sparkles, BookOpen, Plus, X, Minus, ChevronsUpDown, Globe, Cloud, Trash2, FolderOpen, RotateCcw, HardDrive, AlertTriangle, Ellipsis } from "lucide-react";
+import { toast } from "sonner";
+import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
+import { useHotkeyCapture } from "@/hooks/useHotkeyCapture";
+import { useExclusivePicker } from "@/hooks/useExclusivePicker";
+import { useSystemSettings } from "@/hooks/useSystemSettings";
+import { useModelDiscovery } from "@/hooks/useModelDiscovery";
+import { useAsrEngineSettings } from "@/hooks/useAsrEngineSettings";
+import { useModelDirectorySettings } from "@/hooks/useModelDirectorySettings";
+import { useMicrophoneSettings } from "@/hooks/useMicrophoneSettings";
+import {
+  setInputMethodCommand,
+  setAiPolishConfig,
+  saveAiPolishApiKey,
+  setScreenContextMode,
+  setWebSearchMode,
+  setPolishMode,
+  getAiPolishApiKey,
+  getGrokBuildOauthStatus,
+  getOpenaiCodexOauthStatus,
+  removeChatgptAccount,
+  getUserProfile,
+  addHotWord,
+  listAiModels,
+  removeHotWord,
+  setLlmProviderConfig,
+  setScreenVisionConfig,
+  getScreenVisionApiKey,
+  setScreenVisionApiKey,
+  setSoundEnabled,
+  setTranslationTarget,
+  setTranslationHotkey,
+  setCustomPrompt,
+  setPolishStructureLevel,
+  setRecordingMode,
+  addCustomProvider,
+  removeCustomProvider,
+  setAssistantHotkey,
+  setAssistantSystemPrompt,
+  getLlmReasoningSupport,
+  setAssistantApiKey,
+  getAssistantApiKey,
+  loginGrokBuildOauth,
+  loginOpenaiCodexOauth,
+  startGrokBuildOauthDeviceCode,
+  startOpenaiCodexOauthDeviceCode,
+  completeGrokBuildOauthDeviceCode,
+  completeOpenaiCodexOauthDeviceCode,
+  logoutGrokBuildOauth,
+  logoutOpenaiCodexOauth,
+  copyToClipboard,
+  setOpenaiFastMode,
+  setWebSearchConfig,
+  setWebSearchApiKey,
+  getWebSearchApiKey,
+  hideMainWindow,
+} from "@/api/tauri";
+import type { ContextMode, CustomProvider, UserProfile, ApiFormat, GrokBuildOauthDeviceCodeChallenge, GrokBuildOauthStatus, LlmReasoningMode, LlmReasoningSupport, OpenaiAuthMode, OpenaiCodexOauthDeviceCodeChallenge, OpenaiCodexOauthStatus, PolishStructureLevel, WebSearchProvider, XaiAuthMode } from "@/types";
+import { useRecordingContext } from "@/contexts/RecordingContext";
+import SecretInput from "@/components/SecretInput";
+import Kbd from "@/components/Kbd";
+import TitleBar from "@/components/TitleBar";
+import AppearanceSettingsSection from "@/components/settings/AppearanceSettingsSection";
+import TranslationSettingsSection from "@/components/settings/TranslationSettingsSection";
+import SystemSettingsSections from "@/components/settings/SystemSettingsSections";
+import SelectionAssistantSettingsSection from "@/components/settings/SelectionAssistantSettingsSection";
+import AppProfileRulesSettingsSection from "@/components/settings/AppProfileRulesSettingsSection";
+import HistorySettingsSection from "@/components/settings/HistorySettingsSection";
+import PolishStructureControl from "@/components/settings/PolishStructureControl";
+import ProcessingModeControl from "@/components/settings/ProcessingModeControl";
+import JevSettingsSection from "@/components/settings/JevSettingsSection";
+import GpuIdleUnloadControl from "@/components/settings/GpuIdleUnloadControl";
+import { SettingsDisclosure, SettingsReveal } from "@/components/settings/SettingsReveal";
+import ScreenVisionModelPicker from "@/components/settings/ScreenVisionModelPicker";
+import R2T2SettingsSection from "@/components/settings/R2T2SettingsSection";
+import { prefersReducedMotion } from "@/lib/motion";
+import { PADDING, INPUT_METHOD_KEY, DEFAULT_HOTKEY, AI_POLISH_ENABLED_KEY, SOUND_ENABLED_KEY, RECORDING_MODE_KEY } from "@/lib/constants";
+import { formatAsrEngineDescription, getAsrEngineCapability } from "@/lib/asrEngineCapabilities";
+import {
+  resolveAssistantModelForProviderChange,
+  resolveAssistantModelForPolishProviderChange,
+  resolveAssistantModelState,
+  resolveAssistantModelToggleState,
+  resolveAssistantProviderToPersist,
+  resolveEffectiveAssistantProvider,
+  shouldShowFastModeToggle,
+} from "@/lib/fastMode";
+import {
+  effectiveXaiAuthMode,
+  shouldShowGrokBuildAuth,
+  shouldUseGrokBuildOauth,
+} from "@/lib/grokBuildAuth";
+import { formatHotkeyForDisplay } from "@/lib/hotkey";
+import {
+  resolveAssistantLlmReasoningProbeTarget,
+  resolveLlmReasoningProbeTarget,
+} from "@/lib/llmReasoningProbe";
+import {
+  findLlmPreset,
+  resolveModelId,
+  findReasoningModeOption,
+  isFixedPresetProvider,
+  llmProviderOptions,
+  reasoningModeOptions,
+  resolveLlmBaseUrl,
+  resolveLlmModel,
+} from "@/lib/llmModelOptions";
+import { readLocalStorage, writeLocalStorage } from "@/lib/storage";
+import { useTranslation } from "react-i18next";
+
+const CorrectionRulesModal = lazy(() => import("@/components/settings/CorrectionRulesModal"));
+
+const DEFAULT_SCREEN_VISION_PROVIDER = "openai";
+const DEFAULT_SCREEN_VISION_MODEL = "gpt-4.1-mini";
+
+const engineOptions = [
+  { key: "qwen3-asr-0.6b", icon: Zap, label: "Qwen3-ASR 0.6B Q8", labelKey: undefined, descKey: "settings.qwen3Asr06Desc" },
+  { key: "confucius4-r2t2", icon: AudioWaveform, label: "Confucius4-R2T2 Q8", labelKey: undefined, descKey: "settings.r2t2Desc" },
+  { key: "glm-asr", icon: Globe, label: "GLM-ASR", labelKey: undefined, descKey: "settings.glmAsrDesc" },
+  { key: "alibaba-asr", icon: Cloud, label: "Alibaba DashScope", labelKey: "settings.alibabaAsrLabel", descKey: "settings.alibabaAsrDesc" },
+] as const;
+
+const ONLINE_ENGINES: ReadonlySet<string> = new Set(["glm-asr", "alibaba-asr"]);
+const isOnlineEngineKey = (engine: string) => ONLINE_ENGINES.has(engine);
+
+const engineOptionLabel = (
+  option: (typeof engineOptions)[number],
+  translate: (key: string) => string,
+) => option.labelKey ? translate(option.labelKey) : option.label;
+
+const asrCapabilityTagKeys = (engineKey: string) => {
+  const capability = getAsrEngineCapability(engineKey);
+  if (!capability) return [];
+  return [
+    capability.execution === "local" ? "settings.capabilityLocal" : "settings.capabilityCloud",
+    capability.interim ? "settings.capabilityFinalInterim" : "settings.capabilityFinalOnly",
+  ];
+};
+
+const inputOptions = [
+  { key: "sendInput" as const, icon: Keyboard, labelKey: "settings.directInput", descKey: "settings.directInputDesc" },
+  { key: "clipboard" as const, icon: ClipboardPaste, labelKey: "settings.clipboardPaste", descKey: "settings.clipboardPasteDesc" },
+];
+
+const LLM_PROVIDER_DRAFTS_KEY = "speak-flow-llm-provider-drafts";
+
+const recordingModeOptions: Array<{
+  key: "hold" | "toggle";
+  labelKey: string;
+  descKey: string;
+}> = [
+  { key: "hold", labelKey: "settings.holdToTalk", descKey: "settings.holdToTalkDesc" },
+  { key: "toggle", labelKey: "settings.toggleMode", descKey: "settings.toggleModeDesc" },
+];
+
+const webSearchProviderOptions: Array<{
+  key: WebSearchProvider;
+  labelKey: string;
+  descKey: string;
+}> = [
+  { key: "model_native", labelKey: "settings.webSearchModelNative", descKey: "settings.webSearchModelNativeDesc" },
+  { key: "bing", labelKey: "settings.webSearchBing", descKey: "settings.webSearchBingDesc" },
+  { key: "exa", labelKey: "settings.webSearchExa", descKey: "settings.webSearchExaDesc" },
+  { key: "tavily", labelKey: "settings.webSearchTavily", descKey: "settings.webSearchTavilyDesc" },
+  { key: "google", labelKey: "settings.webSearchGoogle", descKey: "settings.webSearchGoogleDesc" },
+];
+
+function webSearchProviderNeedsKey(provider: WebSearchProvider): provider is "tavily" | "google" | "exa" {
+  return provider === "tavily" || provider === "google" || provider === "exa";
+}
+
+const sourceLabels: Record<string, string> = {
+  user: "settings.sourceManual",
+  learned: "settings.sourceLearned",
+};
+
+const sourceColors: Record<string, string> = {
+  user: "var(--color-accent)",
+  learned: "var(--color-learned)",
+};
+
+interface LlmProviderDraft {
+  baseUrl: string;
+  model: string;
+}
+
+type LlmProviderDraftMap = Record<string, LlmProviderDraft>;
+
+function resolveEffectiveProvider(key: string, customProviders: CustomProvider[]): string {
+  if (llmProviderOptions.some((option) => option.key === key)) {
+    return key;
+  }
+  if (customProviders.some((provider) => provider.id === key)) {
+    return key;
+  }
+  return customProviders.length > 0
+    ? customProviders[customProviders.length - 1].id
+    : "cerebras";
+}
+
+function findRecordingModeOption(mode: "hold" | "toggle") {
+  return recordingModeOptions.find((option) => option.key === mode) ?? recordingModeOptions[0];
+}
+
+function readLlmProviderDrafts(): LlmProviderDraftMap {
+  const raw = readLocalStorage(LLM_PROVIDER_DRAFTS_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as LlmProviderDraftMap;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLlmProviderDrafts(drafts: LlmProviderDraftMap): void {
+  writeLocalStorage(LLM_PROVIDER_DRAFTS_KEY, JSON.stringify(drafts));
+}
+
+export default function SettingsPage({
+  onNavigate,
+  active,
+  animClass = "",
+}: {
+  onNavigate: (v: "main" | "settings" | "history") => void;
+  active: boolean;
+  animClass?: string;
+}) {
+  const pageContentClass = `page-content ${animClass || ""}`.trim();
+
+  const { t } = useTranslation();
+  const { isRecording, retryModel, hotkeyDisplay, setHotkey, hotkeyError, hotkeyDiagnostic } = useRecordingContext();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileLoadError, setProfileLoadError] = useState(false);
+  const [profileLoadPending, setProfileLoadPending] = useState(false);
+  const settingsReady = profile !== null && !profileLoadError;
+
+  // --- Settings nav sections ---
+  const navSections = useMemo(() => [
+    { id: "appearance", labelKey: "settings.appearance" },
+    { id: "engine", labelKey: "settings.engine" },
+    { id: "hotkey", labelKey: "settings.hotkeySection" },
+    { id: "microphone", labelKey: "settings.microphone" },
+    { id: "input", labelKey: "settings.inputMethod" },
+    { id: "ai-polish", labelKey: "settings.aiPolish" },
+    { id: "context", labelKey: "settings.contextAndSearch" },
+    { id: "jev", labelKey: "settings.jevNav" },
+    { id: "assistant", labelKey: "settings.assistant" },
+    { id: "selection-assistant", labelKey: "settings.selectionAssistant" },
+    { id: "translation", labelKey: "settings.translation" },
+    { id: "app-profiles", labelKey: "settings.appProfiles" },
+    { id: "history-settings", labelKey: "settings.historySettings" },
+    { id: "vocabulary", labelKey: "settings.vocabulary" },
+    { id: "startup", labelKey: "settings.startup" },
+  ] as const, []);
+  const [activeNavSection, setActiveNavSection] = useState("appearance");
+  const [navIndicatorStyle, setNavIndicatorStyle] = useState<{ left: number; width: number } | null>(null);
+  const settingsContentRef = useRef<HTMLDivElement | null>(null);
+  const navScrollRef = useRef<HTMLDivElement | null>(null);
+  const isNavClickScrolling = useRef(false);
+  const navScrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Measure the scroll position instead of relying on a narrow intersection
+  // band that the final sections cannot reach. Keep click intent until scrollend.
+  useEffect(() => {
+    const container = settingsContentRef.current;
+    if (!container) return;
+    const sectionEls = navSections
+      .map(({ id }) => container.querySelector(`[data-nav-id="${id}"]`))
+      .filter(Boolean) as Element[];
+    if (sectionEls.length === 0) return;
+
+    let frame = 0;
+    const updateSection = () => {
+      frame = 0;
+      if (isNavClickScrolling.current) return;
+      const atBottom = container.scrollHeight > container.clientHeight
+        && container.scrollTop + container.clientHeight >= container.scrollHeight - 2;
+      const top = container.getBoundingClientRect().top + container.clientHeight * 0.1;
+      const current = atBottom ? sectionEls[sectionEls.length - 1] : sectionEls.reduce((selected, section) => (
+        section.getBoundingClientRect().top <= top ? section : selected
+      ), sectionEls[0]);
+      const id = (current as HTMLElement).dataset.navId;
+      if (id) setActiveNavSection(id);
+    };
+    const finishScroll = () => {
+      clearTimeout(navScrollTimer.current);
+      isNavClickScrolling.current = false;
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(updateSection);
+      clearTimeout(navScrollTimer.current);
+      // Fallback for WebView versions without scrollend: wait for silence,
+      // restarting on every scroll frame instead of guessing journey duration.
+      navScrollTimer.current = setTimeout(finishScroll, 180);
+    };
+    const interruptScroll = () => { finishScroll(); };
+    updateSection();
+    container.addEventListener("scroll", onScroll, { passive: true });
+    container.addEventListener("scrollend", finishScroll);
+    container.addEventListener("wheel", interruptScroll, { passive: true });
+    container.addEventListener("touchstart", interruptScroll, { passive: true });
+    container.addEventListener("keydown", interruptScroll);
+    return () => {
+      cancelAnimationFrame(frame);
+      finishScroll();
+      container.removeEventListener("scroll", onScroll);
+      container.removeEventListener("scrollend", finishScroll);
+      container.removeEventListener("wheel", interruptScroll);
+      container.removeEventListener("touchstart", interruptScroll);
+      container.removeEventListener("keydown", interruptScroll);
+    };
+  }, [navSections, settingsReady]);
+
+  const handleNavClick = useCallback((id: string) => {
+    const container = settingsContentRef.current;
+    if (!container) return;
+    const target = container.querySelector(`[data-nav-id="${id}"]`) as HTMLElement | null;
+    if (!target) return;
+    setActiveNavSection(id);
+    isNavClickScrolling.current = true;
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const scrollMarginTop = Number.parseFloat(
+      window.getComputedStyle(target).scrollMarginTop,
+    ) || 0;
+    const top = Math.min(Math.max(0, container.scrollHeight - container.clientHeight), Math.max(
+      0,
+      container.scrollTop + targetRect.top - containerRect.top - scrollMarginTop,
+    ));
+    if (Math.abs(container.scrollTop - top) < 1 || prefersReducedMotion()) {
+      container.scrollTo({ top, behavior: "instant" });
+      isNavClickScrolling.current = false;
+      return;
+    }
+    container.scrollTo({ top, behavior: "smooth" });
+  }, []);
+
+  // Auto-scroll the nav bar to keep active tab visible + measure indicator position
+  useEffect(() => {
+    const navEl = navScrollRef.current;
+    if (!navEl || !active) return;
+    const updateIndicator = () => {
+      const activeBtn = navEl.querySelector(`[data-nav-tab="${activeNavSection}"]`) as HTMLElement | null;
+      if (!activeBtn) return;
+      const left = activeBtn.offsetLeft - navEl.offsetWidth / 2 + activeBtn.offsetWidth / 2;
+      navEl.scrollTo({ left, behavior: prefersReducedMotion() ? "instant" : "smooth" });
+      setNavIndicatorStyle({ left: activeBtn.offsetLeft, width: activeBtn.offsetWidth });
+    };
+    updateIndicator();
+    window.addEventListener("resize", updateIndicator);
+    return () => window.removeEventListener("resize", updateIndicator);
+  }, [activeNavSection, active, t, settingsReady]);
+
+  // --- Picker group (mutually exclusive dropdowns) ---
+  type PickerId = "provider" | "model" | "assistantModel" | "assistantProvider" | "assistantReasoning" | "polishReasoning" | "recordingMode" | "microphone" | "webSearchProvider" | "language" | "alibabaModel" | "engine" | "chatgptAccount" | "assistantChatgptAccount" | "selectionChatgptAccount";
+  const picker = useExclusivePicker<PickerId>();
+  const providerSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const modelSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const assistantModelSearchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // --- Hotkey capture (3 instances share 1 hook) ---
+  const [translationHotkeyDisplay, setTranslationHotkeyDisplay] = useState("");
+  const [assistantHotkeyDisplay, setAssistantHotkeyDisplay] = useState("");
+  const mainHotkeyCapture = useHotkeyCapture({
+    save: async (shortcut) => { await setHotkey(shortcut); },
+    label: t("settings.hotkeyLabel"),
+  });
+  const translationHotkeyCapture = useHotkeyCapture({
+    save: async (shortcut) => {
+      await setTranslationHotkey(shortcut);
+      setTranslationHotkeyDisplay(formatHotkeyForDisplay(shortcut));
+    },
+    label: t("settings.translationHotkeyLabel"),
+  });
+  const assistantHotkeyCapture = useHotkeyCapture({
+    save: async (shortcut) => {
+      await setAssistantHotkey(shortcut);
+      setAssistantHotkeyDisplay(formatHotkeyForDisplay(shortcut));
+    },
+    label: t("settings.assistantHotkeyLabel"),
+  });
+
+  // --- Core state ---
+  const [recordingMode, setRecordingModeState] = useState<"hold" | "toggle">(() => {
+    return readLocalStorage(RECORDING_MODE_KEY) === "toggle" ? "toggle" : "hold";
+  });
+  const [inputMethod, setInputMethod] = useState<"sendInput" | "clipboard">(() => {
+    return readLocalStorage(INPUT_METHOD_KEY) === "clipboard" ? "clipboard" : "sendInput";
+  });
+  const [soundEnabled, setSoundEnabledState] = useState(() => readLocalStorage(SOUND_ENABLED_KEY) !== "false");
+  const [aiPolishEnabled, setAiPolishEnabled] = useState(() => readLocalStorage(AI_POLISH_ENABLED_KEY) === "true");
+  const [aiPolishApiKey, setAiPolishApiKey] = useState("");
+  const [openaiCodexOauthStatus, setOpenaiCodexOauthStatus] = useState<OpenaiCodexOauthStatus>({ loggedIn: false });
+  const [openaiCodexOauthLoading, setOpenaiCodexOauthLoading] = useState(false);
+  const [chatgptSelectedClientId, setChatgptSelectedClientId] = useState<string | null>(null);
+  const savedChatgptAccounts = openaiCodexOauthStatus.savedAccounts ?? [];
+  const chatgptLoginClientId = chatgptSelectedClientId ?? openaiCodexOauthStatus.clientId ?? savedChatgptAccounts[savedChatgptAccounts.length - 1]?.clientId;
+  const [chatgptAccountAction, setChatgptAccountAction] = useState<{ pickerId: string; clientId: string } | null>(null);
+  const [openaiCodexOauthDeviceCode, setOpenaiCodexOauthDeviceCode] = useState<OpenaiCodexOauthDeviceCodeChallenge | null>(null);
+  const [grokBuildOauthStatus, setGrokBuildOauthStatus] = useState<GrokBuildOauthStatus>({ loggedIn: false });
+  const [grokBuildOauthLoading, setGrokBuildOauthLoading] = useState(false);
+  const [grokBuildOauthDeviceCode, setGrokBuildOauthDeviceCode] = useState<GrokBuildOauthDeviceCodeChallenge | null>(null);
+
+  const [aiModelSearch, setAiModelSearch] = useState("");
+  const [assistantModelSearch, setAssistantModelSearch] = useState("");
+  const [providerSearch, setProviderSearch] = useState("");
+  const [assistantProviderSearch, setAssistantProviderSearch] = useState("");
+
+  // --- LLM provider ---
+  const [providerDrafts, setProviderDrafts] = useState<LlmProviderDraftMap>(() => readLlmProviderDrafts());
+  const [llmProvider, setLlmProvider] = useState("cerebras");
+  const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const [customModel, setCustomModel] = useState("");
+  const [assistantUseSeparateModel, setAssistantUseSeparateModel] = useState(false);
+  const [assistantModel, setAssistantModel] = useState("");
+  const [assistantProvider, setAssistantProviderState] = useState("");
+  const [assistantApiKeyState, setAssistantApiKeyState] = useState("");
+  // null = 用户未显式选择，effectiveOpenaiAuthMode 会根据 OAuth 登录态给出智能默认
+  const [openaiAuthMode, setOpenaiAuthModeState] = useState<OpenaiAuthMode | null>(null);
+  const [xaiAuthMode, setXaiAuthModeState] = useState<XaiAuthMode | null>(null);
+  const [openaiFastMode, setOpenaiFastModeState] = useState<boolean>(false);
+  const [polishReasoningMode, setPolishReasoningMode] = useState<LlmReasoningMode>("provider_default");
+  const [assistantReasoningMode, setAssistantReasoningMode] = useState<LlmReasoningMode>("provider_default");
+  const defaultReasoningSupport: LlmReasoningSupport = { supported: false, strategy: null, summary: t("model.reasoningDetecting") };
+  const [polishReasoningSupport, setPolishReasoningSupportState] = useState<LlmReasoningSupport>(defaultReasoningSupport);
+  const [assistantReasoningSupport, setAssistantReasoningSupportState] = useState<LlmReasoningSupport>(defaultReasoningSupport);
+  const [customProviders, setCustomProviders] = useState<CustomProvider[]>([]);
+  const [addingProvider, setAddingProvider] = useState(false);
+  const [newProviderName, setNewProviderName] = useState("");
+  const [newProviderBaseUrl, setNewProviderBaseUrl] = useState("");
+  const [newProviderModel, setNewProviderModel] = useState("");
+  const [newProviderFormat, setNewProviderFormat] = useState<ApiFormat>("openai_compat");
+  const availableLlmProviders = useMemo(
+    () => [
+      ...llmProviderOptions.map((option) => option.key),
+      ...customProviders.map((provider) => provider.id),
+    ],
+    [customProviders],
+  );
+  const providerSupportsCustomEndpoint = customProviders.some((p) => p.id === llmProvider);
+  const effectiveAssistantProvider = resolveEffectiveAssistantProvider({
+    assistantUseSeparateModel,
+    assistantProvider,
+    llmProvider,
+    availableProviders: availableLlmProviders,
+  });
+  const assistantProviderToPersist = resolveAssistantProviderToPersist({
+    assistantUseSeparateModel,
+    assistantProvider,
+    availableProviders: availableLlmProviders,
+  });
+  const polishManualApiKey = aiPolishApiKey.trim();
+  const assistantManualApiKey =
+    assistantApiKeyState.trim()
+    || (effectiveAssistantProvider === llmProvider ? polishManualApiKey : "");
+  // openaiAuthMode 为 null 表示用户没在设置页里明确点过，沿用智能默认：
+  // 已登录 OAuth → oauth；否则 → api_key。前端和后端 resolve_api_key_for_provider
+  // 的默认推断逻辑完全对齐，避免 UI 显示和实际请求走向不一致。
+  const effectiveOpenaiAuthMode: OpenaiAuthMode =
+    openaiAuthMode ?? (openaiCodexOauthStatus.loggedIn ? "oauth" : "api_key");
+  const openaiPlanReady = openaiCodexOauthStatus.loggedIn
+    && openaiCodexOauthStatus.planUsageEnabled !== false;
+  const effectiveXaiAuthModeValue: XaiAuthMode = effectiveXaiAuthMode({
+    storedMode: xaiAuthMode,
+    loggedIn: grokBuildOauthStatus.loggedIn,
+  });
+  const assistantUsesOpenaiOauth =
+    effectiveAssistantProvider === "openai"
+    && effectiveOpenaiAuthMode === "oauth"
+    && openaiPlanReady;
+  const polishHasAuth = shouldUseGrokBuildOauth({
+    provider: llmProvider,
+    authMode: effectiveXaiAuthModeValue,
+    loggedIn: grokBuildOauthStatus.loggedIn,
+  })
+    || (llmProvider === "openai"
+      ? (effectiveOpenaiAuthMode === "oauth" ? openaiPlanReady : !!polishManualApiKey)
+      : llmProvider !== "xai" && !!polishManualApiKey)
+    || (llmProvider === "xai" && effectiveXaiAuthModeValue === "api_key" && !!polishManualApiKey);
+  const assistantHasAuth = shouldUseGrokBuildOauth({
+    provider: effectiveAssistantProvider,
+    authMode: effectiveXaiAuthModeValue,
+    loggedIn: grokBuildOauthStatus.loggedIn,
+  })
+    || (effectiveAssistantProvider === "openai"
+      ? (effectiveOpenaiAuthMode === "oauth" ? openaiPlanReady : !!assistantManualApiKey)
+      : effectiveAssistantProvider !== "xai" && !!assistantManualApiKey)
+    || (effectiveAssistantProvider === "xai" && effectiveXaiAuthModeValue === "api_key" && !!assistantManualApiKey);
+  const oauthModelIdentity = [
+    openaiCodexOauthStatus.loggedIn ? "connected" : "disconnected",
+    openaiCodexOauthStatus.accountId ?? "",
+    openaiCodexOauthStatus.clientId ?? "",
+    openaiCodexOauthStatus.planUsageEnabled === false ? "plan-denied" : "plan-ready",
+    openaiCodexOauthStatus.email ?? "",
+  ].join(":");
+  const grokOauthModelIdentity = [
+    grokBuildOauthStatus.loggedIn ? "connected" : "disconnected",
+    grokBuildOauthStatus.accountId ?? "",
+    grokBuildOauthStatus.email ?? "",
+  ].join(":");
+  const polishModelsContext = JSON.stringify([
+    llmProvider,
+    customBaseUrl.trim(),
+    llmProvider === "openai" && effectiveOpenaiAuthMode === "oauth"
+      ? `oauth:${oauthModelIdentity}`
+      : llmProvider === "xai" && effectiveXaiAuthModeValue === "oauth"
+        ? `grok-oauth:${grokOauthModelIdentity}`
+        : `key:${polishManualApiKey}`,
+  ]);
+  const assistantCustomProvider = customProviders.find(
+    (provider) => provider.id === effectiveAssistantProvider,
+  );
+  const assistantModelsContext = JSON.stringify([
+    effectiveAssistantProvider,
+    assistantCustomProvider?.base_url ?? findLlmPreset(effectiveAssistantProvider).baseUrl,
+    effectiveAssistantProvider === "openai" && effectiveOpenaiAuthMode === "oauth"
+      ? `oauth:${oauthModelIdentity}`
+      : effectiveAssistantProvider === "xai" && effectiveXaiAuthModeValue === "oauth"
+        ? `grok-oauth:${grokOauthModelIdentity}`
+        : `key:${assistantManualApiKey}`,
+  ]);
+
+  // --- Profile & misc ---
+  const [newHotWord, setNewHotWord] = useState("");
+  const [translationTarget, setTranslationTargetState] = useState<string | null>(null);
+  const [customPromptState, setCustomPromptState] = useState<string>("");
+  const [polishStructureLevel, setPolishStructureLevelState] = useState<PolishStructureLevel>("off");
+  const polishStructureSaveIdRef = useRef(0);
+  const [assistantPromptState, setAssistantPromptState] = useState<string>("");
+  const [modeSaving, setModeSaving] = useState(false);
+  const modeSavingRef = useRef(false);
+  const [screenContextEnabled, setScreenContextEnabledState] = useState(false);
+  const [screenVisionEnabled, setScreenVisionEnabled] = useState(false);
+  const [screenVisionProvider, setScreenVisionProvider] = useState(DEFAULT_SCREEN_VISION_PROVIDER);
+  const [screenVisionModel, setScreenVisionModel] = useState(DEFAULT_SCREEN_VISION_MODEL);
+  const [screenVisionApiKey, setScreenVisionApiKeyState] = useState("");
+  const screenVisionKeyRequestIdRef = useRef(0);
+  const screenVisionBaseUrl = customProviders
+    .find((provider) => provider.id === screenVisionProvider)?.base_url
+    ?? findLlmPreset(screenVisionProvider).baseUrl;
+  const [webSearchEnabled, setWebSearchEnabledState] = useState(false);
+  const [webSearchProvider, setWebSearchProviderState] = useState<WebSearchProvider>("model_native");
+  const [webSearchMaxResults, setWebSearchMaxResultsState] = useState(5);
+  const [webSearchApiKey, setWebSearchApiKeyState] = useState("");
+  const webSearchKeyRequestIdRef = useRef(0);
+
+  // --- Correction validation ---
+  const [validationEnabled, setValidationEnabled] = useState(false);
+  const [validationUseSeparateModel, setValidationUseSeparateModel] = useState(false);
+  const [validationProvider, setValidationProvider] = useState<string | null>(null);
+  const [validationModel, setValidationModel] = useState("");
+  const [validationRunning, setValidationRunning] = useState(false);
+  const [validationResult, setValidationResult] = useState<string | null>(null);
+  const [correctionModalOpen, setCorrectionModalOpen] = useState(false);
+  const correctionManageButtonRef = useRef<HTMLButtonElement>(null);
+
+  const aiPolishKeySave = useDebouncedCallback((value: string) => {
+    return saveAiPolishApiKey(value).catch(() => {});
+  }, 600, { onUnmount: "flush" });
+
+  const assistantKeySave = useDebouncedCallback((value: string) => {
+    setAssistantApiKey(value).catch(() => {});
+  }, 600, { onUnmount: "flush" });
+
+  const screenVisionKeySave = useDebouncedCallback((provider: string, value: string) => {
+    setScreenVisionApiKey(provider, value).catch(() => {
+      toast.error(t("toast.screenVisionKeySaveFailed"));
+    });
+  }, 600, { onUnmount: "flush" });
+
+  const webSearchKeySave = useDebouncedCallback((provider: WebSearchProvider, value: string) => {
+    return setWebSearchApiKey(provider, value).catch(() => { toast.error(t("settings.webSearchKeySaveFailed")); });
+  }, 600, { onUnmount: "flush" });
+
+  const webSearchConfigSave = useDebouncedCallback((
+    enabled: boolean,
+    provider: WebSearchProvider,
+    maxResults: number,
+  ) => {
+    return setWebSearchConfig(enabled, provider, maxResults).catch(() => {});
+  }, 400, { onUnmount: "flush" });
+
+  const llmConfigSave = useDebouncedCallback((
+    provider: string,
+    baseUrl: string,
+    model: string,
+    nextPolishReasoningMode: LlmReasoningMode,
+    nextAssistantReasoningMode: LlmReasoningMode,
+    nextAssistantUseSeparateModel: boolean,
+    nextAssistantModel: string,
+    nextAssistantProvider?: string | null,
+  ) => {
+    // openaiAuthMode 直接从闭包读最新值：useDebouncedCallback 的 timer 触发时调用最新一版 callback。
+    // 一路透传到所有 schedule 调用点（保持现有 call site 签名不变）。
+    setLlmProviderConfig(
+      provider,
+      baseUrl || undefined,
+      model || undefined,
+      nextPolishReasoningMode,
+      nextAssistantReasoningMode,
+      nextAssistantUseSeparateModel,
+      nextAssistantModel || undefined,
+      nextAssistantProvider,
+      openaiAuthMode,
+      xaiAuthMode,
+    ).catch(() => {});
+  }, 400, { onUnmount: "flush" });
+
+  const customPromptSave = useDebouncedCallback((value: string) => {
+    setCustomPrompt(value.trim() || null).catch(() => {
+      toast.error(t("toast.customPromptSaveFailed"));
+    });
+  }, 800, { onUnmount: "flush" });
+
+  const assistantPromptSave = useDebouncedCallback((value: string) => {
+    setAssistantSystemPrompt(value.trim() || null).catch(() => {
+      toast.error(t("toast.assistantPromptSaveFailed"));
+    });
+  }, 800, { onUnmount: "flush" });
+
+  const updateProviderDraft = useCallback((provider: string, baseUrl: string, model: string) => {
+    setProviderDrafts((prev) => {
+      const next = {
+        ...prev,
+        [provider]: {
+          baseUrl,
+          model,
+        },
+      };
+      writeLlmProviderDrafts(next);
+      return next;
+    });
+  }, []);
+
+  const resolveProviderDraft = useCallback((provider: string) => {
+    const draft = providerDrafts[provider];
+    // 先查自定义 provider
+    const cp = customProviders.find((p) => p.id === provider);
+    if (cp) {
+      return {
+        baseUrl: draft?.baseUrl ?? cp.base_url,
+        model: draft?.model ?? cp.model,
+      };
+    }
+    const preset = findLlmPreset(provider);
+    return {
+      baseUrl: isFixedPresetProvider(provider) ? preset.baseUrl : (draft?.baseUrl ?? preset.baseUrl),
+      model: resolveLlmModel(provider, draft?.model),
+    };
+  }, [providerDrafts, customProviders]);
+
+  const refreshAiPolishKey = useCallback(async () => {
+    try {
+      const key = (await getAiPolishApiKey()) || "";
+      setAiPolishApiKey(key);
+      await saveAiPolishApiKey(key).catch(() => {});
+      return key;
+    } catch {
+      setAiPolishApiKey("");
+      return "";
+    }
+  }, []);
+
+  const refreshAssistantKey = useCallback(async () => {
+    try {
+      const key = (await getAssistantApiKey()) || "";
+      setAssistantApiKeyState(key);
+      return key;
+    } catch {
+      setAssistantApiKeyState("");
+      return "";
+    }
+  }, []);
+
+  const refreshScreenVisionKey = useCallback(async (provider: string) => {
+    const requestId = ++screenVisionKeyRequestIdRef.current;
+    try {
+      const key = (await getScreenVisionApiKey(provider)) || "";
+      if (requestId === screenVisionKeyRequestIdRef.current) {
+        setScreenVisionApiKeyState(key);
+      }
+      return key;
+    } catch {
+      if (requestId === screenVisionKeyRequestIdRef.current) {
+        setScreenVisionApiKeyState("");
+      }
+      return "";
+    }
+  }, []);
+
+  const refreshWebSearchKey = useCallback(async (provider: WebSearchProvider) => {
+    const requestId = ++webSearchKeyRequestIdRef.current;
+    if (!webSearchProviderNeedsKey(provider)) {
+      setWebSearchApiKeyState("");
+      return "";
+    }
+    try {
+      await webSearchKeySave.flush();
+      const key = (await getWebSearchApiKey(provider)) || "";
+      if (requestId === webSearchKeyRequestIdRef.current) {
+        setWebSearchApiKeyState(key);
+      }
+      return key;
+    } catch {
+      if (requestId === webSearchKeyRequestIdRef.current) {
+        setWebSearchApiKeyState("");
+      }
+      return "";
+    }
+  }, [webSearchKeySave]);
+
+  const refreshOpenaiCodexOauthStatus = useCallback(async () => {
+    try {
+      const status = await getOpenaiCodexOauthStatus();
+      setOpenaiCodexOauthStatus(status);
+      return status;
+    } catch {
+      const fallback = { loggedIn: false } as OpenaiCodexOauthStatus;
+      setOpenaiCodexOauthStatus(fallback);
+      return fallback;
+    }
+  }, []);
+
+  const refreshGrokBuildOauthStatus = useCallback(async () => {
+    try {
+      const status = await getGrokBuildOauthStatus();
+      setGrokBuildOauthStatus(status);
+      return status;
+    } catch {
+      const fallback = { loggedIn: false } as GrokBuildOauthStatus;
+      setGrokBuildOauthStatus(fallback);
+      return fallback;
+    }
+  }, []);
+
+  // 从系统密钥环加载 API Key，并同步 enabled 状态到后端
+  useEffect(() => {
+    void refreshAiPolishKey();
+  }, [refreshAiPolishKey]);
+
+  // 加载用户画像
+  const refreshProfile = useCallback(async () => {
+    setProfileLoadPending(true);
+    try {
+      const p = await getUserProfile();
+      setProfile(p);
+      setProfileLoadError(false);
+      const cps = p.llm_provider.custom_providers ?? [];
+      setCustomProviders(cps);
+      const nextProvider = resolveEffectiveProvider(p.llm_provider.active || "cerebras", cps);
+      // 查自定义 provider
+      const cp = cps.find((c) => c.id === nextProvider);
+      const preset = findLlmPreset(nextProvider);
+      const nextBaseUrl = cp
+        ? cp.base_url
+        : resolveLlmBaseUrl(nextProvider, p.llm_provider.custom_base_url ?? preset.baseUrl);
+      const nextModel = cp
+        ? cp.model
+        : resolveLlmModel(nextProvider, p.llm_provider.custom_model ?? preset.defaultModel);
+      const nextAssistantUseSeparateModel = Boolean(p.llm_provider.assistant_use_separate_model);
+      const nextAssistantProvider = resolveEffectiveAssistantProvider({
+        assistantUseSeparateModel: nextAssistantUseSeparateModel,
+        assistantProvider: p.llm_provider.assistant_provider,
+        llmProvider: nextProvider,
+        availableProviders: [
+          ...llmProviderOptions.map((option) => option.key),
+          ...cps.map((provider) => provider.id),
+        ],
+      });
+      const assistantCp = cps.find((c) => c.id === nextAssistantProvider);
+      const assistantPreset = findLlmPreset(nextAssistantProvider);
+      const nextAssistantDefaultModel = assistantCp
+        ? assistantCp.model
+        : resolveLlmModel(nextAssistantProvider, assistantPreset.defaultModel);
+      setLlmProvider(nextProvider);
+      setCustomBaseUrl(nextBaseUrl);
+      setCustomModel(nextModel);
+      setAssistantUseSeparateModel(nextAssistantUseSeparateModel);
+      setAssistantModel(resolveAssistantModelState({
+        assistantUseSeparateModel: nextAssistantUseSeparateModel,
+        savedAssistantModel: p.llm_provider.assistant_model,
+        polishModel: nextModel,
+        assistantDefaultModel: nextAssistantDefaultModel,
+      }));
+      setAssistantProviderState(nextAssistantUseSeparateModel ? p.llm_provider.assistant_provider ?? "" : "");
+      setPolishReasoningMode(p.llm_provider.polish_reasoning_mode ?? p.llm_provider.reasoning_mode ?? "provider_default");
+      setAssistantReasoningMode(p.llm_provider.assistant_reasoning_mode ?? p.llm_provider.reasoning_mode ?? "provider_default");
+      const storedAuthMode = p.llm_provider.openai_auth_mode;
+      setOpenaiAuthModeState(
+        storedAuthMode === "api_key" || storedAuthMode === "oauth" ? storedAuthMode : null,
+      );
+      const storedXaiAuthMode = p.llm_provider.xai_auth_mode;
+      setXaiAuthModeState(
+        storedXaiAuthMode === "api_key" || storedXaiAuthMode === "oauth" ? storedXaiAuthMode : null,
+      );
+      setOpenaiFastModeState(Boolean(p.llm_provider.openai_fast_mode));
+      updateProviderDraft(nextProvider, nextBaseUrl, nextModel);
+      setTranslationTargetState(p.translation_target ?? null);
+      setTranslationHotkeyDisplay(p.translation_hotkey ? formatHotkeyForDisplay(p.translation_hotkey) : "");
+      setCustomPromptState(p.custom_prompt ?? "");
+      setPolishStructureLevelState(p.polish_structure_level ?? "off");
+      setAssistantHotkeyDisplay(p.assistant_hotkey ? formatHotkeyForDisplay(p.assistant_hotkey) : "");
+      setAssistantPromptState(p.assistant_system_prompt ?? "");
+      setScreenContextEnabledState(Boolean(
+        p.ai_polish_screen_context_enabled || p.assistant_screen_context_enabled,
+      ));
+      const nextScreenVisionProvider = p.llm_provider.screen_vision_provider
+        || DEFAULT_SCREEN_VISION_PROVIDER;
+      const screenVisionCustomProvider = cps.find((provider) => provider.id === nextScreenVisionProvider);
+      setScreenVisionEnabled(Boolean(p.llm_provider.screen_vision_enabled));
+      setScreenVisionProvider(nextScreenVisionProvider);
+      setScreenVisionModel(
+        p.llm_provider.screen_vision_model
+          || screenVisionCustomProvider?.model
+          || findLlmPreset(nextScreenVisionProvider).defaultModel
+          || DEFAULT_SCREEN_VISION_MODEL,
+      );
+      setWebSearchEnabledState(Boolean(p.web_search?.enabled));
+      setWebSearchProviderState(p.web_search?.provider ?? "model_native");
+      setWebSearchMaxResultsState(p.web_search?.max_results ?? 5);
+      setValidationEnabled(Boolean(p.correction_validation_enabled));
+      setValidationUseSeparateModel(Boolean(p.llm_provider.validation_use_separate_model));
+      setValidationProvider(p.llm_provider.validation_provider ?? null);
+      setValidationModel(p.llm_provider.validation_model ?? "");
+      return p;
+    } catch (error) {
+      console.error("Failed to load user profile:", error);
+      setProfileLoadError(true);
+      setCorrectionModalOpen(false);
+      return undefined;
+    } finally {
+      setProfileLoadPending(false);
+    }
+  }, [updateProviderDraft]);
+
+  const refreshProfileAndKeys = useCallback(async () => {
+    const loadedProfile = await refreshProfile();
+    if (loadedProfile) {
+      void refreshAssistantKey();
+      void refreshOpenaiCodexOauthStatus();
+      void refreshGrokBuildOauthStatus();
+      void refreshScreenVisionKey(
+        loadedProfile?.llm_provider.screen_vision_provider || DEFAULT_SCREEN_VISION_PROVIDER,
+      );
+      void refreshWebSearchKey(loadedProfile?.web_search?.provider ?? "model_native");
+    }
+  }, [refreshProfile, refreshAssistantKey, refreshGrokBuildOauthStatus, refreshOpenaiCodexOauthStatus, refreshScreenVisionKey, refreshWebSearchKey]);
+
+  useEffect(() => {
+    void refreshProfileAndKeys();
+  }, [refreshProfileAndKeys]);
+
+  const {
+    appVersion,
+    autostart,
+    autostartLoading,
+    autostartMinimized,
+    autostartMinimizedLoading,
+    handleAutostartToggle,
+    handleAutostartMinimizedToggle,
+    handleCheckForUpdates,
+    handleCopyExportPath,
+    handleExportConfig,
+    exporting,
+    handleImportConfig,
+    handleOpenReleasePage,
+    handleTestPaste,
+    lastExportPath,
+    latestAvailableVersion,
+    updateChecking,
+    updateStatusText,
+  } = useSystemSettings({ inputMethod, profile, refreshProfile, refreshAiPolishKey });
+
+  useEffect(() => {
+    if (!assistantUsesOpenaiOauth || webSearchProvider !== "model_native") return;
+    setWebSearchProviderState("exa");
+    webSearchConfigSave.schedule(webSearchEnabled, "exa", webSearchMaxResults);
+    if (picker.isOpen("webSearchProvider")) {
+      picker.close();
+    }
+  }, [assistantUsesOpenaiOauth, picker, webSearchConfigSave, webSearchEnabled, webSearchMaxResults, webSearchProvider]);
+
+  const engineLabel = useCallback((engineValue: string) => {
+    const option = engineOptions.find((item) => item.key === engineValue);
+    return option ? engineOptionLabel(option, t) : engineValue;
+  }, [t]);
+
+  const {
+    alibabaAsrModel,
+    alibabaAsrModels,
+    alibabaAsrModelsLoading,
+    alibabaAsrModelsSource,
+    alibabaHasKey,
+    engine,
+    engineLoading,
+    handleAlibabaAsrModelSelect,
+    handleEngineSwitch,
+    handleOnlineAsrApiKeyChange,
+    handleOnlineAsrRegionChange,
+    onlineAsrApiKey,
+    onlineAsrRegion,
+    onlineAsrRegionLoading,
+    onlineAsrUrl,
+    refreshAlibabaModels,
+  } = useAsrEngineSettings({ engineLabel, retryModel });
+
+  const {
+    handleChooseModelsDir,
+    handleRestoreDefaultModelsDir,
+    modelsDir,
+    modelsDirCustom,
+    modelsDirMigrating,
+    modelsMigrateMsg,
+  } = useModelDirectorySettings({ retryModel });
+
+  const {
+    deviceListLoading,
+    handleInputDeviceChange,
+    handleMicLevelMonitorToggle,
+    handleTestMicrophone,
+    inputDevices,
+    micLevel,
+    micLevelMonitorEnabled,
+    micMonitorReady,
+    refreshInputDevices,
+    selectedInputDeviceName,
+  } = useMicrophoneSettings({ active, closePicker: picker.close, isRecording });
+
+  // (hotkey capture effects are now in useHotkeyCapture hook)
+
+  const handleResetHotkey = async () => {
+    if (mainHotkeyCapture.saving) return;
+    mainHotkeyCapture.cancelCapture();
+    try {
+      await setHotkey(DEFAULT_HOTKEY);
+      toast.success(t("toast.hotkeyReset"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.hotkeyResetFailed"));
+    }
+  };
+
+  const handleClearHotkey = async (
+    saveFn: (v: string | null) => Promise<unknown>,
+    setDisplay: (v: string) => void,
+    label: string,
+    cancelCapture?: () => void,
+  ) => {
+    cancelCapture?.();
+    try {
+      await saveFn(null);
+      setDisplay("");
+      toast.success(t("toast.hotkeyCleared", { label }));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.hotkeyClearFailed", { label }));
+    }
+  };
+
+  // Unified picker focus/clear-search effect (replaces 6 individual effects)
+  useEffect(() => {
+    setProviderSearch("");
+    setAiModelSearch("");
+    setAssistantModelSearch("");
+    setAssistantProviderSearch("");
+    if (picker.active === "provider") {
+      providerSearchInputRef.current?.focus();
+    } else if (picker.active === "model") {
+      modelSearchInputRef.current?.focus();
+    } else if (picker.active === "assistantModel") {
+      assistantModelSearchInputRef.current?.focus();
+    }
+  }, [picker.active]);
+
+  const fetchPolishModels = useCallback((silent: boolean) => {
+    return listAiModels(
+      llmProvider,
+      customBaseUrl.trim() || undefined,
+      aiPolishApiKey.trim(),
+      !silent,
+      llmProvider === "openai" ? effectiveOpenaiAuthMode : undefined,
+      llmProvider === "xai" ? effectiveXaiAuthModeValue : undefined,
+    );
+  }, [aiPolishApiKey, customBaseUrl, effectiveOpenaiAuthMode, effectiveXaiAuthModeValue, llmProvider]);
+
+  const fetchAssistantModels = useCallback((silent: boolean) => {
+    const baseUrl = assistantCustomProvider?.base_url
+      ?? findLlmPreset(effectiveAssistantProvider).baseUrl;
+    return listAiModels(
+      effectiveAssistantProvider,
+      baseUrl || undefined,
+      assistantApiKeyState.trim(),
+      !silent,
+      effectiveAssistantProvider === "openai" ? effectiveOpenaiAuthMode : undefined,
+      effectiveAssistantProvider === "xai" ? effectiveXaiAuthModeValue : undefined,
+    );
+  }, [assistantApiKeyState, assistantCustomProvider, effectiveAssistantProvider, effectiveOpenaiAuthMode, effectiveXaiAuthModeValue]);
+
+  const {
+    aiModels,
+    aiModelsError,
+    aiModelsLoading,
+    aiModelsSourceUrl,
+    assistantModels,
+    assistantModelsError,
+    assistantModelsLoading,
+    invalidateModels,
+    refreshAiModels,
+    refreshAiModelsNow,
+    refreshAssistantModels,
+    refreshAssistantModelsNow,
+  } = useModelDiscovery({
+    polishModelsContext,
+    polishHasAuth,
+    polishMissingAuthMessage: t(llmProvider === "xai" ? "settings.apiKeyOrGrokLoginMissing" : "settings.apiKeyOrLoginMissing"),
+    fetchPolishModels,
+    assistantModelsContext,
+    assistantHasAuth,
+    assistantUseSeparateModel,
+    assistantSharesPolishModels: effectiveAssistantProvider === llmProvider,
+    fetchAssistantModels,
+  });
+
+  const handleAddHotWord = useCallback(() => {
+    const word = newHotWord.trim();
+    if (!word) return;
+
+    addHotWord(word, 3).then(() => {
+      setNewHotWord("");
+      refreshProfile();
+      toast.success(t("toast.hotWordAdded", { word }));
+    }).catch(() => toast.error(t("toast.hotWordAddFailed")));
+  }, [newHotWord, refreshProfile]);
+
+  const hotkeyStatusError = hotkeyError || hotkeyDiagnostic?.lastError || null;
+  const selectedDeviceMissing = Boolean(selectedInputDeviceName)
+    && !inputDevices.some((device) => device.name === selectedInputDeviceName);
+  const currentLlmPreset = useMemo(() => {
+    const effectiveProvider = resolveEffectiveProvider(llmProvider, customProviders);
+    const cp = customProviders.find((p) => p.id === effectiveProvider);
+    if (cp) return { key: cp.id, label: cp.name, descKey: undefined as string | undefined, baseUrl: cp.base_url, defaultModel: cp.model, models: [] as string[], desc: cp.api_format === "anthropic" ? "Anthropic" : t("settings.openaiCompat") };
+    const preset = findLlmPreset(effectiveProvider);
+    return { ...preset, label: preset.label, desc: t(preset.descKey) };
+  }, [llmProvider, customProviders, t]);
+  const currentAssistantPreset = useMemo(() => {
+    const cp = customProviders.find((c) => c.id === effectiveAssistantProvider);
+    if (cp) return { key: cp.id, label: cp.name, baseUrl: cp.base_url, defaultModel: cp.model, desc: cp.api_format === "anthropic" ? "Anthropic" : t("settings.openaiCompat") };
+    const preset = findLlmPreset(effectiveAssistantProvider);
+    return { ...preset, label: preset.label, desc: t(preset.descKey) };
+  }, [customProviders, effectiveAssistantProvider, t]);
+  const assistantProviderDiffers =
+    assistantUseSeparateModel && effectiveAssistantProvider !== llmProvider;
+  const finalizeOpenaiCodexOauthLogin = useCallback(async (loginStatus: OpenaiCodexOauthStatus) => {
+    setOpenaiCodexOauthStatus(loginStatus);
+    setChatgptSelectedClientId(loginStatus.clientId ?? null);
+    const refreshedStatus = await refreshOpenaiCodexOauthStatus();
+    if (refreshedStatus.loggedIn) {
+      setOpenaiCodexOauthStatus(refreshedStatus);
+    }
+    if (llmProvider === "openai" && loginStatus.planUsageEnabled !== false) {
+      void refreshAiModels(true);
+    }
+    if (effectiveAssistantProvider === "openai" && loginStatus.planUsageEnabled !== false) {
+      void refreshAssistantModels(true);
+    }
+    setOpenaiCodexOauthDeviceCode(null);
+    toast.success(t("toast.codexOauthLoginSuccess"));
+  }, [effectiveAssistantProvider, llmProvider, refreshAiModels, refreshAssistantModels, refreshOpenaiCodexOauthStatus, t]);
+  const finalizeGrokBuildOauthLogin = useCallback(async (loginStatus: GrokBuildOauthStatus) => {
+    setGrokBuildOauthStatus(loginStatus);
+    const refreshedStatus = await refreshGrokBuildOauthStatus();
+    if (refreshedStatus.loggedIn) {
+      setGrokBuildOauthStatus(refreshedStatus);
+    }
+    if (llmProvider === "xai") {
+      void refreshAiModels(true);
+    }
+    if (effectiveAssistantProvider === "xai") {
+      void refreshAssistantModels(true);
+    }
+    setGrokBuildOauthDeviceCode(null);
+    toast.success(t("toast.grokBuildOauthLoginSuccess"));
+  }, [effectiveAssistantProvider, llmProvider, refreshAiModels, refreshAssistantModels, refreshGrokBuildOauthStatus, t]);
+  const handleGrokBuildOauthLogin = useCallback(async () => {
+    setGrokBuildOauthLoading(true);
+    try {
+      const loginStatus = await loginGrokBuildOauth();
+      await finalizeGrokBuildOauthLogin(loginStatus);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.grokBuildOauthLoginFailed"));
+    } finally {
+      setGrokBuildOauthLoading(false);
+    }
+  }, [finalizeGrokBuildOauthLogin, t]);
+  const handleGrokBuildOauthDeviceCodeStart = useCallback(async () => {
+    setGrokBuildOauthLoading(true);
+    try {
+      const challenge = await startGrokBuildOauthDeviceCode();
+      setGrokBuildOauthDeviceCode(challenge);
+      toast.success(t("settings.grokBuildOauthDeviceCodeReady"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.grokBuildOauthLoginFailed"));
+    } finally {
+      setGrokBuildOauthLoading(false);
+    }
+  }, [t]);
+  const handleGrokBuildOauthDeviceCodeComplete = useCallback(async () => {
+    if (!grokBuildOauthDeviceCode) return;
+    setGrokBuildOauthLoading(true);
+    try {
+      const loginStatus = await completeGrokBuildOauthDeviceCode(grokBuildOauthDeviceCode);
+      await finalizeGrokBuildOauthLogin(loginStatus);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.grokBuildOauthLoginFailed"));
+    } finally {
+      setGrokBuildOauthLoading(false);
+    }
+  }, [finalizeGrokBuildOauthLogin, grokBuildOauthDeviceCode, t]);
+  const handleGrokBuildOauthLogout = useCallback(async () => {
+    setGrokBuildOauthLoading(true);
+    try {
+      await logoutGrokBuildOauth();
+      invalidateModels({
+        clearPolish: llmProvider === "xai",
+        clearAssistant: effectiveAssistantProvider === "xai",
+      });
+      const status = { loggedIn: false } as GrokBuildOauthStatus;
+      setGrokBuildOauthStatus(status);
+      setGrokBuildOauthDeviceCode(null);
+      toast.success(t("toast.grokBuildOauthLogoutSuccess"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.grokBuildOauthLogoutFailed"));
+    } finally {
+      setGrokBuildOauthLoading(false);
+    }
+  }, [effectiveAssistantProvider, invalidateModels, llmProvider, t]);
+  const handleOpenaiCodexOauthLogin = useCallback(async () => {
+    setOpenaiCodexOauthLoading(true);
+    const knownIds = new Set(openaiCodexOauthStatus.savedAccounts?.map((account) => account.clientId));
+    try {
+      const loginStatus = await loginOpenaiCodexOauth(chatgptLoginClientId || undefined, chatgptLoginClientId === "");
+      await finalizeOpenaiCodexOauthLogin(loginStatus);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.codexOauthLoginFailed"));
+      const status = await refreshOpenaiCodexOauthStatus();
+      const issued = status.savedAccounts?.find((account) => !knownIds.has(account.clientId));
+      if (issued) setChatgptSelectedClientId(issued.clientId);
+    } finally {
+      setOpenaiCodexOauthLoading(false);
+    }
+  }, [chatgptLoginClientId, finalizeOpenaiCodexOauthLogin, openaiCodexOauthStatus.savedAccounts, refreshOpenaiCodexOauthStatus, t]);
+
+  const handleRemoveChatgptAccount = useCallback(async (clientId: string, accountPickerId: string) => {
+    setOpenaiCodexOauthLoading(true);
+    try {
+      const status = await removeChatgptAccount(clientId);
+      setOpenaiCodexOauthStatus(status);
+      toast.success(t("settings.chatgptRemoveSuccess"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("settings.chatgptRemoveFailed"));
+    } finally {
+      // Revocation can fail after successful local removal. Read authoritative
+      // state on both paths so the deleted record cannot reappear in the UI.
+      const status = await refreshOpenaiCodexOauthStatus();
+      if (openaiCodexOauthStatus.loggedIn && !status.loggedIn) {
+        invalidateModels({ clearPolish: llmProvider === "openai", clearAssistant: effectiveAssistantProvider === "openai" });
+      }
+      setChatgptSelectedClientId((selected) => selected === clientId ? null : selected);
+      setChatgptAccountAction(null);
+      setOpenaiCodexOauthDeviceCode(null);
+      picker.close();
+      setOpenaiCodexOauthLoading(false);
+      if (!status.savedAccounts?.length) {
+        window.requestAnimationFrame(() => document.getElementById(`${accountPickerId}-sign-in`)?.focus());
+      }
+    }
+  }, [effectiveAssistantProvider, invalidateModels, llmProvider, openaiCodexOauthStatus.loggedIn, picker, refreshOpenaiCodexOauthStatus, t]);
+  const handleOpenaiCodexOauthDeviceCodeStart = useCallback(async () => {
+    setOpenaiCodexOauthLoading(true);
+    try {
+      const challenge = await startOpenaiCodexOauthDeviceCode();
+      setOpenaiCodexOauthDeviceCode(challenge);
+      toast.success(t("settings.codexOauthDeviceCodeReady"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.codexOauthLoginFailed"));
+    } finally {
+      setOpenaiCodexOauthLoading(false);
+    }
+  }, [t]);
+  const handleOpenaiCodexOauthDeviceCodeComplete = useCallback(async () => {
+    if (!openaiCodexOauthDeviceCode) return;
+    setOpenaiCodexOauthLoading(true);
+    try {
+      const loginStatus = await completeOpenaiCodexOauthDeviceCode(openaiCodexOauthDeviceCode);
+      await finalizeOpenaiCodexOauthLogin(loginStatus);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.codexOauthLoginFailed"));
+    } finally {
+      setOpenaiCodexOauthLoading(false);
+    }
+  }, [finalizeOpenaiCodexOauthLogin, openaiCodexOauthDeviceCode, t]);
+  const handleOpenaiCodexOauthLogout = useCallback(async () => {
+    setOpenaiCodexOauthLoading(true);
+    try {
+      await logoutOpenaiCodexOauth();
+      invalidateModels({
+        clearPolish: llmProvider === "openai",
+        clearAssistant: effectiveAssistantProvider === "openai",
+      });
+      const status = { loggedIn: false } as OpenaiCodexOauthStatus;
+      setOpenaiCodexOauthStatus(status);
+      setOpenaiCodexOauthDeviceCode(null);
+      toast.success(t("toast.codexOauthLogoutSuccess"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("toast.codexOauthLogoutFailed"));
+    } finally {
+      await refreshOpenaiCodexOauthStatus();
+      setChatgptSelectedClientId(null);
+      setOpenaiCodexOauthLoading(false);
+    }
+  }, [effectiveAssistantProvider, invalidateModels, llmProvider, refreshOpenaiCodexOauthStatus, t]);
+  const handleOpenaiFastModeToggle = useCallback((enabled: boolean) => {
+    setOpenaiFastModeState(enabled);
+    setOpenaiFastMode(enabled).catch(() => {
+      setOpenaiFastModeState(!enabled);
+      toast.error(t("toast.invokeFailed", { command: "set_openai_fast_mode" }));
+    });
+  }, [t]);
+
+  const handleOpenaiAuthModeChange = useCallback((mode: OpenaiAuthMode) => {
+    if (mode === effectiveOpenaiAuthMode && openaiAuthMode !== null) return;
+    setOpenaiAuthModeState(mode);
+    // schedule 触发时 useDebouncedCallback 的闭包会读到刚更新的 openaiAuthMode
+    llmConfigSave.schedule(
+      llmProvider,
+      customBaseUrl,
+      customModel,
+      polishReasoningMode,
+      assistantReasoningMode,
+      assistantUseSeparateModel,
+      assistantModel,
+      assistantProviderToPersist,
+    );
+  }, [
+    assistantModel,
+    assistantReasoningMode,
+    assistantUseSeparateModel,
+    assistantProviderToPersist,
+    customBaseUrl,
+    customModel,
+    effectiveOpenaiAuthMode,
+    llmConfigSave,
+    llmProvider,
+    openaiAuthMode,
+    polishReasoningMode,
+  ]);
+
+  const handleXaiAuthModeChange = useCallback((mode: XaiAuthMode) => {
+    if (mode === effectiveXaiAuthModeValue && xaiAuthMode !== null) return;
+    setXaiAuthModeState(mode);
+    llmConfigSave.schedule(
+      llmProvider,
+      customBaseUrl,
+      customModel,
+      polishReasoningMode,
+      assistantReasoningMode,
+      assistantUseSeparateModel,
+      assistantModel,
+      assistantProviderToPersist,
+    );
+  }, [
+    assistantModel,
+    assistantReasoningMode,
+    assistantUseSeparateModel,
+    assistantProviderToPersist,
+    customBaseUrl,
+    customModel,
+    effectiveXaiAuthModeValue,
+    llmConfigSave,
+    llmProvider,
+    polishReasoningMode,
+    xaiAuthMode,
+  ]);
+
+  const renderOpenaiAuthModeToggle = useCallback(() => (
+    <div className="settings-column" style={{ gap: 6 }}>
+      <span className="settings-option-desc">{t("settings.openaiAuthModeLabel")}</span>
+      <div
+        role="radiogroup"
+        aria-label={t("settings.openaiAuthModeLabel")}
+        className="openai-auth-mode-toggle"
+      >
+        <button
+          type="button"
+          role="radio"
+          aria-checked={effectiveOpenaiAuthMode === "api_key"}
+          data-active={effectiveOpenaiAuthMode === "api_key"}
+          className="openai-auth-mode-toggle-btn"
+          onClick={() => handleOpenaiAuthModeChange("api_key")}
+        >
+          {t("settings.openaiAuthModeApiKey")}
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={effectiveOpenaiAuthMode === "oauth"}
+          data-active={effectiveOpenaiAuthMode === "oauth"}
+          className="openai-auth-mode-toggle-btn"
+          onClick={() => handleOpenaiAuthModeChange("oauth")}
+        >
+          {t("settings.openaiAuthModeOauth")}
+        </button>
+      </div>
+      <p className="settings-hint" style={{ margin: 0 }}>
+        {effectiveOpenaiAuthMode === "oauth"
+          ? t("settings.openaiAuthModeOauthHint")
+          : t("settings.openaiAuthModeApiKeyHint")}
+      </p>
+    </div>
+  ), [effectiveOpenaiAuthMode, handleOpenaiAuthModeChange, t]);
+
+  const renderOpenaiCodexOauthBlock = useCallback((
+    scope: "polish" | "assistant",
+    forceVisible = false,
+    accountPickerId: "chatgptAccount" | "assistantChatgptAccount" | "selectionChatgptAccount"
+      = scope === "polish" ? "chatgptAccount" : "assistantChatgptAccount",
+  ) => {
+    const visible = forceVisible
+      || (scope === "polish" ? llmProvider === "openai" : effectiveAssistantProvider === "openai");
+    if (!visible) return null;
+
+    const loggedIn = openaiCodexOauthStatus.loggedIn;
+    const summaryParts = [
+      openaiCodexOauthStatus.email,
+      openaiCodexOauthStatus.planType,
+      !openaiCodexOauthStatus.email && openaiCodexOauthStatus.accountId
+        ? t("settings.codexOauthAccountSummary", { accountId: openaiCodexOauthStatus.accountId })
+        : null,
+    ].filter(Boolean);
+    const selectedClientId = chatgptLoginClientId ?? "";
+    const selectedAccount = openaiCodexOauthStatus.savedAccounts?.find((account) => account.clientId === selectedClientId);
+
+    return (
+      <div className="settings-column" style={{ gap: 6 }}>
+        <span className="settings-option-desc">{t("settings.codexOauthLabel")}</span>
+        <p className="settings-hint" style={{ margin: 0 }}>
+          {loggedIn
+            ? t("settings.codexOauthConnectedHint", { summary: summaryParts.join(" · ") || "OpenAI" })
+            : t("settings.codexOauthHint")}
+        </p>
+        {loggedIn && openaiCodexOauthStatus.planUsageEnabled === false ? (
+          <p className="settings-hint" role="status">{t("settings.chatgptPlanPermissionMissing")}</p>
+        ) : null}
+        {(openaiCodexOauthStatus.savedAccounts?.length ?? 0) > 0 ? (
+          <div className="settings-column" style={{ gap: 6 }}>
+            <span className="settings-option-desc">{t("settings.chatgptAccountPicker")}</span>
+            <div className="picker-shell chatgpt-account-picker" ref={picker.setRef(accountPickerId)}>
+              <button
+                type="button"
+                className="picker-trigger"
+                data-open={picker.isOpen(accountPickerId)}
+                aria-haspopup="dialog"
+                aria-expanded={picker.isExpanded(accountPickerId)}
+                aria-label={t("settings.chatgptAccountPicker")}
+                onClick={() => { setChatgptAccountAction(null); picker.toggle(accountPickerId); }}
+                disabled={openaiCodexOauthLoading}
+              >
+                <span className="picker-trigger-copy">
+                  <strong>{selectedAccount?.email || selectedAccount?.clientId || t("settings.chatgptAddAccount")}</strong>
+                  {selectedAccount?.email ? <span>{selectedAccount.clientId.slice(-8)}</span> : null}
+                  {selectedAccount?.pending ? <span>{t("settings.chatgptPendingSignIn")}</span> : null}
+                </span>
+                <ChevronsUpDown size={14} className="icon-tertiary" />
+              </button>
+              {picker.isOpen(accountPickerId) ? (
+                <div className={picker.popoverClass(accountPickerId)} role="dialog" aria-label={t("settings.chatgptAccountPicker")} aria-hidden={!picker.isExpanded(accountPickerId)} inert={!picker.isExpanded(accountPickerId)}>
+                  <div className="picker-list">
+                    {openaiCodexOauthStatus.savedAccounts?.map((account, index) => (
+                      <div key={account.clientId} className="chatgpt-account-row">
+                        <button
+                          type="button"
+                          className="picker-option chatgpt-account-select"
+                          data-active={account.clientId === selectedClientId}
+                          aria-pressed={account.clientId === selectedClientId}
+                          disabled={openaiCodexOauthLoading}
+                          onClick={() => { setChatgptSelectedClientId(account.clientId); picker.close(); }}
+                        >
+                          <span className="picker-option-copy">
+                            <strong>{account.email || account.clientId}</strong>
+                            {account.email ? <span>{account.clientId.slice(-8)}</span> : null}
+                            {account.pending ? <span>{t("settings.chatgptPendingSignIn")}</span> : null}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost chatgpt-account-more"
+                          aria-label={t("settings.chatgptAccountActions", { account: `${account.email || account.clientId} · ${account.clientId.slice(-8)}` })}
+                          aria-expanded={chatgptAccountAction?.pickerId === accountPickerId && chatgptAccountAction.clientId === account.clientId}
+                          aria-controls={`${accountPickerId}-actions-${index}`}
+                          disabled={openaiCodexOauthLoading}
+                          onClick={() => setChatgptAccountAction((current) => current?.pickerId === accountPickerId && current.clientId === account.clientId ? null : { pickerId: accountPickerId, clientId: account.clientId })}
+                        ><Ellipsis size={16} /></button>
+                        {chatgptAccountAction?.pickerId === accountPickerId && chatgptAccountAction.clientId === account.clientId ? (
+                          <div id={`${accountPickerId}-actions-${index}`} className="chatgpt-account-actions" ref={(element) => { element?.scrollIntoView?.({ block: "nearest" }); }}>
+                            <p className="settings-hint">{t(openaiCodexOauthStatus.clientId === account.clientId ? "settings.chatgptRemoveActiveHint" : "settings.chatgptRemoveHint")}</p>
+                            <button type="button" className="btn-ghost btn-ghost-sm chatgpt-account-remove" disabled={openaiCodexOauthLoading} onClick={() => { void handleRemoveChatgptAccount(account.clientId, accountPickerId); }}>
+                              <Trash2 size={14} /> {t("settings.chatgptRemoveAccount")}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="picker-option"
+                      data-active={selectedClientId === ""}
+                      aria-pressed={selectedClientId === ""}
+                      disabled={openaiCodexOauthLoading}
+                      onClick={() => { setChatgptSelectedClientId(""); picker.close(); }}
+                    >
+                      <span className="picker-option-copy">
+                        <strong><Plus size={12} /> {t("settings.chatgptAddAccount")}</strong>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+        <div className="settings-row" style={{ gap: 8, alignItems: "center" }}>
+          <button
+            type="button"
+            id={`${accountPickerId}-sign-in`}
+            className="test-btn"
+            onClick={() => { void handleOpenaiCodexOauthLogin(); }}
+            disabled={openaiCodexOauthLoading}
+            style={{ opacity: openaiCodexOauthLoading ? 0.7 : 1 }}
+          >
+            {openaiCodexOauthLoading
+              ? t("settings.codexOauthWorking")
+              : loggedIn
+                ? t("settings.codexOauthReauth")
+                : t("settings.codexOauthLogin")}
+          </button>
+          {!loggedIn ? (
+            <button
+              type="button"
+              className="btn-ghost btn-ghost-sm"
+              onClick={() => { void handleOpenaiCodexOauthDeviceCodeStart(); }}
+              disabled={openaiCodexOauthLoading}
+              style={{ opacity: openaiCodexOauthLoading ? 0.7 : 1 }}
+            >
+              {t("settings.codexOauthDeviceCodeLogin")}
+            </button>
+          ) : null}
+          {loggedIn ? (
+            <button
+              type="button"
+              className="btn-ghost btn-ghost-sm"
+              onClick={() => { void handleOpenaiCodexOauthLogout(); }}
+              disabled={openaiCodexOauthLoading}
+              style={{ opacity: openaiCodexOauthLoading ? 0.7 : 1 }}
+            >
+              {t("settings.codexOauthLogout")}
+            </button>
+          ) : null}
+        </div>
+        {openaiCodexOauthDeviceCode && !loggedIn ? (
+          <div className="settings-column" style={{ gap: 6 }}>
+            <p className="settings-hint" style={{ margin: 0 }}>
+              {t("settings.codexOauthDeviceCodeReady")}
+            </p>
+            <code className="settings-hint" style={{ margin: 0, wordBreak: "break-all" }}>
+              {openaiCodexOauthDeviceCode.verificationUrl}
+            </code>
+            <div className="settings-row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <code style={{ fontSize: 16, fontWeight: 700, letterSpacing: 0 }}>
+                {openaiCodexOauthDeviceCode.userCode}
+              </code>
+              <button
+                type="button"
+                className="btn-ghost btn-ghost-sm"
+                onClick={() => { void copyToClipboard(openaiCodexOauthDeviceCode.userCode); }}
+              >
+                {t("common.copy")}
+              </button>
+              <button
+                type="button"
+                className="test-btn"
+                onClick={() => { void handleOpenaiCodexOauthDeviceCodeComplete(); }}
+                disabled={openaiCodexOauthLoading}
+                style={{ opacity: openaiCodexOauthLoading ? 0.7 : 1 }}
+              >
+                {openaiCodexOauthLoading
+                  ? t("settings.codexOauthWorking")
+                  : t("settings.codexOauthDeviceCodeContinue")}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {shouldShowFastModeToggle({
+          scope,
+          loggedIn,
+          authMode: effectiveOpenaiAuthMode,
+          llmProvider,
+          effectiveAssistantProvider,
+        }) ? (
+          <div className="settings-row" style={{ gap: 8, alignItems: "center", marginTop: 4 }}>
+            <div className="settings-column" style={{ gap: 2, flex: 1 }}>
+              <span className="permission-label">{t("settings.fastModeLabel")}</span>
+              <span className="settings-hint" style={{ margin: 0 }}>
+                {t("settings.fastModeHint")}
+              </span>
+            </div>
+            <button
+              role="switch"
+              aria-checked={openaiFastMode}
+              aria-label={t("settings.fastModeLabel")}
+              onClick={() => handleOpenaiFastModeToggle(!openaiFastMode)}
+              className="toggle-switch"
+              style={{
+                flexShrink: 0,
+              }}
+            >
+              <div
+                className="toggle-knob"
+              />
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }, [chatgptAccountAction, chatgptLoginClientId, effectiveAssistantProvider, effectiveOpenaiAuthMode, handleOpenaiCodexOauthDeviceCodeComplete, handleOpenaiCodexOauthDeviceCodeStart, handleOpenaiCodexOauthLogin, handleOpenaiCodexOauthLogout, handleOpenaiFastModeToggle, handleRemoveChatgptAccount, llmProvider, openaiCodexOauthDeviceCode, openaiCodexOauthLoading, openaiCodexOauthStatus, openaiFastMode, picker, t]);
+
+  const renderXaiAuthModeToggle = useCallback(() => (
+    <div className="settings-column" style={{ gap: 6 }}>
+      <span className="settings-option-desc">{t("settings.xaiAuthModeLabel")}</span>
+      <div
+        role="radiogroup"
+        aria-label={t("settings.xaiAuthModeLabel")}
+        className="openai-auth-mode-toggle"
+      >
+        <button
+          type="button"
+          role="radio"
+          aria-checked={effectiveXaiAuthModeValue === "api_key"}
+          data-active={effectiveXaiAuthModeValue === "api_key"}
+          className="openai-auth-mode-toggle-btn"
+          onClick={() => handleXaiAuthModeChange("api_key")}
+        >
+          {t("settings.xaiAuthModeApiKey")}
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={effectiveXaiAuthModeValue === "oauth"}
+          data-active={effectiveXaiAuthModeValue === "oauth"}
+          className="openai-auth-mode-toggle-btn"
+          onClick={() => handleXaiAuthModeChange("oauth")}
+        >
+          {t("settings.xaiAuthModeOauth")}
+        </button>
+      </div>
+      <p className="settings-hint" style={{ margin: 0 }}>
+        {effectiveXaiAuthModeValue === "oauth"
+          ? t("settings.xaiAuthModeOauthHint")
+          : t("settings.xaiAuthModeApiKeyHint")}
+      </p>
+    </div>
+  ), [effectiveXaiAuthModeValue, handleXaiAuthModeChange, t]);
+
+  const renderGrokBuildOauthBlock = useCallback((
+    scope: "polish" | "assistant",
+    forceVisible = false,
+  ) => {
+    const visible = forceVisible
+      || (scope === "polish" ? shouldShowGrokBuildAuth(llmProvider) : shouldShowGrokBuildAuth(effectiveAssistantProvider));
+    if (!visible) return null;
+
+    const loggedIn = grokBuildOauthStatus.loggedIn;
+    const summaryParts = [
+      grokBuildOauthStatus.email,
+      grokBuildOauthStatus.planType,
+      grokBuildOauthStatus.accountId,
+    ].filter(Boolean);
+
+    return (
+      <div className="settings-column" style={{ gap: 6 }}>
+        <span className="settings-option-desc">{t("settings.grokBuildOauthLabel")}</span>
+        <p className="settings-hint" style={{ margin: 0 }}>
+          {loggedIn
+            ? t("settings.grokBuildOauthConnectedHint", { summary: summaryParts.join(" · ") || "xAI" })
+            : t("settings.grokBuildOauthHint")}
+        </p>
+        <div className="settings-row" style={{ gap: 8, alignItems: "center" }}>
+          <button
+            type="button"
+            className="test-btn"
+            onClick={() => { void handleGrokBuildOauthLogin(); }}
+            disabled={grokBuildOauthLoading}
+            style={{ opacity: grokBuildOauthLoading ? 0.7 : 1 }}
+          >
+            {grokBuildOauthLoading
+              ? t("settings.grokBuildOauthWorking")
+              : loggedIn
+                ? t("settings.grokBuildOauthReauth")
+                : t("settings.grokBuildOauthLogin")}
+          </button>
+          {!loggedIn ? (
+            <button
+              type="button"
+              className="btn-ghost btn-ghost-sm"
+              onClick={() => { void handleGrokBuildOauthDeviceCodeStart(); }}
+              disabled={grokBuildOauthLoading}
+              style={{ opacity: grokBuildOauthLoading ? 0.7 : 1 }}
+            >
+              {t("settings.grokBuildOauthDeviceCodeLogin")}
+            </button>
+          ) : null}
+          {loggedIn ? (
+            <button
+              type="button"
+              className="btn-ghost btn-ghost-sm"
+              onClick={() => { void handleGrokBuildOauthLogout(); }}
+              disabled={grokBuildOauthLoading}
+              style={{ opacity: grokBuildOauthLoading ? 0.7 : 1 }}
+            >
+              {t("settings.grokBuildOauthLogout")}
+            </button>
+          ) : null}
+        </div>
+        {grokBuildOauthDeviceCode && !loggedIn ? (
+          <div className="settings-column" style={{ gap: 6 }}>
+            <p className="settings-hint" style={{ margin: 0 }}>
+              {t("settings.grokBuildOauthDeviceCodeReady")}
+            </p>
+            <code className="settings-hint" style={{ margin: 0, wordBreak: "break-all" }}>
+              {grokBuildOauthDeviceCode.verificationUrl}
+            </code>
+            <div className="settings-row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <code style={{ fontSize: 16, fontWeight: 700, letterSpacing: 0 }}>
+                {grokBuildOauthDeviceCode.userCode}
+              </code>
+              <button
+                type="button"
+                className="btn-ghost btn-ghost-sm"
+                onClick={() => { void copyToClipboard(grokBuildOauthDeviceCode.userCode); }}
+              >
+                {t("common.copy")}
+              </button>
+              <button
+                type="button"
+                className="test-btn"
+                onClick={() => { void handleGrokBuildOauthDeviceCodeComplete(); }}
+                disabled={grokBuildOauthLoading}
+                style={{ opacity: grokBuildOauthLoading ? 0.7 : 1 }}
+              >
+                {grokBuildOauthLoading
+                  ? t("settings.grokBuildOauthWorking")
+                  : t("settings.grokBuildOauthDeviceCodeContinue")}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }, [effectiveAssistantProvider, grokBuildOauthDeviceCode, grokBuildOauthLoading, grokBuildOauthStatus, handleGrokBuildOauthDeviceCodeComplete, handleGrokBuildOauthDeviceCodeStart, handleGrokBuildOauthLogin, handleGrokBuildOauthLogout, llmProvider, t]);
+  const allProviderOptions = useMemo(() => {
+    const presets = llmProviderOptions.map((opt) => ({ key: opt.key, label: opt.label, desc: t(opt.descKey), baseUrl: opt.baseUrl, isCustom: false as const }));
+    const customs = customProviders.map((cp) => ({
+      key: cp.id,
+      label: cp.name,
+      desc: cp.api_format === "anthropic" ? "Anthropic" : t("settings.openaiCompat"),
+      baseUrl: cp.base_url,
+      isCustom: true as const,
+    }));
+    return [...presets, ...customs];
+  }, [customProviders, t]);
+  const filteredProviderOptions = useMemo(() => allProviderOptions.filter(({ label, desc, baseUrl }) => {
+    const keyword = providerSearch.trim().toLowerCase();
+    if (!keyword) return true;
+    return label.toLowerCase().includes(keyword)
+      || desc.toLowerCase().includes(keyword)
+      || baseUrl.toLowerCase().includes(keyword);
+  }), [allProviderOptions, providerSearch]);
+  const filteredAssistantProviderOptions = useMemo(() => allProviderOptions.filter(({ label, desc, baseUrl }) => {
+    const keyword = assistantProviderSearch.trim().toLowerCase();
+    if (!keyword) return true;
+    return label.toLowerCase().includes(keyword)
+      || desc.toLowerCase().includes(keyword)
+      || baseUrl.toLowerCase().includes(keyword);
+  }), [allProviderOptions, assistantProviderSearch]);
+  const filteredAiModels = useMemo(() => aiModels.filter((model) => {
+    const keyword = aiModelSearch.trim().toLowerCase();
+    if (!keyword) return true;
+    return model.id.toLowerCase().includes(keyword)
+      || (model.displayName ?? "").toLowerCase().includes(keyword)
+      || (model.ownedBy ?? "").toLowerCase().includes(keyword);
+  }), [aiModels, aiModelSearch]);
+  const effectiveAssistantModels = assistantProviderDiffers
+    ? assistantModels
+    : aiModels;
+  const filteredAssistantModels = useMemo(() => effectiveAssistantModels.filter((model) => {
+    const keyword = assistantModelSearch.trim().toLowerCase();
+    if (!keyword) return true;
+    return model.id.toLowerCase().includes(keyword)
+      || (model.displayName ?? "").toLowerCase().includes(keyword)
+      || (model.ownedBy ?? "").toLowerCase().includes(keyword);
+  }), [effectiveAssistantModels, assistantModelSearch]);
+  const selectedAiModel = aiModels.find((model) => model.id === customModel);
+  const selectedAssistantAiModel = effectiveAssistantModels.find((model) => model.id === assistantModel);
+
+  const handleProviderSelect = useCallback(async (nextProvider: string) => {
+    if (nextProvider === llmProvider) {
+      picker.close();
+      setProviderSearch("");
+      return;
+    }
+
+    updateProviderDraft(llmProvider, customBaseUrl, customModel);
+    aiPolishKeySave.cancel();
+    llmConfigSave.cancel();
+    await saveAiPolishApiKey(aiPolishApiKey).catch(() => {});
+
+    const nextDraft = resolveProviderDraft(nextProvider);
+    const nextAssistantModel = resolveAssistantModelForPolishProviderChange({
+      assistantUseSeparateModel,
+      assistantProviderToPersist,
+      savedAssistantModel: assistantModel,
+      nextPolishModel: nextDraft.model,
+      assistantDefaultModel: currentAssistantPreset.defaultModel,
+    });
+    setLlmProvider(nextProvider);
+    setCustomBaseUrl(nextDraft.baseUrl);
+    setCustomModel(nextDraft.model);
+    setAssistantModel(nextAssistantModel);
+    if (!assistantUseSeparateModel) {
+      setAssistantProviderState("");
+    }
+    updateProviderDraft(nextProvider, nextDraft.baseUrl, nextDraft.model);
+    picker.close();
+    setProviderSearch("");
+    setAiModelSearch("");
+    setAssistantModelSearch("");
+    await setLlmProviderConfig(
+      nextProvider,
+      nextDraft.baseUrl || undefined,
+      nextDraft.model || undefined,
+      polishReasoningMode,
+      assistantReasoningMode,
+      assistantUseSeparateModel,
+      nextAssistantModel,
+      assistantProviderToPersist,
+    ).catch(() => {});
+    await refreshAiPolishKey();
+    if (!assistantUseSeparateModel) {
+      await refreshAssistantKey();
+    }
+  }, [
+    aiPolishApiKey,
+    aiPolishEnabled,
+    assistantProviderToPersist,
+    customBaseUrl,
+    customModel,
+    currentAssistantPreset,
+    llmProvider,
+    polishReasoningMode,
+    assistantReasoningMode,
+    assistantUseSeparateModel,
+    assistantModel,
+    aiPolishKeySave,
+    llmConfigSave,
+    refreshAiPolishKey,
+    refreshAssistantKey,
+    resolveProviderDraft,
+    updateProviderDraft,
+  ]);
+
+  const handleModelSelect = useCallback((nextModel: string) => {
+    const normalizedModel = resolveModelId(nextModel, aiModels);
+    if (!normalizedModel) return;
+    const nextAssistantModel = resolveAssistantModelState({
+      assistantUseSeparateModel,
+      savedAssistantModel: assistantModel,
+      polishModel: normalizedModel,
+      assistantDefaultModel: normalizedModel,
+    });
+    setCustomModel(normalizedModel);
+    updateProviderDraft(llmProvider, customBaseUrl, normalizedModel);
+    llmConfigSave.schedule(
+      llmProvider,
+      customBaseUrl,
+      normalizedModel,
+      polishReasoningMode,
+      assistantReasoningMode,
+      assistantUseSeparateModel,
+      nextAssistantModel,
+      assistantProviderToPersist,
+    );
+    picker.close();
+    setAiModelSearch("");
+    if (!assistantUseSeparateModel) {
+      setAssistantModel(normalizedModel);
+    }
+  }, [aiModels, assistantModel, assistantProviderToPersist, assistantReasoningMode, assistantUseSeparateModel, customBaseUrl, llmProvider, picker, polishReasoningMode, llmConfigSave, updateProviderDraft]);
+
+  const handleAssistantModelToggle = useCallback((enabled: boolean) => {
+    setAssistantUseSeparateModel(enabled);
+    picker.close();
+    const nextState = resolveAssistantModelToggleState({
+      enabled,
+      previousAssistantUseSeparateModel: assistantUseSeparateModel,
+      assistantProvider,
+      availableProviders: availableLlmProviders,
+      savedAssistantModel: assistantModel,
+      polishModel: customModel,
+      assistantDefaultModel: currentAssistantPreset.defaultModel,
+    });
+    setAssistantModel(nextState.assistantModel);
+    setAssistantProviderState(nextState.assistantProviderState);
+    llmConfigSave.schedule(
+      llmProvider,
+      customBaseUrl,
+      customModel,
+      polishReasoningMode,
+      assistantReasoningMode,
+      enabled,
+      nextState.assistantModel,
+      nextState.assistantProviderToPersist,
+    );
+    if (enabled) {
+      void refreshAssistantKey();
+    }
+  }, [assistantModel, assistantProvider, assistantReasoningMode, assistantUseSeparateModel, availableLlmProviders, currentAssistantPreset.defaultModel, customBaseUrl, customModel, llmProvider, picker, polishReasoningMode, refreshAssistantKey, llmConfigSave]);
+
+  const handleAssistantProviderSelect = useCallback(async (nextProvider: string) => {
+    if (nextProvider === assistantProvider) {
+      picker.close();
+      setAssistantProviderSearch("");
+      return;
+    }
+    const nextProviderCustom = customProviders.find((provider) => provider.id === nextProvider);
+    const nextProviderDefaultModel = nextProviderCustom
+      ? nextProviderCustom.model
+      : findLlmPreset(nextProvider).defaultModel;
+    const nextAssistantModel = resolveAssistantModelForProviderChange({
+      nextAssistantProvider: nextProvider,
+      polishProvider: llmProvider,
+      polishModel: customModel,
+      nextProviderDefaultModel,
+    });
+    llmConfigSave.cancel();
+    setAssistantProviderState(nextProvider);
+    setAssistantModel(nextAssistantModel);
+    picker.close();
+    setAssistantProviderSearch("");
+    // 先保存 config（含新 assistantProvider），再加载对应 key
+    await setLlmProviderConfig(
+      llmProvider,
+      customBaseUrl || undefined,
+      customModel || undefined,
+      polishReasoningMode,
+      assistantReasoningMode,
+      true,
+      nextAssistantModel || undefined,
+      nextProvider,
+    ).catch(() => {});
+    await refreshAssistantKey();
+  }, [assistantProvider, assistantReasoningMode, customBaseUrl, customModel, customProviders, llmConfigSave, llmProvider, picker, polishReasoningMode, refreshAssistantKey]);
+
+  const handleAssistantModelSelect = useCallback((nextModel: string) => {
+    const normalizedModel = resolveModelId(nextModel, effectiveAssistantModels);
+    if (!normalizedModel) return;
+    setAssistantModel(normalizedModel);
+    picker.close();
+    setAssistantModelSearch("");
+    llmConfigSave.schedule(
+      llmProvider,
+      customBaseUrl,
+      customModel,
+      polishReasoningMode,
+      assistantReasoningMode,
+      true,
+      normalizedModel,
+      assistantProviderToPersist,
+    );
+  }, [assistantProviderToPersist, assistantReasoningMode, customBaseUrl, customModel, effectiveAssistantModels, llmProvider, picker, polishReasoningMode, llmConfigSave]);
+
+  const handleTranslationSelect = useCallback(async (target: string | null) => {
+    setTranslationTargetState(target);
+    try {
+      const autoEnabled = await setTranslationTarget(target);
+      if (autoEnabled) {
+        aiPolishKeySave.cancel();
+        setAiPolishEnabled(true);
+        writeLocalStorage(AI_POLISH_ENABLED_KEY, "true");
+        await setAiPolishConfig(true, aiPolishApiKey).catch(() => {});
+        toast.success(t("toast.translationAutoPolish"));
+      }
+    } catch {
+      toast.error(t("toast.translationSaveFailed"));
+    }
+  }, [aiPolishApiKey, aiPolishKeySave]);
+
+  const handleCustomPromptChange = useCallback((value: string) => {
+    setCustomPromptState(value);
+    customPromptSave.schedule(value);
+  }, [customPromptSave]);
+
+  const handleAssistantPromptChange = useCallback((value: string) => {
+    setAssistantPromptState(value);
+    assistantPromptSave.schedule(value);
+  }, [assistantPromptSave]);
+
+  const polishReasoningProbeTarget = useMemo(() => {
+    const preset = findLlmPreset(llmProvider);
+    return resolveLlmReasoningProbeTarget({
+      provider: llmProvider,
+      customBaseUrl,
+      customModel,
+      customProviders,
+      defaults: {
+        baseUrl: preset.baseUrl,
+        model: preset.defaultModel,
+      },
+    });
+  }, [customBaseUrl, customModel, customProviders, llmProvider]);
+
+  const assistantReasoningProbeTarget = useMemo(() => {
+    const preset = findLlmPreset(effectiveAssistantProvider);
+    return resolveAssistantLlmReasoningProbeTarget({
+      assistantUseSeparateModel,
+      polishTarget: polishReasoningProbeTarget,
+      llmProvider,
+      effectiveAssistantProvider,
+      assistantModel,
+      customBaseUrl,
+      customModel,
+      customProviders,
+      defaults: {
+        baseUrl: preset.baseUrl,
+        model: preset.defaultModel,
+      },
+    });
+  }, [
+    assistantModel,
+    assistantUseSeparateModel,
+    customBaseUrl,
+    customModel,
+    customProviders,
+    effectiveAssistantProvider,
+    llmProvider,
+    polishReasoningProbeTarget,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPolishReasoningSupportState({
+      supported: false,
+      strategy: null,
+      summary: t("model.reasoningDetecting"),
+    });
+
+    void getLlmReasoningSupport(
+      polishReasoningProbeTarget.provider,
+      polishReasoningProbeTarget.baseUrl || undefined,
+      polishReasoningProbeTarget.model || undefined,
+      polishReasoningProbeTarget.apiFormat,
+      polishReasoningMode,
+    ).then((support) => {
+      if (!cancelled) {
+        setPolishReasoningSupportState(support);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setPolishReasoningSupportState({
+          supported: false,
+          strategy: null,
+          summary: t("model.reasoningUnavailable"),
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [polishReasoningMode, polishReasoningProbeTarget]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAssistantReasoningSupportState({
+      supported: false,
+      strategy: null,
+      summary: t("model.reasoningDetecting"),
+    });
+
+    void getLlmReasoningSupport(
+      assistantReasoningProbeTarget.provider,
+      assistantReasoningProbeTarget.baseUrl || undefined,
+      assistantReasoningProbeTarget.model || undefined,
+      assistantReasoningProbeTarget.apiFormat,
+      assistantReasoningMode,
+    ).then((support) => {
+      if (!cancelled) {
+        setAssistantReasoningSupportState(support);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setAssistantReasoningSupportState({
+          supported: false,
+          strategy: null,
+          summary: t("model.reasoningUnavailable"),
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assistantReasoningMode, assistantReasoningProbeTarget]);
+
+  const buildReasoningModeHint = useCallback((support: LlmReasoningSupport, selectedMode: LlmReasoningMode) => {
+    if (support.supported) {
+      return support.summary;
+    }
+    if (selectedMode !== "provider_default") {
+      return support.summary + t("model.reasoningFallback");
+    }
+    return support.summary;
+  }, [t]);
+
+  const polishReasoningModeDisabled =
+    !polishReasoningSupport.supported && polishReasoningMode === "provider_default";
+  const assistantReasoningModeDisabled =
+    !assistantReasoningSupport.supported && assistantReasoningMode === "provider_default";
+  const selectedAssistantReasoningOption = useMemo(
+    () => findReasoningModeOption(assistantReasoningMode),
+    [assistantReasoningMode],
+  );
+  const selectedPolishReasoningOption = useMemo(
+    () => findReasoningModeOption(polishReasoningMode),
+    [polishReasoningMode],
+  );
+  const selectedRecordingModeOption = useMemo(
+    () => findRecordingModeOption(recordingMode),
+    [recordingMode],
+  );
+  const availableWebSearchProviderOptions = useMemo(
+    () => assistantUsesOpenaiOauth
+      ? webSearchProviderOptions.filter((option) => option.key !== "model_native")
+      : webSearchProviderOptions,
+    [assistantUsesOpenaiOauth],
+  );
+  const selectedWebSearchProviderOption = useMemo(
+    () => availableWebSearchProviderOptions.find((o) => o.key === webSearchProvider) ?? availableWebSearchProviderOptions[0],
+    [availableWebSearchProviderOptions, webSearchProvider],
+  );
+  const assistantAuthSourceHint = useMemo(() => {
+    if (effectiveAssistantProvider !== "openai") {
+      return null;
+    }
+    if (assistantApiKeyState.trim()) {
+      return t("settings.assistantAuthSourceAssistantKey");
+    }
+    if (effectiveAssistantProvider === llmProvider && aiPolishApiKey.trim()) {
+      return t("settings.assistantAuthSourceSharedKey");
+    }
+    if (assistantUsesOpenaiOauth) {
+      return t("settings.assistantAuthSourceOauth");
+    }
+    return t("settings.assistantAuthSourceNone");
+  }, [
+    aiPolishApiKey,
+    assistantApiKeyState,
+    assistantUsesOpenaiOauth,
+    effectiveAssistantProvider,
+    llmProvider,
+    t,
+  ]);
+  const selectedInputDeviceOption = useMemo(() => {
+    if (!selectedInputDeviceName) {
+      const systemDefaultDevice = inputDevices.find((device) => device.isDefault);
+      return {
+        label: t("settings.followSystemMic"),
+        desc: systemDefaultDevice ? t("settings.currentDefault", { name: systemDefaultDevice.name }) : t("settings.autoUseDefault"),
+      };
+    }
+
+    const activeDevice = inputDevices.find((device) => device.name === selectedInputDeviceName);
+    if (activeDevice) {
+      return {
+        label: activeDevice.name,
+        desc: activeDevice.isDefault ? t("settings.alsoSystemDefault") : t("settings.fixedMic"),
+      };
+    }
+
+    return {
+      label: selectedInputDeviceName,
+      desc: t("settings.deviceUnavailable"),
+    };
+  }, [inputDevices, selectedInputDeviceName, t]);
+  const polishReasoningModeHint = useMemo(
+    () => buildReasoningModeHint(polishReasoningSupport, polishReasoningMode),
+    [buildReasoningModeHint, polishReasoningMode, polishReasoningSupport],
+  );
+  const assistantReasoningModeHint = useMemo(
+    () => buildReasoningModeHint(assistantReasoningSupport, assistantReasoningMode),
+    [assistantReasoningMode, assistantReasoningSupport, buildReasoningModeHint],
+  );
+
+  const handlePolishReasoningModeChange = useCallback((mode: LlmReasoningMode) => {
+    if (polishReasoningModeDisabled) return;
+    setPolishReasoningMode(mode);
+    picker.close();
+    llmConfigSave.schedule(
+      llmProvider,
+      customBaseUrl,
+      customModel,
+      mode,
+      assistantReasoningMode,
+      assistantUseSeparateModel,
+      assistantModel,
+      assistantProviderToPersist,
+    );
+  }, [assistantModel, assistantProviderToPersist, assistantReasoningMode, assistantUseSeparateModel, customBaseUrl, customModel, llmProvider, picker, polishReasoningModeDisabled, llmConfigSave]);
+
+  const handleAssistantReasoningModeChange = useCallback((mode: LlmReasoningMode) => {
+    if (assistantReasoningModeDisabled) return;
+    setAssistantReasoningMode(mode);
+    picker.close();
+    llmConfigSave.schedule(
+      llmProvider,
+      customBaseUrl,
+      customModel,
+      polishReasoningMode,
+      mode,
+      assistantUseSeparateModel,
+      assistantModel,
+      assistantProviderToPersist,
+    );
+  }, [assistantModel, assistantProviderToPersist, assistantReasoningModeDisabled, assistantUseSeparateModel, customBaseUrl, customModel, llmProvider, picker, polishReasoningMode, llmConfigSave]);
+
+  const handleRecordingModeChange = useCallback((mode: "hold" | "toggle") => {
+    setRecordingModeState(mode);
+    picker.close();
+    writeLocalStorage(RECORDING_MODE_KEY, mode);
+    setRecordingMode(mode === "toggle").catch(() => {});
+  }, []);
+
+  const configureJev = () => {
+    const section = document.getElementById("jev-settings");
+    section?.scrollIntoView({ block: "center", behavior: "instant" });
+    section?.focus({ preventScroll: true });
+  };
+
+  const handleProcessingMode = async (kind: "polish" | "screen" | "search", mode: ContextMode) => {
+    if (modeSavingRef.current) return;
+    modeSavingRef.current = true;
+    setModeSaving(true);
+    try {
+      if (kind === "polish") {
+        await aiPolishKeySave.flush();
+        await setPolishMode(mode);
+        setAiPolishEnabled(mode !== "off");
+        writeLocalStorage(AI_POLISH_ENABLED_KEY, String(mode !== "off"));
+      } else if (kind === "screen") {
+        await setScreenContextMode(mode);
+        setScreenContextEnabledState(mode !== "off");
+      } else {
+        await webSearchConfigSave.flush();
+        await setWebSearchMode(mode);
+        setWebSearchEnabledState(mode !== "off");
+      }
+      await refreshProfile();
+    } catch {
+      toast.error(t("settings.processingModeSaveFailed"));
+    } finally {
+      modeSavingRef.current = false;
+      setModeSaving(false);
+    }
+  };
+
+  const handleScreenVisionToggle = useCallback((enabled: boolean) => {
+    const previous = screenVisionEnabled;
+    setScreenVisionEnabled(enabled);
+    setScreenVisionConfig(enabled, screenVisionProvider, screenVisionModel).catch(() => {
+      setScreenVisionEnabled(previous);
+      toast.error(t("toast.screenVisionSaveFailed"));
+    });
+  }, [screenVisionEnabled, screenVisionModel, screenVisionProvider, t]);
+
+  const handleScreenVisionProviderChange = useCallback((provider: string) => {
+    const customProvider = customProviders.find((item) => item.id === provider);
+    const nextModel = customProvider?.model
+      || findLlmPreset(provider).defaultModel
+      || DEFAULT_SCREEN_VISION_MODEL;
+    const previousProvider = screenVisionProvider;
+    const previousModel = screenVisionModel;
+    screenVisionKeySave.cancel();
+    setScreenVisionProvider(provider);
+    setScreenVisionModel(nextModel);
+    setScreenVisionApiKeyState("");
+    void refreshScreenVisionKey(provider);
+    setScreenVisionConfig(screenVisionEnabled, provider, nextModel).catch(() => {
+      setScreenVisionProvider(previousProvider);
+      setScreenVisionModel(previousModel);
+      toast.error(t("toast.screenVisionSaveFailed"));
+    });
+  }, [customProviders, refreshScreenVisionKey, screenVisionEnabled, screenVisionKeySave, screenVisionModel, screenVisionProvider, t]);
+
+  const handleScreenVisionModelSelect = useCallback((model: string) => {
+    const normalized = model.trim();
+    if (!normalized) return;
+    setScreenVisionModel(normalized);
+    setScreenVisionConfig(screenVisionEnabled, screenVisionProvider, normalized).catch(() => {
+      toast.error(t("toast.screenVisionSaveFailed"));
+    });
+  }, [screenVisionEnabled, screenVisionProvider, t]);
+
+  const handleScreenVisionModelBlur = useCallback(() => {
+    const normalized = screenVisionModel.trim();
+    if (!normalized) {
+      const customProvider = customProviders.find((item) => item.id === screenVisionProvider);
+      setScreenVisionModel(
+        customProvider?.model
+          || findLlmPreset(screenVisionProvider).defaultModel
+          || DEFAULT_SCREEN_VISION_MODEL,
+      );
+      toast.error(t("toast.screenVisionModelRequired"));
+      return;
+    }
+    setScreenVisionModel(normalized);
+    setScreenVisionConfig(screenVisionEnabled, screenVisionProvider, normalized).catch(() => {
+      toast.error(t("toast.screenVisionSaveFailed"));
+    });
+  }, [customProviders, screenVisionEnabled, screenVisionModel, screenVisionProvider, t]);
+
+  const handlePolishStructureLevelChange = useCallback((level: PolishStructureLevel) => {
+    const previous = polishStructureLevel;
+    const saveId = ++polishStructureSaveIdRef.current;
+    setPolishStructureLevelState(level);
+    setPolishStructureLevel(level).catch(() => {
+      if (polishStructureSaveIdRef.current !== saveId) return;
+      setPolishStructureLevelState(previous);
+      toast.error(t("toast.polishStructureSaveFailed"));
+    });
+  }, [polishStructureLevel, t]);
+
+  const handleWebSearchProviderChange = useCallback((provider: WebSearchProvider) => {
+    void webSearchKeySave.flush();
+    setWebSearchProviderState(provider);
+    setWebSearchApiKeyState("");
+    void refreshWebSearchKey(provider);
+    picker.close();
+    webSearchConfigSave.schedule(webSearchEnabled, provider, webSearchMaxResults);
+  }, [webSearchEnabled, webSearchMaxResults, webSearchConfigSave, webSearchKeySave, picker, refreshWebSearchKey]);
+
+  const handleWebSearchMaxResultsChange = useCallback((value: number) => {
+    setWebSearchMaxResultsState(value);
+    webSearchConfigSave.schedule(webSearchEnabled, webSearchProvider, value);
+  }, [webSearchEnabled, webSearchProvider, webSearchConfigSave]);
+
+  return (
+    <div className="page-root">
+
+      <TitleBar
+        title={t("settings.title")}
+        leftAction={
+          <button aria-label={t("common.back")} className="icon-btn plain" onClick={() => onNavigate("main")}>
+            <ArrowLeft size={14} strokeWidth={1.5} />
+          </button>
+        }
+        rightActions={
+          <>
+            <button aria-label={t("common.minimize")} className="icon-btn" onClick={() => getCurrentWindow().minimize()}>
+              <Minus size={12} strokeWidth={1.5} />
+            </button>
+            <button aria-label={t("common.close")} className="icon-btn" onClick={() => hideMainWindow()}>
+              <X size={12} strokeWidth={1.5} />
+            </button>
+          </>
+        }
+      />
+
+      <div className={pageContentClass} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
+        {!settingsReady ? (
+          <div className="settings-content settings-load-state" role={profileLoadError ? "alert" : "status"}>
+            {profileLoadError ? (
+              <>
+                <AlertTriangle size={20} aria-hidden="true" />
+                <p>{t("settings.profileLoadFailed")}</p>
+                <button className="btn-ghost" type="button" disabled={profileLoadPending} onClick={() => void refreshProfileAndKeys()}>
+                  {t("common.retry")}
+                </button>
+              </>
+            ) : <p>{t("common.loading")}</p>}
+          </div>
+        ) : (
+          <>
+        {/* Settings nav */}
+        <nav className="settings-nav" ref={navScrollRef}>
+          {navIndicatorStyle && (
+            <div
+              className="settings-nav-indicator"
+              style={{ transform: `translateX(${navIndicatorStyle.left}px) scaleX(${navIndicatorStyle.width})`, width: 1 }}
+            />
+          )}
+          {navSections.map(({ id, labelKey }) => (
+            <button
+              key={id}
+              type="button"
+              className="settings-nav-tab"
+              data-active={activeNavSection === id}
+              data-nav-tab={id}
+              onClick={() => handleNavClick(id)}
+            >
+              {t(labelKey)}
+            </button>
+          ))}
+        </nav>
+
+        {/* Content */}
+        <div className="settings-content" ref={settingsContentRef} style={{ padding: `16px ${PADDING}px 16px` }}>
+          <div className="settings-sections">
+
+          <AppearanceSettingsSection
+            picker={{
+              isOpen: picker.isOpen("language"),
+              isExpanded: picker.isExpanded("language"),
+              toggle: () => picker.toggle("language"),
+              close: picker.close,
+              setRef: picker.setRef("language"),
+              popoverClass: picker.popoverClass("language"),
+            }}
+          />
+
+          {/* Engine */}
+          <section
+            className="settings-card"
+            data-nav-id="engine"
+            style={{
+              position: "relative",
+              zIndex: (picker.isOpen("engine") || picker.isOpen("alibabaModel")) ? 8 : "auto",
+            }}
+          >
+            <div className="settings-section-header">
+              <AudioLines size={15} className="icon-accent" />
+              <h2 className="settings-section-title">{t("settings.engine")}</h2>
+            </div>
+            {(() => {
+              const currentOption = engineOptions.find((o) => o.key === engine) ?? engineOptions[0];
+              const CurrentIcon = currentOption.icon;
+              const currentLabel = engineOptionLabel(currentOption, t);
+              const currentDescription = formatAsrEngineDescription(
+                currentOption.key,
+                t(currentOption.descKey),
+              );
+              const currentCapabilityTags = asrCapabilityTagKeys(currentOption.key);
+              return (
+                <div ref={picker.setRef("engine")} style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    className="picker-trigger"
+                    data-open={picker.isOpen("engine")}
+                    aria-haspopup="listbox"
+                      aria-expanded={picker.isExpanded("engine")}
+                    aria-label={t("settings.engine")}
+                    disabled={engineLoading || onlineAsrRegionLoading}
+                    onClick={() => picker.toggle("engine")}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <CurrentIcon size={18} strokeWidth={1.5} style={{ flexShrink: 0, color: "var(--color-accent)" }} />
+                      <span className="picker-trigger-copy">
+                        <strong>{currentLabel}</strong>
+                        <span>
+                          {currentDescription}
+                          {currentCapabilityTags.length > 0 && (
+                            <span className="asr-capability-tags">
+                              {currentCapabilityTags.map((tagKey) => (
+                                <span key={tagKey} className="asr-capability-tag">{t(tagKey)}</span>
+                              ))}
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                    </span>
+                    <ChevronsUpDown size={14} className="icon-tertiary" style={{ flexShrink: 0 }} />
+                  </button>
+                  {picker.isOpen("engine") && (
+                    <div className={picker.popoverClass("engine")}>
+                      <div className="picker-list" role="listbox">
+                        {engineOptions.map((option) => {
+                          const { key, icon: Icon, descKey } = option;
+                          const displayLabel = engineOptionLabel(option, t);
+                          const displayDescription = formatAsrEngineDescription(key, t(descKey));
+                          const selected = engine === key;
+                          const capabilityTags = asrCapabilityTagKeys(key);
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              className="picker-option"
+                              data-active={selected}
+                              disabled={engineLoading || onlineAsrRegionLoading}
+                              onClick={() => {
+                                picker.close();
+                                void handleEngineSwitch(key);
+                              }}
+                            >
+                              <span style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+                                <Icon size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+                                <span className="picker-option-copy">
+                                  <strong>{displayLabel}</strong>
+                                  <span>{displayDescription}</span>
+                                  {capabilityTags.length > 0 && (
+                                    <span className="asr-capability-tags">
+                                      {capabilityTags.map((tagKey) => (
+                                        <span key={tagKey} className="asr-capability-tag">{t(tagKey)}</span>
+                                      ))}
+                                    </span>
+                                  )}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            <GpuIdleUnloadControl />
+            <SettingsReveal open={engine === "confucius4-r2t2" && !!profile} gap={10}>
+              {profile && <R2T2SettingsSection profile={profile} onSaved={() => { void refreshProfile(); }} />}
+            </SettingsReveal>
+            {(engine === "glm-asr" || engine === "alibaba-asr") && (
+              <div className="settings-inline-panel" style={{ marginTop: 8 }}>
+                <div className="settings-column" style={{ gap: 4 }}>
+                  <span className="settings-option-desc">{t("settings.apiEndpoint")}</span>
+                  <div className="settings-row" style={{ gap: 6 }}>
+                    {([
+                      { region: "international", labelKey: "settings.international" },
+                      { region: "domestic", labelKey: "settings.domestic" },
+                    ] as const).map(({ region, labelKey }) => (
+                      <button
+                        key={region}
+                        type="button"
+                        disabled={engineLoading || onlineAsrRegionLoading}
+                        className={`theme-btn${onlineAsrRegion === region ? " active" : ""}`}
+                        onClick={() => { void handleOnlineAsrRegionChange(region); }}
+                        style={{ flex: 1 }}
+                      >
+                        {t(labelKey)}
+                      </button>
+                    ))}
+                  </div>
+                  {onlineAsrUrl && (
+                    <span className="settings-option-desc" style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>
+                      {onlineAsrUrl}
+                    </span>
+                  )}
+                </div>
+                {engine === "alibaba-asr" && alibabaAsrModels.length > 0 && (
+                  <div className="settings-column" style={{ gap: 4 }}>
+                    <div className="settings-row" style={{ gap: 6, alignItems: "center" }}>
+                      <span className="settings-option-desc" style={{ flex: 1 }}>
+                        {t("settings.alibabaModelLabel")}
+                        <span style={{ marginLeft: 6, fontSize: 11, color: "var(--color-text-tertiary)" }}>
+                          {alibabaAsrModelsLoading
+                            ? t("settings.alibabaModelsLoading")
+                            : alibabaAsrModelsSource === "live"
+                              ? t("settings.alibabaModelsLive", { count: alibabaAsrModels.length })
+                              : t("settings.alibabaModelsFallback")}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="theme-btn theme-btn-xs"
+                        disabled={alibabaAsrModelsLoading || !alibabaHasKey}
+                        onClick={() => { void refreshAlibabaModels(); }}
+                        aria-label={t("settings.alibabaModelsRefresh")}
+                      >
+                        <RotateCcw size={11} />
+                        {t("settings.alibabaModelsRefresh")}
+                      </button>
+                    </div>
+                    <div ref={picker.setRef("alibabaModel")} style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        className="picker-trigger"
+                        data-open={picker.isOpen("alibabaModel")}
+                        aria-haspopup="listbox"
+                          aria-expanded={picker.isExpanded("alibabaModel")}
+                        aria-label={t("settings.alibabaModelLabel")}
+                        onClick={() => picker.toggle("alibabaModel")}
+                      >
+                        <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12, color: "var(--color-text-primary)" }}>
+                          {alibabaAsrModel}
+                        </span>
+                        <ChevronsUpDown size={13} />
+                      </button>
+                      {picker.isOpen("alibabaModel") && (
+                        <div className={picker.popoverClass("alibabaModel")}>
+                          <div className="picker-list" role="listbox">
+                            {alibabaAsrModels.map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                className="picker-option"
+                                data-active={alibabaAsrModel === m}
+                                onClick={() => {
+                                  picker.close();
+                                  void handleAlibabaAsrModelSelect(m);
+                                }}
+                              >
+                                <strong style={{ fontSize: 12, fontFamily: "var(--font-mono, monospace)" }}>{m}</strong>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <fieldset disabled={engineLoading || onlineAsrRegionLoading}
+                  className="settings-column" style={{ gap: 4, border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+                  <span className="settings-option-desc">{t("settings.apiKey")}</span>
+                  <SecretInput
+                    value={onlineAsrApiKey}
+                    placeholder={engine === "alibaba-asr"
+                      ? t("settings.alibabaApiKeyPlaceholder")
+                      : t("settings.glmApiKeyPlaceholder")}
+                    ariaLabelShow={t("settings.showApiKey")}
+                    ariaLabelHide={t("settings.hideApiKey")}
+                    onChange={handleOnlineAsrApiKeyChange}
+                  />
+                </fieldset>
+              </div>
+            )}
+            {/* Model Directory */}
+            {!isOnlineEngineKey(engine) && (
+              <div className="settings-column" style={{ gap: 6, marginTop: 8 }}>
+                <div className="settings-row" style={{ gap: 6, alignItems: "center" }}>
+                  <HardDrive size={13} className="icon-tertiary" style={{ flexShrink: 0 }} />
+                  <span className="settings-option-desc" style={{ flex: 1 }}>{t("settings.modelStorageDir")}</span>
+                  {modelsDirCustom && (
+                    <button
+                      className="theme-btn theme-btn-xs"
+                      disabled={modelsDirMigrating}
+                      onClick={() => { void handleRestoreDefaultModelsDir(); }}
+                    >
+                      <RotateCcw size={11} />
+                      {t("settings.restoreDefault")}
+                    </button>
+                  )}
+                  <button
+                    className="theme-btn theme-btn-xs"
+                    disabled={modelsDirMigrating}
+                    onClick={() => { void handleChooseModelsDir(); }}
+                  >
+                    <FolderOpen size={11} />
+                    {modelsDirMigrating ? (modelsMigrateMsg || t("settings.migrating")) : t("common.change")}
+                  </button>
+                </div>
+                <span
+                  className="settings-option-desc"
+                  style={{ fontSize: 11, color: "var(--color-text-tertiary)", wordBreak: "break-all", userSelect: "text" }}
+                >
+                  {modelsDir || t("common.loading")}
+                </span>
+              </div>
+            )}
+          </section>
+
+          {/* Hotkey */}
+          <section
+            className="settings-card"
+            data-nav-id="hotkey"
+            style={{
+              position: "relative",
+              zIndex: picker.isOpen("recordingMode") ? 9 : "auto",
+            }}
+          >
+            <div className="settings-section-header">
+              <Keyboard size={15} className="icon-accent" />
+              <h2 className="settings-section-title">{t("settings.hotkeySection")}</h2>
+            </div>
+            <div className="settings-column">
+              <div className="settings-row" style={{ alignItems: "center", gap: 10 }}>
+                <button
+                  className="theme-btn hotkey-capture-btn"
+                  onClick={() => mainHotkeyCapture.startCapture()}
+                  disabled={mainHotkeyCapture.saving}
+                  data-capturing={mainHotkeyCapture.capturing}
+                  style={{
+                    cursor: mainHotkeyCapture.saving ? "wait" : "pointer",
+                    opacity: mainHotkeyCapture.saving ? 0.7 : 1,
+                  }}
+                >
+                  {mainHotkeyCapture.capturing
+                    ? t("settings.pressCombo")
+                    : hotkeyDisplay
+                      ? <Kbd combo={hotkeyDisplay} />
+                      : null}
+                </button>
+                <button
+                  className="btn-ghost"
+                  onClick={handleResetHotkey}
+                  disabled={mainHotkeyCapture.saving}
+                  style={{
+                    fontSize: 12,
+                    padding: "8px 10px",
+                    cursor: mainHotkeyCapture.saving ? "wait" : "pointer",
+                    opacity: mainHotkeyCapture.saving ? 0.7 : 1,
+                  }}
+                >
+                  {t("settings.resetF2")}
+                </button>
+              </div>
+              <p className="settings-hint">
+                {t("settings.hotkeyHint")}
+              </p>
+              <div className="settings-column" style={{ gap: 6, marginTop: 8 }}>
+                <span className="settings-option-desc">{t("settings.recordingMode")}</span>
+                <div
+                  ref={picker.setRef("recordingMode")}
+                  style={{
+                    position: "relative",
+                    zIndex: picker.isOpen("recordingMode") ? 2 : 1,
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="picker-trigger"
+                    data-open={picker.isOpen("recordingMode")}
+                    aria-haspopup="listbox"
+                    aria-expanded={picker.isExpanded("recordingMode")}
+                    aria-label={t("settings.recordingModeLabel")}
+                    onClick={() => {
+                      picker.toggle("recordingMode");
+                    }}
+                  >
+                    <span className="picker-trigger-copy">
+                      <strong>{t(selectedRecordingModeOption.labelKey)}</strong>
+                      <span>{t(selectedRecordingModeOption.descKey)}</span>
+                    </span>
+                    <ChevronsUpDown size={14} className="icon-tertiary" />
+                  </button>
+                  {picker.isOpen("recordingMode") && (
+                    <div className={picker.popoverClass("recordingMode")}>
+                      <div className="picker-list" role="listbox">
+                        {recordingModeOptions.map((option) => (
+                          <button
+                            key={`recording-mode-${option.key}`}
+                            type="button"
+                            className="picker-option"
+                            data-active={recordingMode === option.key}
+                            onClick={() => handleRecordingModeChange(option.key)}
+                          >
+                            <span className="picker-option-copy">
+                              <strong>{t(option.labelKey)}</strong>
+                              <span>{t(option.descKey)}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {hotkeyDiagnostic?.systemConflict && (
+                <p className="settings-error" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <AlertTriangle size={12} style={{ flexShrink: 0 }} /> {hotkeyDiagnostic.systemConflict}
+                </p>
+              )}
+              {hotkeyDiagnostic?.warning && <p className="settings-hint">{hotkeyDiagnostic.warning}</p>}
+              {hotkeyStatusError && <p className="settings-error">{hotkeyStatusError}</p>}
+            </div>
+          </section>
+
+          {/* Microphone */}
+          <section
+            className="settings-card"
+            data-nav-id="microphone"
+            style={{
+              position: "relative",
+              zIndex: picker.isOpen("microphone") ? 8 : "auto",
+            }}
+          >
+            <div className="settings-section-header">
+              <Mic size={15} className="icon-accent" />
+              <h2 className="settings-section-title">{t("settings.microphone")}</h2>
+              <div className="settings-row" style={{ marginLeft: "auto", gap: 8, flex: "0 0 auto" }}>
+                <span className="settings-option-desc" style={{ whiteSpace: "nowrap" }}>{t("settings.levelMonitor")}</span>
+                <button
+                  role="switch"
+                  aria-checked={micLevelMonitorEnabled}
+                  aria-label={t("settings.micLevelMonitor")}
+                  onClick={() => handleMicLevelMonitorToggle(!micLevelMonitorEnabled)}
+                  className="toggle-switch"
+                >
+                  <div className="toggle-knob" />
+                </button>
+              </div>
+            </div>
+            <div className="settings-column">
+              <div className="settings-row" style={{ alignItems: "center", gap: 10 }}>
+                <div ref={picker.setRef("microphone")} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                  <button
+                    type="button"
+                    className="picker-trigger microphone-select"
+                    data-open={picker.isOpen("microphone")}
+                    aria-haspopup="listbox"
+                    aria-expanded={picker.isExpanded("microphone")}
+                    aria-label={t("settings.selectMic")}
+                    disabled={deviceListLoading}
+                    onClick={() => {
+                      if (deviceListLoading) return;
+                      picker.toggle("microphone");
+                    }}
+                    style={{
+                      opacity: deviceListLoading ? 0.7 : 1,
+                      cursor: deviceListLoading ? "wait" : "pointer",
+                    }}
+                  >
+                    <span className="picker-trigger-copy">
+                      <strong>{selectedInputDeviceOption.label}</strong>
+                      <span>{selectedInputDeviceOption.desc}</span>
+                    </span>
+                    <ChevronsUpDown size={14} className="icon-tertiary" />
+                  </button>
+                  {picker.isOpen("microphone") && (
+                    <div className={picker.popoverClass("microphone")}>
+                      <div className="picker-list" role="listbox">
+                        <button
+                          type="button"
+                          className="picker-option"
+                          data-active={!selectedInputDeviceName}
+                          onClick={() => { void handleInputDeviceChange(""); }}
+                        >
+                          <span className="picker-option-copy">
+                            <strong>{t("settings.followSystemMic")}</strong>
+                            <span>
+                              {inputDevices.find((device) => device.isDefault)?.name ?? t("settings.autoUseDefault")}
+                            </span>
+                          </span>
+                        </button>
+                        {inputDevices.map((device) => (
+                          <button
+                            key={device.name}
+                            type="button"
+                            className="picker-option"
+                            data-active={selectedInputDeviceName === device.name}
+                            onClick={() => { void handleInputDeviceChange(device.name); }}
+                          >
+                            <span className="picker-option-copy">
+                              <strong>{device.name}</strong>
+                              <span>{device.isDefault ? t("settings.systemDefaultDevice") : t("settings.canSelect")}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <button
+                  className="btn-ghost btn-ghost-sm"
+                  disabled={deviceListLoading}
+                  onClick={() => { void refreshInputDevices(); }}
+                  style={{ opacity: deviceListLoading ? 0.7 : 1 }}
+                >
+                  {t("common.refresh")}
+                </button>
+                <button className="test-btn" onClick={() => { void handleTestMicrophone(); }}>{t("common.test")}</button>
+              </div>
+              <div className="mic-level-shell" aria-label={t("settings.micLevelPreview")}>
+                <div className="mic-level-fill" style={{ "--mic-level": `${Math.round(micLevel * 100)}%` } as React.CSSProperties} />
+              </div>
+              <div className="settings-row" style={{ gap: 10 }}>
+                <span className="settings-hint">
+                  {!micLevelMonitorEnabled
+                    ? t("settings.micMonitorOff")
+                    : isRecording
+                    ? t("settings.micRecordingPaused")
+                    : micMonitorReady
+                      ? t("settings.micSpeakToTest")
+                      : t("settings.micNotStarted")}
+                </span>
+                <span className="settings-option-desc">{Math.round(micLevel * 100)}%</span>
+              </div>
+              {selectedDeviceMissing && (
+                <p className="settings-error">
+                  {t("settings.savedMicUnavailable")}
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* Input Method */}
+          <section className="settings-card" data-nav-id="input">
+            <div className="settings-section-header">
+              <ClipboardPaste size={15} className="icon-accent" />
+              <h2 className="settings-section-title">{t("settings.inputMethod")}</h2>
+            </div>
+            <div className="input-method-list">
+              {inputOptions.map(({ key, icon: Icon, labelKey, descKey }) => (
+                <button
+                  key={key}
+                  className="input-method-item"
+                  aria-pressed={inputMethod === key}
+                  onClick={() => {
+                    setInputMethod(key);
+                    writeLocalStorage(INPUT_METHOD_KEY, key);
+                    setInputMethodCommand(key).catch(() => {});
+                  }}
+                >
+                  <Icon size={18} strokeWidth={1.5} style={{ color: inputMethod === key ? "var(--color-accent)" : "var(--color-text-tertiary)", flexShrink: 0 }} />
+                  <div className="input-method-item-body">
+                    <span className="settings-option-label">{t(labelKey)}</span>
+                    <span className="settings-option-desc">{t(descKey)}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="settings-row" style={{ marginTop: 6 }}>
+              <span className="permission-label">{t("settings.recordingSound")}</span>
+              <button
+                role="switch"
+                aria-checked={soundEnabled}
+                aria-label={t("settings.recordingSound")}
+                onClick={() => {
+                  const next = !soundEnabled;
+                  setSoundEnabledState(next);
+                  writeLocalStorage(SOUND_ENABLED_KEY, String(next));
+                  setSoundEnabled(next).catch(() => {});
+                }}
+                className="toggle-switch"
+              >
+                <div className="toggle-knob" />
+              </button>
+            </div>
+          </section>
+
+          {/* AI Polish + LLM Backend */}
+          <section
+            className="settings-card"
+            data-nav-id="ai-polish"
+            style={{
+              position: "relative",
+              zIndex: picker.isOpen("provider")
+                || picker.isOpen("model")
+                || picker.isOpen("polishReasoning")
+                ? 8
+                : "auto",
+            }}
+          >
+            <div className="settings-section-header">
+              <Sparkles size={15} className="icon-accent" />
+              <h2 className="settings-section-title">{t("settings.aiPolish")}</h2>
+            </div>
+            <div className="settings-column" style={{ gap: 10 }}>
+              <ProcessingModeControl label={t("settings.aiPolish")}
+                value={!aiPolishEnabled ? "off" : profile?.jev?.enabled ? "auto" : "on"}
+                hint={t("settings.polishModeHint")} disabled={modeSaving || !profile}
+                onChange={(mode) => { void handleProcessingMode("polish", mode); }} onConfigure={configureJev} />
+
+              <PolishStructureControl
+                level={polishStructureLevel}
+                onChange={handlePolishStructureLevelChange}
+              />
+
+              <div className="settings-column" style={{ gap: 10 }}>
+                <div className="settings-column" style={{ gap: 6 }}>
+                  <span className="settings-option-desc">{t("settings.provider")}</span>
+                  <div className="picker-shell" ref={picker.setRef("provider")}>
+                    <button
+                      type="button"
+                      className="picker-trigger"
+                      data-open={picker.isOpen("provider")}
+                      aria-haspopup="listbox"
+                      aria-expanded={picker.isExpanded("provider")}
+                      aria-label={t("settings.selectProvider")}
+                      onClick={() => {
+                        picker.toggle("provider");
+                      }}
+                    >
+                      <span className="picker-trigger-copy">
+                        <strong>{currentLlmPreset.label}</strong>
+                        <span>{customBaseUrl || currentLlmPreset.baseUrl}</span>
+                      </span>
+                      <ChevronsUpDown size={14} className="icon-tertiary" />
+                    </button>
+                    {picker.isOpen("provider") && (
+                      <div className={picker.popoverClass("provider")}>
+                        <input
+                          ref={providerSearchInputRef}
+                          type="text"
+                          className="settings-input picker-search-input"
+                          placeholder={t("settings.searchProvider")}
+                          aria-label={t("settings.searchProviderLabel")}
+                          value={providerSearch}
+                          onChange={(e) => setProviderSearch(e.target.value)}
+                        />
+                        <div className="picker-list" role="listbox">
+                          {filteredProviderOptions.length > 0 ? filteredProviderOptions.map(({ key, label, desc, baseUrl, isCustom }) => (
+                            <button
+                              key={key}
+                              type="button"
+                              className="picker-option"
+                              data-active={llmProvider === key}
+                              onClick={() => { void handleProviderSelect(key); }}
+                            >
+                              <span className="picker-option-copy">
+                                <strong>{label}</strong>
+                                <span>{desc}</span>
+                                <code>{baseUrl}</code>
+                              </span>
+                              {isCustom && <span className="picker-option-badge">{t("settings.customProvider")}</span>}
+                            </button>
+                          )) : (
+                            <div className="picker-empty">{t("settings.noMatchingProvider")}</div>
+                          )}
+                          {/* 添加自定义服务商 */}
+                          {!addingProvider ? (
+                            <button
+                              type="button"
+                              className="picker-option"
+                              style={{ borderTop: "1px solid var(--color-border)" }}
+                              onClick={(e) => { e.stopPropagation(); setAddingProvider(true); }}
+                            >
+                              <span className="picker-option-copy">
+                                <strong><Plus size={12} style={{ verticalAlign: -1, marginRight: 4 }} />{t("settings.addCustomProvider")}</strong>
+                              </span>
+                            </button>
+                          ) : (
+                            <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid var(--color-border)" }}>
+                              <input className="settings-input" placeholder={t("settings.providerName")} aria-label={t("settings.providerNameLabel")} value={newProviderName} onChange={(e) => setNewProviderName(e.target.value)} style={{ fontSize: 12 }} />
+                              <input className="settings-input" placeholder="Base URL" aria-label={t("settings.providerBaseUrlLabel")} value={newProviderBaseUrl} onChange={(e) => setNewProviderBaseUrl(e.target.value)} style={{ fontSize: 12 }} />
+                              <input className="settings-input" placeholder={t("settings.defaultModel")} aria-label={t("settings.defaultModelLabel")} value={newProviderModel} onChange={(e) => setNewProviderModel(e.target.value)} style={{ fontSize: 12 }} />
+                              <select
+                                className="settings-input"
+                                aria-label={t("settings.apiFormatLabel")}
+                                value={newProviderFormat}
+                                onChange={(e) => setNewProviderFormat(e.target.value as ApiFormat)}
+                                style={{ fontSize: 12 }}
+                              >
+                                <option value="openai_compat">{t("settings.openaiCompat")}</option>
+                                <option value="anthropic">Anthropic</option>
+                              </select>
+                              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                                <button className="btn-ghost btn-ghost-xs" onClick={() => { setAddingProvider(false); setNewProviderName(""); setNewProviderBaseUrl(""); setNewProviderModel(""); setNewProviderFormat("openai_compat"); }}>{t("common.cancel")}</button>
+                                <button
+                                  className="btn-ghost btn-ghost-xs"
+                                  disabled={!newProviderName.trim() || !newProviderBaseUrl.trim()}
+                                  onClick={() => {
+                                    llmConfigSave.cancel();
+                                    void addCustomProvider(newProviderName.trim(), newProviderBaseUrl.trim(), newProviderModel.trim(), newProviderFormat).then(async (id) => {
+                                      setAddingProvider(false);
+                                      const baseUrl = newProviderBaseUrl.trim();
+                                      const model = newProviderModel.trim();
+                                      setNewProviderName("");
+                                      setNewProviderBaseUrl("");
+                                      setNewProviderModel("");
+                                      setNewProviderFormat("openai_compat");
+                                      // 先刷新 profile 拿到最新 customProviders，再切换
+                                      await refreshProfile();
+                                      // 直接设置状态，不依赖 resolveProviderDraft（避免竞态）
+                                      const nextAssistantModel = resolveAssistantModelForPolishProviderChange({
+                                        assistantUseSeparateModel,
+                                        assistantProviderToPersist,
+                                        savedAssistantModel: assistantModel,
+                                        nextPolishModel: model,
+                                        assistantDefaultModel: currentAssistantPreset.defaultModel,
+                                      });
+                                      setLlmProvider(id);
+                                      setCustomBaseUrl(baseUrl);
+                                      setCustomModel(model);
+                                      setAssistantModel(nextAssistantModel);
+                                      if (!assistantUseSeparateModel) {
+                                        setAssistantProviderState("");
+                                      }
+                                      updateProviderDraft(id, baseUrl, model);
+                                      await setLlmProviderConfig(
+                                        id,
+                                        baseUrl || undefined,
+                                        model || undefined,
+                                        polishReasoningMode,
+                                        assistantReasoningMode,
+                                        assistantUseSeparateModel,
+                                        nextAssistantModel,
+                                        assistantProviderToPersist,
+                                      ).catch(() => {});
+                                      await refreshAiPolishKey();
+                                    });
+                                  }}
+                                >{t("common.add")}</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        {customProviders.some((provider) => provider.id === llmProvider) && (
+                          <button
+                            type="button"
+                            className="picker-popover-action is-danger"
+                            onClick={async () => {
+                              const providerId = llmProvider;
+                              await handleProviderSelect("openai");
+                              await removeCustomProvider(providerId);
+                              await refreshProfile();
+                              await refreshAiPolishKey();
+                            }}
+                          >
+                            <Trash2 size={12} aria-hidden="true" />
+                            {t("settings.deleteProvider")}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="settings-column" style={{ gap: 6 }}>
+                  <span className="settings-option-desc">{t("settings.baseUrl")}</span>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    placeholder={t("settings.baseUrlPlaceholder")}
+                    aria-label={t("settings.baseUrlLabel")}
+                    value={customBaseUrl}
+                    readOnly={!providerSupportsCustomEndpoint}
+                    onChange={(e) => {
+                      if (!providerSupportsCustomEndpoint) return;
+                      const nextBaseUrl = e.target.value;
+                      setCustomBaseUrl(nextBaseUrl);
+                      updateProviderDraft(llmProvider, nextBaseUrl, customModel);
+                      llmConfigSave.schedule(
+                        llmProvider,
+                        nextBaseUrl,
+                        customModel,
+                        polishReasoningMode,
+                        assistantReasoningMode,
+                        assistantUseSeparateModel,
+                        assistantModel,
+                        assistantProviderToPersist,
+                      );
+                    }}
+                  />
+                  <p className="settings-hint">
+                    {providerSupportsCustomEndpoint
+                      ? t("settings.baseUrlCustomHint")
+                      : t("settings.baseUrlFixedHint")}
+                  </p>
+                </div>
+
+                {llmProvider === "openai" && renderOpenaiAuthModeToggle()}
+                {shouldShowGrokBuildAuth(llmProvider) && renderXaiAuthModeToggle()}
+
+                <div className="settings-column" style={{ gap: 6 }}>
+                  <span className="settings-option-desc">{t("settings.apiKey")}</span>
+                  <SecretInput
+                    value={aiPolishApiKey}
+                    placeholder={`${currentLlmPreset.label} API Key`}
+                    ariaLabelShow={t("settings.showApiKey")}
+                    ariaLabelHide={t("settings.hideApiKey")}
+                    onChange={(value) => {
+                      setAiPolishApiKey(value);
+                      aiPolishKeySave.schedule(value);
+                    }}
+                  />
+                </div>
+
+                {renderOpenaiCodexOauthBlock("polish")}
+                {shouldShowGrokBuildAuth(llmProvider) && renderGrokBuildOauthBlock("polish")}
+
+                <div className="settings-column" style={{ gap: 6 }}>
+                  <div className="settings-row">
+                    <span className="settings-option-desc">{t("settings.modelLabel")}</span>
+                    <span className="settings-option-desc">{filteredAiModels.length}/{aiModels.length}</span>
+                  </div>
+                  <div className="picker-shell" ref={picker.setRef("model")}>
+                    <div className="picker-inline-row">
+                      <input
+                        type="text"
+                        className="settings-input"
+                        placeholder={t("settings.modelNamePlaceholder")}
+                        aria-label={t("settings.modelNameLabel")}
+                        value={customModel}
+                        onChange={(e) => {
+                          const nextModel = e.target.value;
+                          const nextAssistantModel = resolveAssistantModelState({
+                            assistantUseSeparateModel,
+                            savedAssistantModel: assistantModel,
+                            polishModel: nextModel,
+                            assistantDefaultModel: nextModel,
+                          });
+                          setCustomModel(nextModel);
+                          updateProviderDraft(llmProvider, customBaseUrl, nextModel);
+                          llmConfigSave.schedule(
+                            llmProvider,
+                            customBaseUrl,
+                            nextModel,
+                            polishReasoningMode,
+                            assistantReasoningMode,
+                            assistantUseSeparateModel,
+                            nextAssistantModel,
+                            assistantProviderToPersist,
+                          );
+                          if (!assistantUseSeparateModel) {
+                            setAssistantModel(nextModel);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="picker-inline-button"
+                        data-open={picker.isOpen("model")}
+                        aria-haspopup="listbox"
+                        aria-expanded={picker.isExpanded("model")}
+                        onClick={() => {
+                          picker.toggle("model");
+                        }}
+                        aria-label={t("settings.openModelList")}
+                        title={t("settings.openModelList")}
+                      >
+                        <ChevronsUpDown size={14} className="icon-tertiary" />
+                      </button>
+                    </div>
+                    <p className="settings-hint" style={{ margin: 0 }}>
+                      {selectedAiModel?.ownedBy || (aiModels.length > 0 ? t("settings.availableModels", { count: aiModels.length }) : t("settings.canInputModelName"))}
+                    </p>
+                    {picker.isOpen("model") && (
+                      <div className={picker.popoverClass("model")}>
+                        <div className="picker-toolbar">
+                          <input
+                            ref={modelSearchInputRef}
+                            type="text"
+                            className="settings-input picker-search-input"
+                            placeholder={t("settings.searchModelPlaceholder")}
+                            aria-label={t("settings.searchModelLabel")}
+                            value={aiModelSearch}
+                            onChange={(e) => setAiModelSearch(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && aiModelSearch.trim()) {
+                                e.preventDefault();
+                                handleModelSelect(aiModelSearch);
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="btn-ghost btn-ghost-sm"
+                            onClick={() => {
+                              void refreshAiModelsNow();
+                            }}
+                            disabled={aiModelsLoading}
+                            style={{ opacity: aiModelsLoading ? 0.7 : 1 }}
+                          >
+                            {aiModelsLoading ? t("settings.fetching") : t("common.refresh")}
+                          </button>
+                        </div>
+                        <p className="settings-hint" style={{ margin: 0 }}>
+                          {aiModelsSourceUrl ? t("settings.modelSourceUrl", { url: aiModelsSourceUrl }) : t("settings.autoFetchHint")}
+                        </p>
+                        {aiModelSearch.trim() ? (
+                          <button
+                            type="button"
+                            className="picker-option picker-option-action"
+                            onClick={() => handleModelSelect(aiModelSearch)}
+                          >
+                            <span className="picker-option-copy">
+                              <strong>{t("settings.useAsModel", { name: aiModelSearch.trim() })}</strong>
+                              <span>{t("settings.asCurrentModelName")}</span>
+                            </span>
+                          </button>
+                        ) : null}
+                        <div className="picker-list" role="listbox">
+                          {filteredAiModels.length > 0 ? filteredAiModels.map((model) => (
+                            <button
+                              key={model.id}
+                              type="button"
+                              className="picker-option"
+                              data-active={customModel === model.id}
+                              onClick={() => handleModelSelect(model.id)}
+                            >
+                              <span className="picker-option-copy">
+                                <strong>{model.displayName || model.id}</strong>
+                                <span>{model.ownedBy || currentLlmPreset.label}</span>
+                              </span>
+                            </button>
+                          )) : (
+                            <div className="picker-empty">
+                              {aiModelsLoading
+                                ? t("settings.fetchModelsFromApi")
+                                : aiModelsError || t(llmProvider === "xai" ? "settings.fillApiKeyOrGrokLogin" : "settings.fillApiKeyOrLogin")}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="settings-column" style={{ gap: 6 }}>
+                  <span className="settings-option-desc">{t("settings.polishReasoningMode")}</span>
+                  <div ref={picker.setRef("polishReasoning")} style={{ position: "relative" }}>
+                    <button
+                      type="button"
+                      className="picker-trigger"
+                      data-open={picker.isOpen("polishReasoning")}
+                      aria-haspopup="listbox"
+                      aria-expanded={picker.isExpanded("polishReasoning")}
+                      aria-label={t("settings.polishReasoningLabel")}
+                      disabled={polishReasoningModeDisabled}
+                      onClick={() => {
+                        if (polishReasoningModeDisabled) return;
+                        picker.toggle("polishReasoning");
+                      }}
+                      title={polishReasoningModeHint}
+                      style={{
+                        opacity: polishReasoningModeDisabled ? 0.55 : 1,
+                        cursor: polishReasoningModeDisabled ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <span className="picker-trigger-copy">
+                        <strong>{t(selectedPolishReasoningOption.labelKey)}</strong>
+                        <span>{t(selectedPolishReasoningOption.descKey)}</span>
+                      </span>
+                      <ChevronsUpDown size={14} className="icon-tertiary" />
+                    </button>
+                    {picker.isOpen("polishReasoning") && (
+                      <div className={picker.popoverClass("polishReasoning")}>
+                        <div className="picker-list" role="listbox">
+                          {reasoningModeOptions.map((option) => (
+                            <button
+                              key={option.key}
+                              type="button"
+                              className="picker-option"
+                              data-active={polishReasoningMode === option.key}
+                              onClick={() => handlePolishReasoningModeChange(option.key)}
+                            >
+                              <span className="picker-option-copy">
+                                <strong>{t(option.labelKey)}</strong>
+                                <span>{t(option.descKey)}</span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <p className="settings-hint" style={{ margin: 0 }}>
+                    {polishReasoningModeHint}
+                  </p>
+                </div>
+              </div>
+
+
+              <SettingsDisclosure label={t("settings.customPrompt")}>
+                <div className="settings-column" style={{ gap: 6 }}>
+                  <textarea
+                    className="settings-input"
+                    placeholder={t("settings.customPromptPlaceholder")}
+                    aria-label={t("settings.customPromptLabel")}
+                    value={customPromptState}
+                    onChange={(e) => handleCustomPromptChange(e.target.value)}
+                    rows={3}
+                    style={{ resize: "vertical", minHeight: 60, fontFamily: "inherit" }}
+                  />
+                  <p className="settings-hint" style={{ margin: 0 }}>
+                    {t("settings.customPromptHint")}
+                  </p>
+                </div>
+              </SettingsDisclosure>
+
+              <p className="settings-hint">
+                {t("settings.aiPolishLearnHint")}
+              </p>
+            </div>
+          </section>
+
+          <section className="settings-card" data-nav-id="context"
+            style={{ position: "relative", zIndex: picker.isOpen("webSearchProvider") ? 8 : "auto" }}>
+            <div className="settings-section-header">
+              <Eye size={15} className="icon-accent" />
+              <h2 className="settings-section-title">{t("settings.contextAndSearch")}</h2>
+            </div>
+            <div className="settings-column" style={{ gap: 16 }}>
+              <ProcessingModeControl label={t("settings.screenContext")}
+                value={!screenContextEnabled ? "off" : profile?.jev?.screen_routing ? "auto" : "on"}
+                hint={t("settings.screenModeHint")} disabled={modeSaving || !profile}
+                onChange={(mode) => { void handleProcessingMode("screen", mode); }} onConfigure={configureJev} />
+
+              <SettingsReveal open={screenContextEnabled} gap={16}>
+                <div className="settings-column">
+                  <div className="settings-row">
+                    <div className="permission-item" style={{ gap: 8 }}>
+                      <Eye size={14} className="icon-tertiary" />
+                      <div className="settings-column" style={{ gap: 2 }}>
+                        <span className="permission-label">{t("settings.screenVision")}</span>
+                        <span className="settings-hint" style={{ margin: 0 }}>
+                          {t("settings.screenVisionHint")}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      role="switch"
+                      aria-checked={screenVisionEnabled}
+                      aria-label={t("settings.screenVision")}
+                      onClick={() => handleScreenVisionToggle(!screenVisionEnabled)}
+                      className="toggle-switch"
+                      style={{
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div
+                        className="toggle-knob"
+                      />
+                    </button>
+                  </div>
+
+                  <SettingsReveal open={screenVisionEnabled} gap={10}>
+                      <ScreenVisionModelPicker
+                        model={screenVisionModel}
+                        provider={screenVisionProvider}
+                        baseUrl={screenVisionBaseUrl}
+                        apiKey={screenVisionApiKey}
+                        loggedIn={openaiPlanReady}
+                        authIdentity={oauthModelIdentity}
+                        openaiAuthMode={screenVisionProvider === "openai"
+                          ? effectiveOpenaiAuthMode
+                          : undefined}
+                        xaiAuthMode={screenVisionProvider === "xai"
+                          ? effectiveXaiAuthModeValue
+                          : undefined}
+                        grokLoggedIn={grokBuildOauthStatus.loggedIn}
+                        providerOptions={allProviderOptions.filter(
+                          (option) => option.key !== "deepseek",
+                        )}
+                        onProviderChange={handleScreenVisionProviderChange}
+                        onApiKeyChange={(value) => {
+                          setScreenVisionApiKeyState(value);
+                          screenVisionKeySave.schedule(screenVisionProvider, value);
+                        }}
+                        onChange={setScreenVisionModel}
+                        onBlur={handleScreenVisionModelBlur}
+                        onSelect={handleScreenVisionModelSelect}
+                      />
+                  </SettingsReveal>
+                </div>
+              </SettingsReveal>
+
+              {/* 联网搜索 */}
+
+              <ProcessingModeControl label={t("settings.webSearch")}
+                value={!webSearchEnabled ? "off" : profile?.jev?.search_routing ? "auto" : "on"}
+                hint={t("settings.searchModeHint")} disabled={modeSaving || !profile}
+                onChange={(mode) => { void handleProcessingMode("search", mode); }} onConfigure={configureJev} />
+              <p className="settings-hint" style={{ margin: 0 }}>
+                {assistantUsesOpenaiOauth
+                  ? t("settings.webSearchOauthHint")
+                  : t("settings.webSearchHint")}
+              </p>
+              {assistantAuthSourceHint ? (
+                <p className="settings-hint" style={{ margin: 0 }}>
+                  {t("settings.assistantAuthSourceLabel", { source: assistantAuthSourceHint })}
+                </p>
+              ) : null}
+
+              <SettingsReveal open={webSearchEnabled} gap={16}>
+                <div className="settings-column" style={{ gap: 10 }}>
+                  {/* 搜索方式（下拉列表） */}
+                  <div className="settings-column" style={{ gap: 6 }}>
+                    <span className="settings-option-desc">{t("settings.webSearchProvider")}</span>
+                    <div ref={picker.setRef("webSearchProvider")} style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        className="picker-trigger"
+                        data-open={picker.isOpen("webSearchProvider")}
+                        aria-haspopup="listbox"
+                        aria-expanded={picker.isExpanded("webSearchProvider")}
+                        aria-label={t("settings.webSearchProvider")}
+                        onClick={() => picker.toggle("webSearchProvider")}
+                      >
+                        <span className="picker-trigger-copy">
+                          <strong>{t(selectedWebSearchProviderOption.labelKey)}</strong>
+                          <span>{t(selectedWebSearchProviderOption.descKey)}</span>
+                        </span>
+                        <ChevronsUpDown size={14} className="icon-tertiary" />
+                      </button>
+                      {picker.isOpen("webSearchProvider") && (
+                        <div className={picker.popoverClass("webSearchProvider")}>
+                          <div className="picker-list" role="listbox">
+                            {availableWebSearchProviderOptions.map((option) => (
+                              <button
+                                key={option.key}
+                                type="button"
+                                className="picker-option"
+                                data-active={webSearchProvider === option.key}
+                                onClick={() => handleWebSearchProviderChange(option.key)}
+                              >
+                                <span className="picker-option-copy">
+                                  <strong>{t(option.labelKey)}</strong>
+                                  <span>{t(option.descKey)}</span>
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 搜索结果条数（Exa / Tavily / Google） */}
+                  {selectedWebSearchProviderOption.key !== "model_native" && (
+                    <div className="settings-column" style={{ gap: 6 }}>
+                      <div className="settings-row">
+                        <span className="settings-option-desc">{t("settings.webSearchMaxResults")}</span>
+                        <span style={{ fontSize: 12, color: "var(--color-text-tertiary)", minWidth: 16, textAlign: "right" }}>{webSearchMaxResults}</span>
+                      </div>
+                      <input
+                        type="range"
+                        aria-label={t("settings.webSearchMaxResults")}
+                        min={1}
+                        max={10}
+                        step={1}
+                        value={webSearchMaxResults}
+                        onChange={(e) => handleWebSearchMaxResultsChange(Number(e.target.value))}
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                  )}
+
+                  {/* 第三方搜索 API Key */}
+                  {webSearchProviderNeedsKey(selectedWebSearchProviderOption.key) && (
+                    <div className="settings-column" style={{ gap: 6 }}>
+                      <span className="settings-option-desc">
+                        {t(selectedWebSearchProviderOption.key === "google"
+                          ? "settings.webSearchGoogleApiKeyLabel"
+                          : selectedWebSearchProviderOption.key === "exa" ? "settings.webSearchExaApiKeyLabel"
+                          : "settings.webSearchTavilyApiKeyLabel")}
+                      </span>
+                      <SecretInput
+                        value={webSearchApiKey}
+                        onChange={(val) => {
+                          webSearchKeyRequestIdRef.current += 1;
+                          setWebSearchApiKeyState(val);
+                          webSearchKeySave.schedule(selectedWebSearchProviderOption.key, val);
+                        }}
+                        placeholder={t(selectedWebSearchProviderOption.key === "google"
+                          ? "settings.webSearchGoogleKeyPlaceholder"
+                          : selectedWebSearchProviderOption.key === "exa" ? "settings.webSearchExaKeyPlaceholder"
+                          : "settings.webSearchTavilyKeyPlaceholder")}
+                        aria-label={t(selectedWebSearchProviderOption.key === "google"
+                          ? "settings.webSearchGoogleApiKeyLabel"
+                          : selectedWebSearchProviderOption.key === "exa" ? "settings.webSearchExaApiKeyLabel"
+                          : "settings.webSearchTavilyApiKeyLabel")}
+                      />
+                    </div>
+                  )}
+                </div>
+              </SettingsReveal>
+            </div>
+          </section>
+
+          <section className="settings-card" data-nav-id="jev">
+            <JevSettingsSection profile={profile} polishEnabled={aiPolishEnabled} onSaved={() => { void refreshProfile(); }} />
+          </section>
+
+          <section
+            className="settings-card"
+            data-nav-id="assistant"
+            style={{
+              position: "relative",
+              zIndex: picker.isOpen("assistantModel") || picker.isOpen("assistantReasoning") ? 8 : "auto",
+            }}
+          >
+            <div className="settings-section-header">
+              <Sparkles size={15} className="icon-accent" />
+              <h2 className="settings-section-title">{t("settings.assistant")}</h2>
+            </div>
+            <div className="settings-column" style={{ gap: 10 }}>
+              <div className="settings-row" style={{ alignItems: "center", gap: 10 }}>
+                <button
+                  className="theme-btn hotkey-capture-btn"
+                  onClick={() => assistantHotkeyCapture.startCapture()}
+                  disabled={assistantHotkeyCapture.saving}
+                  data-capturing={assistantHotkeyCapture.capturing}
+                  style={{
+                    cursor: assistantHotkeyCapture.saving ? "wait" : "pointer",
+                    opacity: assistantHotkeyCapture.saving ? 0.7 : 1,
+                  }}
+                >
+                  {assistantHotkeyCapture.capturing
+                    ? t("settings.pressAssistantHotkey")
+                    : assistantHotkeyDisplay
+                      ? <Kbd combo={assistantHotkeyDisplay} />
+                      : t("settings.noAssistantHotkey")}
+                </button>
+                <button
+                  className="btn-ghost"
+                  onClick={() => handleClearHotkey(setAssistantHotkey, setAssistantHotkeyDisplay, t("settings.assistantHotkeyLabel"), assistantHotkeyCapture.cancelCapture)}
+                  disabled={assistantHotkeyCapture.saving}
+                  style={{
+                    fontSize: 12,
+                    padding: "8px 10px",
+                    cursor: assistantHotkeyCapture.saving ? "wait" : "pointer",
+                    opacity: assistantHotkeyCapture.saving ? 0.7 : 1,
+                  }}
+                >
+                  {t("common.clear")}
+                </button>
+              </div>
+              <p className="settings-hint" style={{ margin: 0 }}>
+                {t("settings.assistantHint")}
+              </p>
+
+              <div className="settings-row">
+                <div className="permission-item" style={{ gap: 8 }}>
+                  <Sparkles size={14} className="icon-tertiary" />
+                  <div className="settings-column" style={{ gap: 2 }}>
+                    <span className="permission-label">{t("settings.useSeparateConfig")}</span>
+                    <span className="settings-hint" style={{ margin: 0 }}>
+                      {t("settings.separateConfigHint")}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={assistantUseSeparateModel}
+                  aria-label={t("settings.assistantSeparateConfig")}
+                  onClick={() => handleAssistantModelToggle(!assistantUseSeparateModel)}
+                  className="toggle-switch"
+                  style={{
+                    flexShrink: 0,
+                  }}
+                >
+                  <div
+                    className="toggle-knob"
+                  />
+                </button>
+              </div>
+
+              {renderOpenaiCodexOauthBlock("assistant")}
+
+
+              <SettingsReveal open={assistantUseSeparateModel} gap={10}>
+                <div className="settings-column" style={{ gap: 6 }}>
+                  {/* 助手供应商选择器 */}
+                  <span className="settings-option-desc">{t("settings.assistantProvider")}</span>
+                  <div className="picker-shell" ref={picker.setRef("assistantProvider")}>
+                    <button
+                      type="button"
+                      className="picker-trigger"
+                      data-open={picker.isOpen("assistantProvider")}
+                      onClick={() => {
+                        picker.toggle("assistantProvider");
+                      }}
+                      aria-haspopup="listbox"
+                      aria-expanded={picker.isExpanded("assistantProvider")}
+                      aria-label={t("settings.assistantProvider")}
+                    >
+                      <span className="picker-trigger-copy">
+                        <strong>{currentAssistantPreset.label}</strong>
+                        <span>{currentAssistantPreset.baseUrl}</span>
+                      </span>
+                      <ChevronsUpDown size={14} className="icon-tertiary" />
+                    </button>
+                    {picker.isOpen("assistantProvider") && (
+                      <div className={picker.popoverClass("assistantProvider")}>
+                        <div className="picker-toolbar">
+                          <input
+                            type="text"
+                            className="settings-input picker-search-input"
+                            placeholder={t("settings.searchAssistantProvider")}
+                            aria-label={t("settings.searchAssistantProviderLabel")}
+                            value={assistantProviderSearch}
+                            onChange={(e) => setAssistantProviderSearch(e.target.value)}
+                            autoFocus
+                          />
+                        </div>
+                        <div className="picker-list" role="listbox">
+                          {filteredAssistantProviderOptions.map((opt) => (
+                            <button
+                              key={`assistant-provider-${opt.key}`}
+                              type="button"
+                              className="picker-option"
+                              data-active={effectiveAssistantProvider === opt.key}
+                              onClick={() => handleAssistantProviderSelect(opt.key)}
+                            >
+                              <span className="picker-option-copy">
+                                <strong>{opt.label}</strong>
+                                <span>{opt.desc}</span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 助手独立 API Key（仅当 provider 与润色不同时显示） */}
+                  {assistantProviderDiffers ? (
+                    <>
+                      {effectiveAssistantProvider === "openai" && renderOpenaiAuthModeToggle()}
+                      {shouldShowGrokBuildAuth(effectiveAssistantProvider) && renderXaiAuthModeToggle()}
+                      <div className="settings-column" style={{ gap: 4 }}>
+                        <span className="settings-option-desc">{currentAssistantPreset.label} API Key</span>
+                        <SecretInput
+                          value={assistantApiKeyState}
+                          placeholder={`${currentAssistantPreset.label} API Key`}
+                          ariaLabel={t("settings.assistantApiKey")}
+                          ariaLabelShow={t("settings.showApiKey")}
+                          ariaLabelHide={t("settings.hideApiKey")}
+                          onChange={(value) => {
+                            setAssistantApiKeyState(value);
+                            assistantKeySave.schedule(value);
+                          }}
+                        />
+                      </div>
+                      {shouldShowGrokBuildAuth(effectiveAssistantProvider) && renderGrokBuildOauthBlock("assistant")}
+                    </>
+                  ) : null}
+
+                  {/* 助手模型选择器 */}
+                  <div className="settings-row">
+                    <span className="settings-option-desc">{t("settings.assistantModel")}</span>
+                    <span className="settings-option-desc">{filteredAssistantModels.length}/{effectiveAssistantModels.length}</span>
+                  </div>
+                  <div className="picker-shell" ref={picker.setRef("assistantModel")}>
+                    <div className="picker-inline-row">
+                      <input
+                        type="text"
+                        className="settings-input"
+                        placeholder={t("settings.assistantModelPlaceholder")}
+                        aria-label={t("settings.assistantModelLabel")}
+                        value={assistantModel}
+                        onChange={(e) => {
+                          const nextModel = e.target.value;
+                          setAssistantModel(nextModel);
+                          llmConfigSave.schedule(
+                            llmProvider,
+                            customBaseUrl,
+                            customModel,
+                            polishReasoningMode,
+                            assistantReasoningMode,
+                            true,
+                            nextModel,
+                            assistantProviderToPersist,
+                          );
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="picker-inline-button"
+                        data-open={picker.isOpen("assistantModel")}
+                        aria-haspopup="listbox"
+                        aria-expanded={picker.isExpanded("assistantModel")}
+                        onClick={() => {
+                          picker.toggle("assistantModel");
+                        }}
+                        aria-label={t("settings.openAssistantModelList")}
+                        title={t("settings.openAssistantModelList")}
+                      >
+                        <ChevronsUpDown size={14} className="icon-tertiary" />
+                      </button>
+                    </div>
+                    <p className="settings-hint" style={{ margin: 0 }}>
+                      {selectedAssistantAiModel?.ownedBy || (effectiveAssistantModels.length > 0 ? t("settings.availableModels", { count: effectiveAssistantModels.length }) : t("settings.canInputModelName"))}
+                    </p>
+                    {picker.isOpen("assistantModel") && (
+                      <div className={picker.popoverClass("assistantModel")}>
+                        <div className="picker-toolbar">
+                          <input
+                            ref={assistantModelSearchInputRef}
+                            type="text"
+                            className="settings-input picker-search-input"
+                            placeholder={t("settings.searchModelPlaceholder")}
+                            aria-label={t("settings.searchAssistantModel")}
+                            value={assistantModelSearch}
+                            onChange={(e) => setAssistantModelSearch(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && assistantModelSearch.trim()) {
+                                e.preventDefault();
+                                handleAssistantModelSelect(assistantModelSearch);
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="btn-ghost btn-ghost-sm"
+                            onClick={() => {
+                              if (assistantProviderDiffers) {
+                                void refreshAssistantModelsNow();
+                              } else {
+                                void refreshAiModelsNow();
+                              }
+                            }}
+                            disabled={assistantProviderDiffers ? assistantModelsLoading : aiModelsLoading}
+                            style={{ opacity: (assistantProviderDiffers ? assistantModelsLoading : aiModelsLoading) ? 0.7 : 1 }}
+                          >
+                            {(assistantProviderDiffers ? assistantModelsLoading : aiModelsLoading) ? t("settings.fetching") : t("common.refresh")}
+                          </button>
+                        </div>
+                        {assistantModelSearch.trim() ? (
+                          <button
+                            type="button"
+                            className="picker-option picker-option-action"
+                            onClick={() => handleAssistantModelSelect(assistantModelSearch)}
+                          >
+                            <span className="picker-option-copy">
+                              <strong>{t("settings.useAsModel", { name: assistantModelSearch.trim() })}</strong>
+                              <span>{t("settings.asAssistantModelName")}</span>
+                            </span>
+                          </button>
+                        ) : null}
+                        <div className="picker-list" role="listbox">
+                          {filteredAssistantModels.length > 0 ? filteredAssistantModels.map((model) => (
+                            <button
+                              key={`assistant-model-${model.id}`}
+                              type="button"
+                              className="picker-option"
+                              data-active={assistantModel === model.id}
+                              onClick={() => handleAssistantModelSelect(model.id)}
+                            >
+                              <span className="picker-option-copy">
+                                <strong>{model.displayName || model.id}</strong>
+                                <span>{model.ownedBy || currentAssistantPreset.label}</span>
+                              </span>
+                            </button>
+                          )) : (
+                            <div className="picker-empty">
+                              {(assistantProviderDiffers ? assistantModelsLoading : aiModelsLoading)
+                                ? t("settings.fetchModelsFromApi")
+                                : (assistantProviderDiffers && !assistantHasAuth)
+                                  ? t(effectiveAssistantProvider === "xai" ? "settings.fillApiKeyOrGrokLogin" : "settings.fillAssistantApiKeyOrLogin")
+                                  : (assistantProviderDiffers ? assistantModelsError : aiModelsError)
+                                    || t((assistantProviderDiffers ? effectiveAssistantProvider : llmProvider) === "xai"
+                                      ? "settings.fillApiKeyOrGrokLogin"
+                                      : "settings.fillApiKeyOrLogin")}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </SettingsReveal>
+              <SettingsReveal open={!assistantUseSeparateModel} gap={10}>
+                <p className="settings-hint" style={{ margin: 0 }}>
+                  {t("settings.sharedProviderAndModel", { provider: currentLlmPreset.label, model: customModel || currentLlmPreset.defaultModel })}
+                </p>
+              </SettingsReveal>
+
+              <div className="settings-column" style={{ gap: 6 }}>
+                <span className="settings-option-desc">{t("settings.assistantReasoningMode")}</span>
+                <div ref={picker.setRef("assistantReasoning")} style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    className="picker-trigger"
+                    data-open={picker.isOpen("assistantReasoning")}
+                    aria-haspopup="listbox"
+                    aria-expanded={picker.isExpanded("assistantReasoning")}
+                    aria-label={t("settings.assistantReasoningLabel")}
+                    disabled={assistantReasoningModeDisabled}
+                    onClick={() => {
+                      if (assistantReasoningModeDisabled) return;
+                      picker.toggle("assistantReasoning");
+                    }}
+                    title={assistantReasoningModeHint}
+                    style={{
+                      opacity: assistantReasoningModeDisabled ? 0.55 : 1,
+                      cursor: assistantReasoningModeDisabled ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <span className="picker-trigger-copy">
+                      <strong>{t(selectedAssistantReasoningOption.labelKey)}</strong>
+                      <span>{t(selectedAssistantReasoningOption.descKey)}</span>
+                    </span>
+                    <ChevronsUpDown size={14} className="icon-tertiary" />
+                  </button>
+                  {picker.isOpen("assistantReasoning") && (
+                    <div className={picker.popoverClass("assistantReasoning")}>
+                      <div className="picker-list" role="listbox">
+                        {reasoningModeOptions.map((option) => (
+                          <button
+                            key={`assistant-${option.key}`}
+                            type="button"
+                            className="picker-option"
+                            data-active={assistantReasoningMode === option.key}
+                            onClick={() => handleAssistantReasoningModeChange(option.key)}
+                          >
+                            <span className="picker-option-copy">
+                              <strong>{t(option.labelKey)}</strong>
+                              <span>{t(option.descKey)}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <p className="settings-hint" style={{ margin: 0 }}>
+                  {assistantReasoningModeHint}
+                </p>
+              </div>
+
+
+              <SettingsDisclosure label={t("settings.customAssistantPrompt")}>
+                <div className="settings-column" style={{ gap: 6 }}>
+                  <textarea
+                    className="settings-input"
+                    placeholder={t("settings.assistantPromptPlaceholder")}
+                    aria-label={t("settings.assistantPromptLabel")}
+                    value={assistantPromptState}
+                    onChange={(e) => handleAssistantPromptChange(e.target.value)}
+                    rows={4}
+                    style={{ resize: "vertical", minHeight: 84, fontFamily: "inherit" }}
+                  />
+                  <p className="settings-hint" style={{ margin: 0 }}>
+                    {t("settings.assistantPromptHint")}
+                  </p>
+                </div>
+              </SettingsDisclosure>
+
+
+            </div>
+          </section>
+
+          <SelectionAssistantSettingsSection
+            profile={profile}
+            onConfigureJev={configureJev}
+            onSaved={() => { void refreshProfile(); }}
+            openaiAuthMode={effectiveOpenaiAuthMode}
+            openaiOauthLoggedIn={openaiPlanReady}
+            xaiAuthMode={effectiveXaiAuthModeValue}
+            grokOauthLoggedIn={grokBuildOauthStatus.loggedIn}
+            openaiControls={(
+              <>
+                {renderOpenaiAuthModeToggle()}
+                {renderOpenaiCodexOauthBlock("assistant", true, "selectionChatgptAccount")}
+              </>
+            )}
+            grokAuthToggle={renderXaiAuthModeToggle()}
+            grokOauthBlock={renderGrokBuildOauthBlock("assistant", true)}
+          />
+
+          <TranslationSettingsSection
+            target={translationTarget}
+            hotkeyDisplay={translationHotkeyDisplay}
+            hotkeyCapture={translationHotkeyCapture}
+            onClearHotkey={() => handleClearHotkey(
+              setTranslationHotkey,
+              setTranslationHotkeyDisplay,
+              t("settings.translationHotkeyLabel"),
+              translationHotkeyCapture.cancelCapture,
+            )}
+            onSelectTarget={handleTranslationSelect}
+          />
+
+          <AppProfileRulesSettingsSection
+            profile={profile}
+            onSaved={() => { void refreshProfile(); }}
+          />
+
+          <HistorySettingsSection
+            profile={profile}
+            onSaved={() => { void refreshProfile(); }}
+          />
+
+          {/* Smart Vocabulary */}
+          <section className="settings-card" data-nav-id="vocabulary">
+            <div className="settings-section-header">
+              <BookOpen size={15} className="icon-accent" />
+              <h2 className="settings-section-title">{t("settings.vocabulary")}</h2>
+              {profile && (
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--color-text-tertiary)" }}>
+                  {t("settings.hotWordsCount", { count: profile.hot_words.length, transcriptions: profile.total_transcriptions })}
+                </span>
+              )}
+            </div>
+            <div className="settings-column" style={{ gap: 8 }}>
+              {/* Add hot word */}
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  type="text"
+                  placeholder={t("settings.addHotWordPlaceholder")}
+                  aria-label={t("settings.addHotWordLabel")}
+                  value={newHotWord}
+                  onChange={(e) => setNewHotWord(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newHotWord.trim()) {
+                      handleAddHotWord();
+                    }
+                  }}
+                  style={{
+                    flex: 1, padding: "7px 10px", borderRadius: 8,
+                    border: "1px solid var(--color-border)",
+                    background: "var(--color-bg-secondary)",
+                    color: "var(--color-text-primary)", fontSize: 13, outline: "none",
+                  }}
+                />
+                <button
+                  type="button"
+                  className="test-btn"
+                  aria-label={t("settings.addHotWordLabel")}
+                  onClick={() => {
+                    handleAddHotWord();
+                  }}
+                  style={{ padding: "7px 12px" }}
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+
+              {/* Hot word list */}
+              {profile && profile.hot_words.length > 0 && (
+                <div style={{
+                  display: "flex", flexWrap: "wrap", gap: 4,
+                  maxHeight: 120, overflow: "auto",
+                  padding: "4px 0",
+                }}>
+                  {[...profile.hot_words]
+                    .sort((a, b) => b.weight - a.weight || b.use_count - a.use_count)
+                    .map((hw) => (
+                    <span
+                      key={hw.text}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 4,
+                        padding: "3px 8px", borderRadius: 12,
+                        background: "var(--color-bg-secondary)",
+                        border: `1px solid ${sourceColors[hw.source] ?? "var(--color-border)"}`,
+                        fontSize: 12, color: "var(--color-text-secondary)",
+                      }}
+                    >
+                      <span style={{
+                        width: 6, height: 6, borderRadius: "50%",
+                        background: sourceColors[hw.source] ?? "var(--color-border)",
+                        flexShrink: 0,
+                      }} />
+                      {hw.text}
+                      <button
+                        type="button"
+                        className="hot-word-remove"
+                        aria-label={t("settings.removeHotWordLabel", { word: hw.text })}
+                        onClick={() => {
+                          removeHotWord(hw.text)
+                            .then(() => refreshProfile())
+                            .catch(() => toast.error(t("settings.hotWordRemoveFailed")));
+                        }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Correction rules management */}
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--color-border-subtle)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <label style={{ fontSize: 13, color: "var(--color-text-primary)", flex: 1 }}>
+                    {t("settings.correctionRules")}
+                  </label>
+                  <span style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>
+                    {profile ? t("settings.correctionRulesCount", { count: profile.correction_patterns.length }) : ""}
+                  </span>
+                  <button
+                    ref={correctionManageButtonRef}
+                    className="btn-ghost"
+                    onClick={() => setCorrectionModalOpen(true)}
+                    style={{ padding: "4px 10px", fontSize: 12 }}
+                  >
+                    {t("settings.correctionManage")}
+                  </button>
+                </div>
+              </div>
+
+              {/* Legend + actions */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                {Object.entries(sourceLabels).map(([key, label]) => (
+                  <span key={key} style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, color: "var(--color-text-tertiary)" }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: sourceColors[key] }} />
+                    {t(label)}
+                  </span>
+                ))}
+                <span style={{ flex: 1 }} />
+              </div>
+            </div>
+          </section>
+
+          <SystemSettingsSections
+            lastExportPath={lastExportPath}
+            exporting={exporting}
+            autostart={autostart}
+            autostartLoading={autostartLoading}
+            autostartMinimized={autostartMinimized}
+            autostartMinimizedLoading={autostartMinimizedLoading}
+            appVersion={appVersion}
+            updateStatusText={updateStatusText}
+            latestAvailableVersion={latestAvailableVersion}
+            updateChecking={updateChecking}
+            onExport={() => { void handleExportConfig(); }}
+            onCopyExportPath={() => { void handleCopyExportPath(); }}
+            onImport={handleImportConfig}
+            onTestPaste={() => { void handleTestPaste(); }}
+            onToggleAutostart={() => { void handleAutostartToggle(); }}
+            onToggleAutostartMinimized={() => { void handleAutostartMinimizedToggle(); }}
+            onUpdateAction={() => {
+              void (latestAvailableVersion ? handleOpenReleasePage() : handleCheckForUpdates());
+            }}
+          />
+        </div>
+      </div>
+
+        {/* Footer */}
+        <div className="settings-footer" style={{ padding: `10px ${PADDING}px` }}>
+          <p className="settings-footer-text">
+            {t("settings.footer")} <span className="settings-footer-version">v{appVersion}</span>
+            <span style={{ margin: "0 6px" }}>·</span>
+            {t("settings.footerSubtitle")}
+          </p>
+        </div>
+          </>
+        )}
+      </div>
+
+      {profile && !profileLoadError && correctionModalOpen && (
+        <Suspense fallback={null}>
+          <CorrectionRulesModal
+            profile={profile}
+            allProviderOptions={allProviderOptions}
+            validationEnabled={validationEnabled}
+            setValidationEnabled={setValidationEnabled}
+            validationUseSeparateModel={validationUseSeparateModel}
+            setValidationUseSeparateModel={setValidationUseSeparateModel}
+            validationProvider={validationProvider}
+            setValidationProvider={setValidationProvider}
+            validationModel={validationModel}
+            setValidationModel={setValidationModel}
+            validationRunning={validationRunning}
+            setValidationRunning={setValidationRunning}
+            validationResult={validationResult}
+            setValidationResult={setValidationResult}
+            returnFocusRef={correctionManageButtonRef}
+            onClose={() => setCorrectionModalOpen(false)}
+            onRefreshProfile={refreshProfile}
+          />
+        </Suspense>
+      )}
+    </div>
+  );
+}

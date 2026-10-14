@@ -1,0 +1,96 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SpeakFlow",
+  "version": "1.7.5",
+  "identifier": "com.speak-flow.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1422",
+    "beforeBuildCommand": "pnpm build:distribution",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "SpeakFlow",
+        "width": 420,
+        "height": 560,
+        "minWidth": 360,
+        "minHeight": 400,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "visible": false,
+        "center": true,
+        "url": "/",
+        "windowEffects": {
+          "effects": [
+            "acrylic"
+          ],
+          "state": "active"
+        }
+      },
+      {
+        "label": "selection-toolbar",
+        "title": "划词助手",
+        "width": 404,
+        "height": 54,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "focusable": false,
+        "shadow": false,
+        "visible": false,
+        "url": "/?window=selection"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:",
+      "capabilities": [
+        "main",
+        "subtitle",
+        "selection"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "license": "GPL-3.0-only",
+    "licenseFile": "../LICENSE",
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "compression": "none"
+      }
+    },
+    "resources": {
+      "resources/qwen3_asr_server.py": "resources/qwen3_asr_server.py",
+      "resources/firered_vad.py": "resources/firered_vad.py",
+      "resources/fireredvad_vad.onnx": "resources/fireredvad_vad.onnx",
+      "resources/fireredvad_cmvn.json": "resources/fireredvad_cmvn.json",
+      "resources/FireRedVAD-LICENSE.txt": "resources/FireRedVAD-LICENSE.txt",
+      "resources/R2T2-CODE-LICENSE.txt": "resources/R2T2-CODE-LICENSE.txt",
+      "resources/R2T2-MODEL-LICENSE.txt": "resources/R2T2-MODEL-LICENSE.txt",
+      "resources/download_models.py": "resources/download_models.py",
+      "resources/hf_cache_utils.py": "resources/hf_cache_utils.py",
+      "resources/server_common.py": "resources/server_common.py",
+      "resources/gpu_idle.py": "resources/gpu_idle.py",
+      "resources/engine.tar.xz": "resources/engine.tar.xz",
+      "../LICENSE": "LICENSE.txt",
+      "../NOTICE": "NOTICE.txt",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    }
+  }
+}

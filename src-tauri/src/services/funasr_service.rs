@@ -1,0 +1,1664 @@
+//! FunASR 语音识别服务模块
+//!
+//! 这是整个应用最核心、最复杂的模块。
+//! 它负责管理 FunASR Python 后端服务器的完整生命周期：
+//!
+//! 1. **查找 Python 解释器**：按优先级搜索可用的 Python
+//! 2. **启动服务器**：以子进程方式启动 Python 脚本
+//! 3. **通信协议**：通过 stdin/stdout 以 JSON 格式与 Python 进程通信
+//! 4. **语音转写**：发送音频数据，接收转写结果
+//! 5. **状态管理**：检查服务器状态、模型状态
+//! 6. **停止服务器**：优雅地关闭 Python 进程
+//!
+//! # 通信协议说明
+//! Rust 进程（父进程）和 Python 进程（子进程）通过标准输入/输出通信：
+//! - 父进程写入 JSON 命令到子进程的 stdin
+//! - 子进程处理后，将 JSON 结果写入 stdout
+//! - 每条消息占一行（以换行符分隔）
+//!
+//! ```text
+//! [Rust/Tauri] --stdin--> [Python/FunASR]
+//! [Rust/Tauri] <--stdout-- [Python/FunASR]
+//! ```
+
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::process::Command;
+
+use crate::state::{AppState, EngineState, FunasrProcess, StartingFunasrProcess};
+use crate::utils::paths;
+use crate::utils::AppError;
+
+mod installation;
+pub(crate) mod native_stream;
+mod protocol;
+
+#[cfg(test)]
+mod native_stream_tests;
+
+#[cfg(all(test, target_os = "windows"))]
+mod ipc_recovery_tests;
+
+#[cfg(test)]
+use installation::{engine_install_fingerprint_matches, replace_engine_dir};
+pub use installation::{find_engine, EngineRuntime};
+pub use protocol::ServerCommand;
+use protocol::{read_json_response, read_json_response_matching, ServerResponse};
+
+// ============================================================
+// 数据结构定义
+// ============================================================
+
+/// 语音转写的结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptionResult {
+    /// 转写得到的文本
+    pub text: String,
+    /// 音频时长（秒）
+    pub duration: Option<f64>,
+    /// 是否成功
+    pub success: bool,
+    /// 错误信息（如果失败）
+    pub error: Option<String>,
+    /// 检测到的语言
+    pub language: Option<String>,
+}
+
+/// FunASR 服务器的状态信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunASRStatus {
+    /// 服务器是否正在运行
+    pub running: bool,
+    /// 服务器是否已就绪（模型已加载）
+    pub ready: bool,
+    /// 模型是否已加载
+    pub model_loaded: bool,
+    /// 推理设备（cpu/cuda）
+    pub device: Option<String>,
+    /// GPU 名称（如果可用）
+    pub gpu_name: Option<String>,
+    /// GPU 总显存（GB）
+    pub gpu_memory_total: Option<f64>,
+    /// 状态描述信息
+    pub message: String,
+    /// 当前引擎
+    pub engine: Option<String>,
+    /// 模型文件是否齐备
+    pub models_present: Option<bool>,
+    /// 缺失模型列表
+    pub missing_models: Option<Vec<String>>,
+}
+
+/// 模型文件检查结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCheckResult {
+    /// 所有必需的模型是否都已就位
+    pub all_present: bool,
+    /// ASR（语音识别）模型是否存在
+    pub asr_model: bool,
+    /// VAD（语音活动检测）模型是否存在
+    pub vad_model: bool,
+    /// 标点符号模型是否存在
+    pub punc_model: bool,
+    /// 当前引擎
+    pub engine: String,
+    /// 模型缓存目录的路径
+    pub cache_path: String,
+    /// 缺失的模型列表
+    pub missing_models: Vec<String>,
+}
+
+const QWEN3_ASR_06_REPO_ID: &str = "handy-computer/Qwen3-ASR-0.6B-gguf";
+const QWEN3_ASR_06_FILENAME: &str = "Qwen3-ASR-0.6B-Q8_0.gguf";
+const R2T2_REPO_ID: &str = "davidxifeng/Confucius4-R2T2-gguf";
+const R2T2_FILENAME: &str = "r2t2-q8_0.gguf";
+const HF_COMPLETE_MANIFEST_NAME: &str = ".speak_flow_complete.json";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StartTicket {
+    owner: u64,
+    generation: u64,
+    engine: String,
+}
+
+#[derive(Clone)]
+struct EngineProgressGate {
+    generation: Arc<AtomicU64>,
+    status_commit: Arc<parking_lot::Mutex<()>>,
+    expected_generation: u64,
+}
+
+impl EngineProgressGate {
+    fn is_current(&self) -> bool {
+        self.generation.load(Ordering::SeqCst) == self.expected_generation
+    }
+
+    fn commit_if_current(&self, commit: impl FnOnce()) {
+        let _status_guard = self.status_commit.lock();
+        if self.is_current() {
+            commit();
+        }
+    }
+}
+
+/// 启动守卫：异常返回或 future 被取消时同步杀掉尚未 promote 的子进程，
+/// 清理 matching starting slot，并且只释放自己的 owner。
+struct StartingFlagGuard<'a> {
+    engine: &'a EngineState,
+    owner: u64,
+    child: Option<Arc<parking_lot::Mutex<Option<tokio::process::Child>>>>,
+}
+
+impl StartingFlagGuard<'_> {
+    fn register_child(&mut self, child: Arc<parking_lot::Mutex<Option<tokio::process::Child>>>) {
+        self.child = Some(child);
+    }
+
+    fn release_child(&mut self) {
+        self.child = None;
+    }
+}
+
+impl Drop for StartingFlagGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.take() {
+            if let Some(mut child) = child.lock().take() {
+                let _ = child.start_kill();
+            }
+        }
+        let mut starting = self.engine.funasr_starting_process.lock();
+        if starting
+            .as_ref()
+            .is_some_and(|entry| entry.owner == self.owner)
+        {
+            starting.take();
+        }
+        self.engine.finish_funasr_start(self.owner);
+    }
+}
+
+const SERVER_INIT_TIMEOUT_SECS: u64 = 120;
+const SERVER_RESPONSE_TIMEOUT_SECS: u64 = 60;
+const SERVER_EXIT_WRITE_TIMEOUT_MS: u64 = 300;
+const SERVER_EXIT_WAIT_TIMEOUT_SECS: u64 = 2;
+const INLINE_AUDIO_FORMAT_PCM_S16LE: &str = "pcm_s16le";
+const TARGET_SAMPLE_RATE_FOR_INLINE_AUDIO: u32 = 16_000;
+const ENGINE_ARCHIVE_FINGERPRINT: &str = env!("SPEAK_FLOW_ENGINE_ARCHIVE_FINGERPRINT");
+static NEXT_SERVER_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_SERVER_START_OWNER: AtomicU64 = AtomicU64::new(1);
+
+fn next_server_start_owner() -> u64 {
+    loop {
+        let owner = NEXT_SERVER_START_OWNER.fetch_add(1, Ordering::Relaxed);
+        if owner != 0 && owner != u64::MAX {
+            return owner;
+        }
+    }
+}
+
+fn start_ticket_is_current(state: &AppState, ticket: &StartTicket) -> bool {
+    state.engine.owns_funasr_start(ticket.owner)
+        && state.engine.funasr_generation.load(Ordering::SeqCst) == ticket.generation
+        && paths::read_engine_config() == ticket.engine
+}
+
+fn take_starting_child(
+    state: &AppState,
+    ticket: &StartTicket,
+    expected_handle: &Arc<parking_lot::Mutex<Option<tokio::process::Child>>>,
+) -> Option<tokio::process::Child> {
+    let entry = {
+        let mut slot = state.engine.funasr_starting_process.lock();
+        let matches = slot.as_ref().is_some_and(|entry| {
+            entry.owner == ticket.owner
+                && entry.generation == ticket.generation
+                && Arc::ptr_eq(&entry.child, expected_handle)
+        });
+        matches.then(|| slot.take()).flatten()
+    }?;
+    let child = entry.child.lock().take();
+    child
+}
+
+fn now_unix_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn status_with_defaults(
+    running: bool,
+    ready: bool,
+    model_loaded: bool,
+    message: String,
+) -> FunASRStatus {
+    FunASRStatus {
+        running,
+        ready,
+        model_loaded,
+        device: None,
+        gpu_name: None,
+        gpu_memory_total: None,
+        message,
+        engine: None,
+        models_present: None,
+        missing_models: None,
+    }
+}
+
+fn report_model_repo_file_state(
+    repo_id: &str,
+    required_file: Option<&str>,
+    description: &str,
+    missing_models: &mut Vec<String>,
+) -> bool {
+    let present = is_hf_repo_ready(repo_id, required_file);
+    if present {
+        log::info!("模型文件已就位: {} ({})", description, repo_id);
+    } else {
+        log::warn!("模型文件缺失: {} ({})", description, repo_id);
+        missing_models.push(description.to_string());
+    }
+    present
+}
+
+// ============================================================
+// 核心功能实现
+// ============================================================
+
+/// 启动 FunASR Python 服务器
+pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Result<(), AppError> {
+    let (ticket, mut starting_guard) = {
+        // 启动预检与 lifecycle 配置变更串行：engine snapshot、owner、generation
+        // 以及首个 loading 状态必须作为一个不可分割的提交。
+        let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
+        let engine = paths::read_engine_config();
+        if paths::is_online_engine(&engine) {
+            return Ok(());
+        }
+
+        let process_guard = state.engine.funasr_process.lock().await;
+        if process_guard.is_some() {
+            log::warn!("FunASR 服务器已在运行中");
+            return Ok(());
+        }
+        drop(process_guard);
+        if state.engine.funasr_starting_process.lock().is_some() {
+            log::info!("FunASR 子进程正在初始化中，跳过重复启动");
+            return Ok(());
+        }
+
+        let start_owner = next_server_start_owner();
+        if !state.engine.try_begin_funasr_start(start_owner) {
+            log::info!("FunASR 服务器正在启动中，跳过重复启动");
+            return Ok(());
+        }
+
+        let ticket = StartTicket {
+            owner: start_owner,
+            generation: state.engine.funasr_generation.load(Ordering::SeqCst),
+            engine,
+        };
+        let starting_guard = StartingFlagGuard {
+            engine: &state.engine,
+            owner: start_owner,
+            child: None,
+        };
+
+        state.set_funasr_ready(false);
+        state.set_inline_audio_transport(None);
+        let _ = app_handle.emit(
+            "funasr-status",
+            serde_json::json!({
+                "status": "loading",
+                "message": "正在查找引擎环境..."
+            }),
+        );
+        (ticket, starting_guard)
+    };
+
+    // 查找引擎运行时
+    let runtime_result = find_engine(app_handle, state, ticket.generation).await;
+    {
+        let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
+        if !start_ticket_is_current(state, &ticket) {
+            log::warn!("引擎运行时已就绪但启动票据已失效，取消本次启动");
+            return Err(AppError::Asr("启动已被取消".to_string()));
+        }
+    }
+    let runtime = runtime_result?;
+
+    if !start_ticket_is_current(state, &ticket) {
+        log::warn!("引擎运行时已就绪但代数已变更，取消本次启动");
+        return Err(AppError::Asr("启动已被取消".to_string()));
+    }
+
+    // 构建子进程命令
+    let data_dir = paths::strip_win_prefix(paths::get_data_dir());
+    // 仅在用户开启时传入。0/缺省不设置环境变量，启动路径与以前相同。
+    let gpu_idle_at_spawn = paths::read_gpu_idle_seconds();
+    let mut cmd = match &runtime {
+        EngineRuntime::Bundled { exe_path } => {
+            log::info!("使用打包引擎: {} (engine={})", exe_path, ticket.engine);
+            let mut c = Command::new(exe_path);
+            c.arg("serve").arg("--engine").arg(&ticket.engine);
+            c
+        }
+        EngineRuntime::Development { python_path } => {
+            log::info!("使用开发模式 Python: {}", python_path);
+            let server_script = match ticket.engine.as_str() {
+                "confucius4-r2t2" => paths::get_r2t2_asr_server_path(app_handle),
+                engine if engine.starts_with("qwen3-asr-") => {
+                    paths::get_qwen3_asr_server_path(app_handle)
+                }
+                engine => return Err(AppError::Asr(format!("不支持的本地 ASR 引擎: {engine}"))),
+            };
+            let server_script_str = paths::strip_win_prefix(&server_script);
+            log::info!(
+                "语音识别脚本路径 (engine={}): {}",
+                ticket.engine,
+                server_script_str
+            );
+
+            if !server_script.exists() {
+                return Err(AppError::Asr(format!(
+                    "FunASR 服务器脚本不存在: {}",
+                    server_script_str
+                )));
+            }
+
+            let mut c = Command::new(python_path);
+            c.arg("-X").arg("utf8").arg("-u").arg(&server_script_str);
+            c
+        }
+    };
+
+    let models_dir = paths::strip_win_prefix(&paths::get_effective_models_dir());
+    cmd.env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUTF8", "1")
+        .env("SPEAK_FLOW_DATA_DIR", &data_dir)
+        .env("SPEAK_FLOW_ASR_ENGINE", &ticket.engine)
+        .env("HF_HUB_CACHE", &models_dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr({
+            let log_path = paths::get_data_dir().join("funasr_stderr.log");
+            match std::fs::File::create(&log_path) {
+                Ok(file) => {
+                    log::info!("Python stderr 重定向到: {}", log_path.display());
+                    std::process::Stdio::from(file)
+                }
+                Err(e) => {
+                    log::warn!("无法创建 stderr 日志文件: {}，丢弃 stderr", e);
+                    std::process::Stdio::null()
+                }
+            }
+        });
+
+    if gpu_idle_at_spawn > 0 {
+        cmd.env(
+            "SPEAK_FLOW_GPU_IDLE_SECONDS",
+            gpu_idle_at_spawn.to_string(),
+        );
+    }
+
+    // Windows 上隐藏控制台窗口
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let (stdin, stdout, child_handle) = {
+        // spawn 与 starting slot 登记在同一 lifecycle 临界区，stop 不会漏掉
+        // “已生成但尚未写入正式 process slot”的子进程。
+        let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
+        if !start_ticket_is_current(state, &ticket) {
+            return Err(AppError::Asr("启动已被取消".to_string()));
+        }
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| AppError::Asr(format!("启动 FunASR 进程失败: {}", e)))?;
+        let stdin = child.stdin.take().ok_or_else(|| {
+            let _ = child.start_kill();
+            AppError::Asr("无法获取 FunASR 进程的标准输入".to_string())
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            let _ = child.start_kill();
+            AppError::Asr("无法获取 FunASR 进程的标准输出".to_string())
+        })?;
+        let child_handle = Arc::new(parking_lot::Mutex::new(Some(child)));
+        *state.engine.funasr_starting_process.lock() = Some(StartingFunasrProcess {
+            owner: ticket.owner,
+            generation: ticket.generation,
+            child: child_handle.clone(),
+        });
+        starting_guard.register_child(child_handle.clone());
+
+        log::info!("FunASR 子进程已启动，等待初始化...");
+        let _ = app_handle.emit(
+            "funasr-status",
+            serde_json::json!({
+                "status": "loading",
+                "message": "正在加载语音识别模型..."
+            }),
+        );
+        (stdin, stdout, child_handle)
+    };
+
+    // 读取子进程初始化输出，跳过非 JSON 行，直到拿到有效响应
+    let mut stdout_reader = BufReader::new(stdout);
+    let response: ServerResponse = match read_json_response(
+        &mut stdout_reader,
+        Duration::from_secs(SERVER_INIT_TIMEOUT_SECS),
+        "FunASR 初始化",
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            return if start_ticket_is_current(state, &ticket) {
+                Err(err)
+            } else {
+                Err(AppError::Asr("启动已被取消".to_string()))
+            };
+        }
+    };
+
+    let model_loaded = response.is_model_loaded();
+    let initialized = response.initialized.unwrap_or(false)
+        || response.success.unwrap_or(false)
+        || response.status.as_deref() == Some("ready")
+        || model_loaded;
+
+    let error_message = response
+        .error
+        .clone()
+        .or_else(|| response.message.clone())
+        .unwrap_or_else(|| "FunASR 初始化失败".to_string());
+
+    if initialized {
+        let ready_status = serde_json::json!({
+            "status": "ready",
+            "message": "FunASR 服务器已就绪",
+            "device": response.device,
+            "gpu_name": response.gpu_name,
+            "models_present": true,
+            "missing_models": [],
+        });
+        let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
+        if !start_ticket_is_current(state, &ticket) {
+            log::warn!("FunASR 初始化完成但启动票据已失效，丢弃旧进程");
+            return Err(AppError::Asr("启动已被取消".to_string()));
+        }
+
+        let Some(mut child) = take_starting_child(state, &ticket, &child_handle) else {
+            return Err(AppError::Asr("启动已被取消".to_string()));
+        };
+        let mut process_guard = state.engine.funasr_process.lock().await;
+        if process_guard.is_some() {
+            let _ = child.start_kill();
+            return Err(AppError::Asr("FunASR 服务器已由其他任务启动".to_string()));
+        }
+        *process_guard = Some(FunasrProcess {
+            child,
+            stdin,
+            stdout: stdout_reader,
+        });
+        starting_guard.release_child();
+        log::info!("FunASR 服务器初始化成功！");
+        state.set_funasr_ready(true);
+        let _ = app_handle.emit("funasr-status", ready_status);
+    } else {
+        log::error!("FunASR 初始化失败: {}", error_message);
+        let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
+        if !start_ticket_is_current(state, &ticket) {
+            log::warn!("FunASR 初始化失败结果已过期，忽略旧错误状态");
+            return Err(AppError::Asr("启动已被取消".to_string()));
+        }
+        let Some(mut child) = take_starting_child(state, &ticket, &child_handle) else {
+            return Err(AppError::Asr("启动已被取消".to_string()));
+        };
+        let _ = child.start_kill();
+        starting_guard.release_child();
+        state.set_funasr_ready(false);
+        let _ = app_handle.emit(
+            "funasr-status",
+            serde_json::json!({
+                "status": "error",
+                "message": &error_message
+            }),
+        );
+    }
+
+    if initialized {
+        let gpu_idle_now = paths::read_gpu_idle_seconds();
+        // 启动时的环境变量已经带上当时的值。只有中途改过才再发一条命令，
+        // 避免关闭状态下多一次往返。
+        if gpu_idle_now != gpu_idle_at_spawn {
+            if let Err(error) = push_gpu_idle_seconds(state, gpu_idle_now).await {
+                log::warn!("同步 GPU 空闲卸载设置失败: {error}");
+            }
+        }
+        Ok(())
+    } else {
+        Err(AppError::Asr(error_message))
+    }
+}
+
+/// 执行语音转写
+///
+/// 将音频数据写入临时 WAV 文件，然后通过 stdin 发送转写命令给 Python 进程，
+/// 并从 stdout 读取转写结果。
+///
+/// # 参数
+/// - `state`：全局应用状态
+/// - `audio_data`：WAV 格式的音频数据（字节数组）
+///
+/// # 流程
+/// ```text
+/// 音频数据 -> 临时文件 -> 发送命令给 Python -> 等待结果 -> 返回文本
+/// ```
+pub async fn transcribe(
+    state: &AppState,
+    audio_data: Vec<u8>,
+    app_handle: &tauri::AppHandle,
+) -> Result<TranscriptionResult, AppError> {
+    let _asr_guard = state.engine.native_asr_owner.lock().await;
+    let hot_words = profile_hot_words(state);
+    transcribe_wav_bytes_via_path(state, audio_data, hot_words, app_handle).await
+}
+
+pub async fn transcribe_pcm16(
+    state: &AppState,
+    samples: &[i16],
+    sample_rate: u32,
+    app_handle: &tauri::AppHandle,
+) -> Result<TranscriptionResult, AppError> {
+    let _asr_guard = state.engine.native_asr_owner.lock().await;
+    // 检查服务器是否就绪
+    if !state.is_funasr_ready() {
+        return Err(AppError::Asr(
+            "语音识别引擎尚未就绪，请等待初始化完成".to_string(),
+        ));
+    }
+
+    // 本地引擎对过短输入的处理不稳定。interim 路径的首个 tick 可能只有
+    // 200-400ms，这里尾部 zero-pad 到 0.5s；只对短音频生效，长输入走原路。
+    const MIN_IPC_DURATION_SEC: f64 = 0.5;
+    let min_samples_for_ipc = (sample_rate as f64 * MIN_IPC_DURATION_SEC) as usize;
+    let padded_storage: Vec<i16>;
+    let samples: &[i16] = if paths::read_engine_config() != "confucius4-r2t2"
+        && samples.len() < min_samples_for_ipc
+        && !samples.is_empty()
+    {
+        let mut v = Vec::with_capacity(min_samples_for_ipc);
+        v.extend_from_slice(samples);
+        v.resize(min_samples_for_ipc, 0);
+        padded_storage = v;
+        &padded_storage
+    } else {
+        samples
+    };
+
+    let hot_words = profile_hot_words(state);
+
+    // The Python memory protocol receives raw samples only. It uses sample_rate
+    // for duration accounting, while the ASR backends assume the in-memory array
+    // is already at their expected rate. Preserve non-16k audio by sending WAV.
+    if sample_rate != TARGET_SAMPLE_RATE_FOR_INLINE_AUDIO {
+        return transcribe_pcm16_via_path(state, samples, sample_rate, hot_words, app_handle).await;
+    }
+
+    if state.inline_audio_transport() == Some(false) {
+        return transcribe_pcm16_via_path(state, samples, sample_rate, hot_words, app_handle).await;
+    }
+
+    let response = send_command_to_server(
+        state,
+        &ServerCommand::Transcribe {
+            options: profile_r2t2_options(state),
+            audio_path: None,
+            audio_base64: Some(encode_pcm16_base64(samples)),
+            audio_format: Some(INLINE_AUDIO_FORMAT_PCM_S16LE.to_string()),
+            sample_rate: Some(sample_rate),
+            hot_words: hot_words.clone(),
+        },
+        Some(app_handle),
+    )
+    .await?;
+
+    if response.input_mode.as_deref() == Some("memory") {
+        state.set_inline_audio_transport(Some(true));
+        return Ok(server_response_to_transcription_result(state, response));
+    }
+
+    if response_indicates_inline_unsupported(&response) {
+        log::info!("当前 FunASR 运行时不支持内存音频，回退到临时 WAV 文件");
+        state.set_inline_audio_transport(Some(false));
+        return transcribe_pcm16_via_path(state, samples, sample_rate, hot_words, app_handle).await;
+    }
+
+    state.set_inline_audio_transport(Some(true));
+    Ok(server_response_to_transcription_result(state, response))
+}
+
+fn profile_hot_words(state: &AppState) -> Option<Vec<String>> {
+    let words = state.with_profile(|p| p.get_hot_word_texts(100));
+    (!words.is_empty()).then_some(words)
+}
+
+fn profile_r2t2_options(state: &AppState) -> Option<crate::state::user_profile::R2T2Config> {
+    (paths::read_engine_config() == "confucius4-r2t2")
+        .then(|| state.with_profile(|profile| profile.r2t2.clone()))
+}
+
+fn encode_pcm16_base64(samples: &[i16]) -> String {
+    use base64::Engine;
+
+    // 零拷贝 cast：i16 对齐 2、无填充，pcm_s16le 在 LE 目标上（Windows/macOS/Linux
+    // 的 x86/ARM）就是 i16 的内存布局。避免原先逐样本 extend_from_slice 造成的
+    // 192000 次小拷贝 + 一次 384KB Vec 分配，interim loop 每 ~220ms 一次的热点。
+    let byte_slice: &[u8] =
+        unsafe { std::slice::from_raw_parts(samples.as_ptr() as *const u8, samples.len() * 2) };
+    base64::engine::general_purpose::STANDARD.encode(byte_slice)
+}
+
+fn encode_wav_bytes(samples: &[i16], sample_rate: u32) -> Result<Vec<u8>, AppError> {
+    super::audio_service::encode_wav(samples, sample_rate)
+}
+
+fn create_temp_audio_path() -> std::path::PathBuf {
+    static TEMP_AUDIO_COUNTER: AtomicU64 = AtomicU64::new(1);
+    let counter = TEMP_AUDIO_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "speak_flow_audio_{}_{}_{}.wav",
+        std::process::id(),
+        now_unix_ms(),
+        counter,
+    ))
+}
+
+fn response_indicates_inline_unsupported(response: &ServerResponse) -> bool {
+    if response.input_mode.as_deref() == Some("memory") {
+        return false;
+    }
+
+    if response.input_mode.is_none() || response.input_mode.as_deref() == Some("path") {
+        return true;
+    }
+
+    response.error.as_deref().is_some_and(|error| {
+        error.contains("音频文件不存在")
+            || error.contains("path should be string")
+            || error.contains("os.PathLike")
+            || error.contains("NoneType")
+    })
+}
+
+fn server_response_to_transcription_result(
+    state: &AppState,
+    mut response: ServerResponse,
+) -> TranscriptionResult {
+    if response.success == Some(true) {
+        if response
+            .engine
+            .as_deref()
+            .is_some_and(|engine| engine.starts_with("qwen3-asr-"))
+        {
+            let text = response.text.as_deref().unwrap_or_default();
+            let started = Instant::now();
+            let correction = state.with_profile(|profile| {
+                super::qwen_hotword_service::correct_qwen_profile_terms(text, profile)
+            });
+            if correction.replacements > 0 {
+                log::info!(
+                    "Qwen3-ASR 本地热词纠偏完成: {} 处, {} 微秒",
+                    correction.replacements,
+                    started.elapsed().as_micros()
+                );
+                response.text = Some(correction.text);
+            }
+        }
+
+        TranscriptionResult {
+            text: response.text.unwrap_or_default(),
+            duration: response.duration,
+            success: true,
+            error: None,
+            language: response.language,
+        }
+    } else {
+        let error_msg = response
+            .error
+            .unwrap_or_else(|| "未知的转写错误".to_string());
+        TranscriptionResult {
+            text: String::new(),
+            duration: None,
+            success: false,
+            error: Some(error_msg),
+            language: None,
+        }
+    }
+}
+
+async fn transcribe_wav_bytes_via_path(
+    state: &AppState,
+    audio_data: Vec<u8>,
+    hot_words: Option<Vec<String>>,
+    app_handle: &tauri::AppHandle,
+) -> Result<TranscriptionResult, AppError> {
+    let temp_file = create_temp_audio_path();
+
+    tokio::fs::write(&temp_file, &audio_data)
+        .await
+        .map_err(|e| AppError::Asr(format!("写入临时音频文件失败: {}", e)))?;
+
+    let response = send_command_to_server(
+        state,
+        &ServerCommand::Transcribe {
+            options: profile_r2t2_options(state),
+            audio_path: Some(temp_file.to_string_lossy().to_string()),
+            audio_base64: None,
+            audio_format: None,
+            sample_rate: None,
+            hot_words,
+        },
+        Some(app_handle),
+    )
+    .await;
+
+    let _ = tokio::fs::remove_file(&temp_file).await;
+    response.map(|response| server_response_to_transcription_result(state, response))
+}
+
+async fn transcribe_pcm16_via_path(
+    state: &AppState,
+    samples: &[i16],
+    sample_rate: u32,
+    hot_words: Option<Vec<String>>,
+    app_handle: &tauri::AppHandle,
+) -> Result<TranscriptionResult, AppError> {
+    let wav_bytes = encode_wav_bytes(samples, sample_rate)?;
+    transcribe_wav_bytes_via_path(state, wav_bytes, hot_words, app_handle).await
+}
+
+/// 向 Python 服务器发送命令并读取响应
+///
+/// 这是与 Python 进程通信的核心函数。
+///
+/// # 通信流程
+/// 1. 从全局状态中取出子进程（释放锁）
+/// 2. 将命令序列化为 JSON
+/// 3. 通过 stdin 写入 JSON + 换行符
+/// 4. 从 stdout 读取一行 JSON 响应
+/// 5. 把子进程放回全局状态
+/// 6. 反序列化响应并返回
+///
+/// # 注意事项
+/// - 每条消息必须以换行符结尾
+/// - 命令和响应都是单行 JSON
+/// - 为了保证同一时间只有一个命令与子进程通信，
+///   这里会在 I/O 完成前保持锁，避免并发读写导致协议错乱。
+async fn send_command_to_server<R: tauri::Runtime>(
+    state: &AppState,
+    command: &ServerCommand,
+    app_handle: Option<&tauri::AppHandle<R>>,
+) -> Result<ServerResponse, AppError> {
+    let mut guard = state.engine.funasr_process.lock().await;
+
+    let result = {
+        let process = guard
+            .as_mut()
+            .ok_or_else(|| AppError::Asr("FunASR 进程未运行".to_string()))?;
+        send_command_impl(process, command).await
+    };
+
+    if let Err(error) = &result {
+        // A broken pipe/EOF/timeout makes this IPC session unusable even if
+        // the child has not exited yet (e.g. after sleep). Dropping the handle
+        // also requests termination of the stale child.
+        log::warn!("FunASR 通信失效，释放进程并准备重启: {}", error);
+        state.set_funasr_ready(false);
+        state.set_inline_audio_transport(None);
+        *guard = None;
+        if let Some(handle) = app_handle {
+            let _ = handle.emit(
+                "funasr-status",
+                serde_json::json!({
+                    "status": "crashed",
+                    "message": "语音识别引擎连接已断开，正在准备重启..."
+                }),
+            );
+        }
+    }
+
+    result
+}
+
+/// 向子进程发送命令并读取响应的内部实现
+///
+/// 把实际的 I/O 操作分离出来，这样 `send_command_to_server` 可以
+/// 在锁释放后安全地调用这个异步函数。
+async fn send_command_impl(
+    process: &mut FunasrProcess,
+    command: &ServerCommand,
+) -> Result<ServerResponse, AppError> {
+    let request_id = NEXT_SERVER_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+    let mut command_value = serde_json::to_value(command)
+        .map_err(|e| AppError::Asr(format!("序列化命令失败: {}", e)))?;
+    if let Some(map) = command_value.as_object_mut() {
+        map.insert(
+            "request_id".to_string(),
+            serde_json::Value::Number(request_id.into()),
+        );
+    }
+    // 序列化命令为 Python 端期望的扁平 JSON 格式
+    let command_json = serde_json::to_string(&command_value)
+        .map_err(|e| AppError::Asr(format!("序列化命令失败: {}", e)))?;
+
+    // 写入命令到 stdin
+    // `write_all` 确保所有字节都被写入
+    process
+        .stdin
+        .write_all(format!("{}\n", command_json).as_bytes())
+        .await
+        .map_err(|e| AppError::Asr(format!("写入命令到 FunASR 失败: {}", e)))?;
+
+    // `flush` 确保缓冲区的数据被立即发送
+    process
+        .stdin
+        .flush()
+        .await
+        .map_err(|e| AppError::Asr(format!("刷新 stdin 缓冲区失败: {}", e)))?;
+
+    // 从 stdout 读取响应（允许跳过非 JSON 行）
+    read_json_response_matching(
+        &mut process.stdout,
+        Duration::from_secs(SERVER_RESPONSE_TIMEOUT_SECS),
+        "等待 FunASR 响应",
+        |response: &ServerResponse| {
+            server_response_matches_request(response.request_id, request_id)
+        },
+    )
+    .await
+}
+
+fn server_response_matches_request(actual: Option<u64>, expected: u64) -> bool {
+    // Every bundled server echoes request_id. An untagged response cannot be
+    // distinguished from a late reply after cancellation or timeout.
+    actual == Some(expected)
+}
+
+#[cfg(test)]
+mod request_identity_tests {
+    use super::server_response_matches_request;
+
+    #[test]
+    fn untagged_late_reply_cannot_satisfy_a_new_request() {
+        assert!(!server_response_matches_request(None, 2));
+        assert!(!server_response_matches_request(Some(1), 2));
+        assert!(server_response_matches_request(Some(2), 2));
+    }
+}
+
+async fn try_send_exit_command(process: &mut FunasrProcess) -> Result<(), AppError> {
+    let command_json = serde_json::to_string(&ServerCommand::Exit)
+        .map_err(|e| AppError::Asr(format!("序列化退出命令失败: {}", e)))?;
+    let timeout = Duration::from_millis(SERVER_EXIT_WRITE_TIMEOUT_MS);
+
+    tokio::time::timeout(
+        timeout,
+        process
+            .stdin
+            .write_all(format!("{}\n", command_json).as_bytes()),
+    )
+    .await
+    .map_err(|_| AppError::Asr("写入退出命令超时".to_string()))?
+    .map_err(|e| AppError::Asr(format!("写入退出命令失败: {}", e)))?;
+
+    tokio::time::timeout(timeout, process.stdin.flush())
+        .await
+        .map_err(|_| AppError::Asr("刷新退出命令超时".to_string()))?
+        .map_err(|e| AppError::Asr(format!("刷新退出命令失败: {}", e)))?;
+
+    Ok(())
+}
+
+/// 把 GPU 空闲秒数发给正在运行的 Python 进程。进程不在时只保留配置。
+///
+/// 不修改 ready：卸载后的 status 仍由既有粘滞逻辑保持就绪。
+pub async fn push_gpu_idle_seconds(state: &AppState, seconds: u64) -> Result<(), AppError> {
+    let has_process = {
+        let guard = state.engine.funasr_process.lock().await;
+        guard.is_some()
+    };
+    if !has_process {
+        return Ok(());
+    }
+    let response =
+        send_command_to_server::<tauri::Wry>(state, &ServerCommand::SetGpuIdle { seconds }, None)
+            .await?;
+    if response.success == Some(false) {
+        return Err(AppError::Asr(
+            response
+                .error
+                .unwrap_or_else(|| "设置 GPU 空闲卸载失败".to_string()),
+        ));
+    }
+    Ok(())
+}
+
+/// 检查 FunASR 服务器的状态
+///
+/// 发送 status 命令给 Python 服务器，获取当前的运行状态。
+pub async fn check_status(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
+) -> Result<FunASRStatus, AppError> {
+    // 先检查进程是否存在
+    let has_process = {
+        let guard = state.engine.funasr_process.lock().await;
+        guard.is_some()
+    };
+
+    // 如果进程句柄不存在，检查是否正在启动中
+    if !has_process {
+        let engine = paths::read_engine_config();
+        if paths::is_online_engine(&engine) {
+            let has_key = !state.read_online_asr_api_key().is_empty();
+            let label = match engine.as_str() {
+                "alibaba-asr" => "Alibaba DashScope",
+                _ => "GLM-ASR",
+            };
+            return Ok(FunASRStatus {
+                running: true,
+                ready: has_key,
+                model_loaded: true,
+                device: Some("cloud".into()),
+                gpu_name: None,
+                gpu_memory_total: None,
+                message: if has_key {
+                    format!("{} 在线服务就绪", label)
+                } else {
+                    format!("请配置 {} API Key", label)
+                },
+                engine: Some(engine),
+                models_present: Some(true),
+                missing_models: Some(Vec::new()),
+            });
+        }
+
+        if state.engine.is_funasr_starting() {
+            // 正在启动中（模型加载中），告诉前端"正在运行但还没准备好"
+            return Ok(status_with_defaults(
+                true,
+                false,
+                false,
+                "FunASR 服务器正在启动，模型加载中...".to_string(),
+            ));
+        }
+        let model_check = inspect_model_files_for_engine(&engine);
+        return Ok(FunASRStatus {
+            message: if model_check.all_present {
+                "FunASR 服务器未运行".to_string()
+            } else {
+                "模型文件未下载，请先下载模型".to_string()
+            },
+            engine: Some(engine),
+            models_present: Some(model_check.all_present),
+            missing_models: Some(model_check.missing_models.clone()),
+            ..status_with_defaults(false, false, false, String::new())
+        });
+    }
+
+    // 发送状态查询命令
+    match send_command_to_server(state, &ServerCommand::Status, Some(app_handle)).await {
+        Ok(response) => {
+            let model_loaded = response.is_model_loaded();
+
+            let initialized = response.initialized.unwrap_or(false) || model_loaded;
+            if initialized {
+                state.set_funasr_ready(true);
+            }
+
+            let ready = state.is_funasr_ready() || initialized;
+            let message = response
+                .message
+                .or(response.error)
+                .unwrap_or_else(|| "服务器运行中".to_string());
+
+            Ok(FunASRStatus {
+                running: true,
+                ready,
+                model_loaded,
+                device: response.device,
+                gpu_name: response.gpu_name,
+                gpu_memory_total: response.gpu_memory_total,
+                message,
+                engine: response.engine,
+                models_present: Some(true),
+                missing_models: Some(Vec::new()),
+            })
+        }
+        Err(e) => {
+            // 发送命令失败，可能进程已崩溃
+            log::warn!("查询 FunASR 状态失败: {}", e);
+            state.set_funasr_ready(false);
+            Ok(status_with_defaults(
+                false,
+                false,
+                false,
+                format!("服务器通信失败: {}", e),
+            ))
+        }
+    }
+}
+
+/// 停止 FunASR 服务器
+///
+/// 优雅关闭流程：
+/// 1. 先发送 exit 命令让 Python 进程自行退出
+/// 2. 等待一小段时间
+/// 3. 如果进程仍在运行，强制杀死
+///
+pub async fn stop_server(state: &AppState) -> Result<(), AppError> {
+    // 递增代数，使正在进行的 start_server 感知到取消
+    {
+        let _status_guard = state.engine.funasr_status_commit.lock();
+        state
+            .engine
+            .funasr_generation
+            .fetch_add(1, Ordering::SeqCst);
+    }
+
+    // spawn 后、初始化完成前的子进程也必须立即可取消；否则 set_engine
+    // 已返回时旧模型进程仍可能在后台加载并继续发送状态。
+    if let Some(starting) = state.engine.funasr_starting_process.lock().take() {
+        if let Some(mut child) = starting.child.lock().take() {
+            let _ = child.start_kill();
+        }
+    }
+
+    // 先取出子进程句柄，避免关闭流程被常规请求超时拖住
+    let mut process = {
+        let mut guard = state.engine.funasr_process.lock().await;
+        guard.take()
+    };
+
+    // 如果有子进程，确保它被终止
+    if let Some(ref mut child_process) = process {
+        if let Err(err) = try_send_exit_command(child_process).await {
+            log::debug!("发送 FunASR 退出命令失败，准备直接等待/终止进程: {}", err);
+        }
+
+        let wait_result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(SERVER_EXIT_WAIT_TIMEOUT_SECS),
+            child_process.child.wait(),
+        )
+        .await;
+
+        match wait_result {
+            Ok(Ok(status)) => {
+                log::info!("FunASR 进程已退出，状态码: {}", status);
+            }
+            _ => {
+                // 超时或出错，强制杀死进程
+                log::warn!("FunASR 进程未响应退出命令，强制终止...");
+                if let Err(e) = child_process.child.kill().await {
+                    log::warn!("强制终止 FunASR 进程失败: {}", e);
+                }
+            }
+        }
+    }
+
+    // 更新状态
+    state.set_funasr_ready(false);
+    state.set_inline_audio_transport(None);
+
+    log::info!("FunASR 服务器已停止");
+    Ok(())
+}
+
+/// 获取 HuggingFace 缓存根目录
+///
+/// 优先使用用户自定义模型目录，其次按 HuggingFace 标准规则。
+fn get_hf_cache_root() -> PathBuf {
+    paths::get_effective_models_dir()
+}
+
+/// 检查 HuggingFace 模型是否已缓存且包含实际模型权重文件
+///
+/// 仅检查目录结构不够——下载中途取消会留下空壳目录（refs/snapshots 存在但无权重文件），
+/// 导致后续加载卡死。这里额外验证 snapshots 中存在 >1MB 的模型权重文件（.pt/.bin/.safetensors/.onnx）。
+fn is_hf_repo_ready(repo_id: &str, required_file: Option<&str>) -> bool {
+    let cache_root = get_hf_cache_root();
+    let dir_name = format!("models--{}", repo_id.replace('/', "--"));
+    let repo_dir = cache_root.join(&dir_name);
+
+    log::info!(
+        "模型检查: repo={}, cache_root={}, repo_dir={}, exists={}",
+        repo_id,
+        cache_root.display(),
+        repo_dir.display(),
+        repo_dir.is_dir()
+    );
+
+    if !repo_dir.is_dir() {
+        log::warn!("模型目录不存在: {}", repo_dir.display());
+        return false;
+    }
+
+    let snapshots_dir = repo_dir.join("snapshots");
+    let entries = match std::fs::read_dir(&snapshots_dir) {
+        Ok(e) => e,
+        Err(err) => {
+            log::warn!(
+                "无法读取 snapshots 目录: {} — {}",
+                snapshots_dir.display(),
+                err
+            );
+            return false;
+        }
+    };
+
+    for entry in entries.filter_map(Result::ok) {
+        let snapshot_path = entry.path();
+        if !snapshot_path.is_dir() {
+            continue;
+        }
+        if required_file.is_some_and(|filename| !snapshot_path.join(filename).is_file()) {
+            continue;
+        }
+        log::info!("检查 snapshot: {}", snapshot_path.display());
+        if snapshot_matches_completion_manifest(&snapshot_path)
+            || snapshot_matches_legacy_weight_check(&snapshot_path)
+        {
+            log::info!("模型就绪: {} (在 {})", repo_id, snapshot_path.display());
+            return true;
+        }
+    }
+
+    log::warn!("模型未就绪: {} — 未找到完整下载清单或文件校验失败", repo_id);
+    false
+}
+
+fn snapshot_matches_completion_manifest(snapshot_path: &std::path::Path) -> bool {
+    const MIN_SIZE: u64 = 1_000_000;
+    let manifest_path = snapshot_path.join(HF_COMPLETE_MANIFEST_NAME);
+    let data = match std::fs::read_to_string(&manifest_path) {
+        Ok(data) => data,
+        Err(err) => {
+            log::warn!("缺少模型完整性清单 {}: {}", manifest_path.display(), err);
+            return false;
+        }
+    };
+    let manifest: serde_json::Value = match serde_json::from_str(&data) {
+        Ok(value) => value,
+        Err(err) => {
+            log::warn!(
+                "模型完整性清单解析失败 {}: {}",
+                manifest_path.display(),
+                err
+            );
+            return false;
+        }
+    };
+    let Some(files) = manifest.get("files").and_then(|value| value.as_array()) else {
+        return false;
+    };
+    let mut has_weight = false;
+    for item in files {
+        let Some(rel_path) = item.get("path").and_then(|value| value.as_str()) else {
+            return false;
+        };
+        let Some(expected_size) = item.get("size").and_then(|value| value.as_u64()) else {
+            return false;
+        };
+        let normalized = rel_path.replace('\\', "/");
+        if normalized.starts_with('/') || normalized.split('/').any(|part| part == "..") {
+            return false;
+        }
+        let path = snapshot_path.join(normalized);
+        let actual_size = match std::fs::metadata(&path) {
+            Ok(meta) => meta.len(),
+            Err(_) => return false,
+        };
+        if actual_size != expected_size {
+            return false;
+        }
+        if [".pt", ".bin", ".safetensors", ".onnx", ".gguf"]
+            .iter()
+            .any(|ext| rel_path.ends_with(ext))
+            && actual_size >= MIN_SIZE
+        {
+            has_weight = true;
+        }
+    }
+    has_weight
+}
+
+fn snapshot_matches_legacy_weight_check(snapshot_path: &std::path::Path) -> bool {
+    const MIN_SIZE: u64 = 1_000_000;
+    const WEIGHT_EXTS: &[&str] = &[".pt", ".bin", ".safetensors", ".onnx", ".gguf"];
+
+    fn visit(dir: &std::path::Path, exts: &[&str], min_size: u64) -> Option<bool> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        let mut has_weight = false;
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.ends_with(".incomplete") {
+                return Some(false);
+            }
+            if path.is_dir() {
+                match visit(&path, exts, min_size) {
+                    Some(true) => has_weight = true,
+                    Some(false) | None => return Some(false),
+                }
+            } else if exts.iter().any(|ext| name.ends_with(ext)) {
+                match std::fs::metadata(&path) {
+                    Ok(meta) if meta.len() >= min_size => has_weight = true,
+                    Ok(_) => {}
+                    Err(_) => return Some(false),
+                }
+            }
+        }
+        Some(has_weight)
+    }
+
+    let ready = visit(snapshot_path, WEIGHT_EXTS, MIN_SIZE).unwrap_or(false);
+    if ready {
+        log::warn!(
+            "模型 snapshot 缺少完整性清单，按旧版权重文件检查兼容放行: {}",
+            snapshot_path.display()
+        );
+    }
+    ready
+}
+
+/// 检查当前 ASR 引擎的模型文件是否已下载。
+fn inspect_model_files_for_engine(engine: &str) -> ModelCheckResult {
+    if paths::is_online_engine(engine) {
+        return ModelCheckResult {
+            all_present: true,
+            asr_model: true,
+            vad_model: true,
+            punc_model: true,
+            engine: engine.to_string(),
+            cache_path: String::new(),
+            missing_models: Vec::new(),
+        };
+    }
+
+    let cache_root = get_hf_cache_root();
+    let cache_path = cache_root.to_string_lossy().to_string();
+
+    // 旧版或损坏的本地引擎值统一迁移到默认的 Qwen3-ASR 0.6B。
+    let normalized_engine = if matches!(engine, "confucius4-r2t2" | "qwen3-asr-1.7b") {
+        "confucius4-r2t2"
+    } else {
+        "qwen3-asr-0.6b"
+    };
+    let (repo_id, filename, description) = if normalized_engine == "confucius4-r2t2" {
+        (R2T2_REPO_ID, R2T2_FILENAME, "Confucius4-R2T2 Q8 模型")
+    } else {
+        (
+            QWEN3_ASR_06_REPO_ID,
+            QWEN3_ASR_06_FILENAME,
+            "Qwen3-ASR 0.6B Q8模型",
+        )
+    };
+    let mut missing_models = Vec::new();
+    let asr_present =
+        report_model_repo_file_state(repo_id, Some(filename), description, &mut missing_models);
+
+    ModelCheckResult {
+        all_present: asr_present,
+        asr_model: asr_present,
+        vad_model: true,
+        punc_model: true,
+        engine: normalized_engine.to_string(),
+        cache_path,
+        missing_models,
+    }
+}
+
+pub async fn check_model_files() -> Result<ModelCheckResult, AppError> {
+    Ok(inspect_model_files_for_engine(&paths::read_engine_config()))
+}
+
+// 需要引入 Emitter trait 才能使用 emit 方法
+use tauri::Emitter;
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        engine_install_fingerprint_matches, read_json_response, read_json_response_matching,
+        server_response_to_transcription_result, EngineProgressGate, ServerCommand, ServerResponse,
+        StartingFlagGuard, ENGINE_ARCHIVE_FINGERPRINT,
+    };
+    use crate::state::user_profile::{CorrectionPattern, CorrectionSource, HotWord, HotWordSource};
+    use crate::state::AppState;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::io::{AsyncWriteExt, BufReader};
+
+    async fn read_response_from_chunks(chunks: &[&[u8]]) -> ServerResponse {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        for chunk in chunks {
+            writer.write_all(chunk).await.unwrap();
+        }
+        writer.shutdown().await.unwrap();
+
+        let mut reader = BufReader::new(reader);
+        read_json_response(&mut reader, Duration::from_secs(1), "test")
+            .await
+            .unwrap()
+    }
+
+    #[test]
+    fn server_command_serializes_flat_optional_audio_fields() {
+        let inline = serde_json::to_value(ServerCommand::Transcribe {
+            options: Some(crate::state::user_profile::R2T2Config {
+                context: "domain context".into(),
+                language: Some("de".into()),
+            }),
+            audio_path: None,
+            audio_base64: Some("AQI=".to_string()),
+            audio_format: Some("pcm_s16le".to_string()),
+            sample_rate: Some(16_000),
+            hot_words: Some(vec!["speak-flow".to_string()]),
+        })
+        .unwrap();
+
+        assert_eq!(inline["action"], serde_json::json!("transcribe"));
+        assert_eq!(inline["options"]["context"], "domain context");
+        assert_eq!(inline["options"]["language"], "de");
+        assert_eq!(inline["audio_base64"], serde_json::json!("AQI="));
+        assert_eq!(inline["audio_format"], serde_json::json!("pcm_s16le"));
+        assert_eq!(inline["sample_rate"], serde_json::json!(16_000));
+        assert_eq!(inline["hot_words"], serde_json::json!(["speak-flow"]));
+        assert!(inline.get("audio_path").is_none());
+
+        let idle = serde_json::to_value(ServerCommand::SetGpuIdle { seconds: 0 }).unwrap();
+        assert_eq!(idle["action"], serde_json::json!("set_gpu_idle"));
+        assert_eq!(idle["seconds"], serde_json::json!(0));
+        let idle = serde_json::to_value(ServerCommand::SetGpuIdle { seconds: 180 }).unwrap();
+        assert_eq!(idle["seconds"], serde_json::json!(180));
+
+        let path = serde_json::to_value(ServerCommand::Transcribe {
+            options: None,
+            audio_path: Some("C:/tmp/clip.wav".to_string()),
+            audio_base64: None,
+            audio_format: None,
+            sample_rate: None,
+            hot_words: None,
+        })
+        .unwrap();
+
+        assert_eq!(path["action"], serde_json::json!("transcribe"));
+        assert!(path.get("options").is_none());
+        assert_eq!(path["audio_path"], serde_json::json!("C:/tmp/clip.wav"));
+        assert!(path.get("audio_base64").is_none());
+        assert!(path.get("audio_format").is_none());
+        assert!(path.get("sample_rate").is_none());
+        assert!(path.get("hot_words").is_none());
+    }
+
+    #[test]
+    fn engine_install_fingerprint_reuses_legacy_versioned_archive_marker() {
+        let legacy = format!("1.3.13+{}", ENGINE_ARCHIVE_FINGERPRINT);
+
+        assert!(engine_install_fingerprint_matches(
+            &legacy,
+            ENGINE_ARCHIVE_FINGERPRINT
+        ));
+        assert!(engine_install_fingerprint_matches(
+            ENGINE_ARCHIVE_FINGERPRINT,
+            ENGINE_ARCHIVE_FINGERPRINT
+        ));
+    }
+
+    #[test]
+    fn engine_install_fingerprint_rejects_a_different_archive() {
+        assert!(!engine_install_fingerprint_matches(
+            "1.3.13+0000000000000001-0000000000000002",
+            ENGINE_ARCHIVE_FINGERPRINT
+        ));
+    }
+
+    #[test]
+    fn qwen_response_uses_profile_hotwords_without_touching_other_engines() {
+        let state = AppState::new();
+        state.update_profile_mut(|profile| {
+            profile.hot_words.push(HotWord {
+                text: "github".to_string(),
+                weight: 3,
+                source: HotWordSource::User,
+                use_count: 10,
+                last_used: 0,
+            });
+            profile.hot_words.push(HotWord {
+                text: "openclaw".to_string(),
+                weight: 3,
+                source: HotWordSource::User,
+                use_count: 10,
+                last_used: 0,
+            });
+            profile.correction_patterns.push(CorrectionPattern {
+                original: "open cloud".to_string(),
+                corrected: "openclaw".to_string(),
+                count: 33,
+                last_seen: 0,
+                source: CorrectionSource::User,
+            });
+        });
+
+        let qwen_response: ServerResponse = serde_json::from_value(serde_json::json!({
+            "success": true,
+            "text": "请用 get hub 打开 open cloud。",
+            "engine": "qwen3-asr-0.6b"
+        }))
+        .unwrap();
+        let qwen_result = server_response_to_transcription_result(&state, qwen_response);
+        assert_eq!(qwen_result.text, "请用 github 打开 openclaw。");
+    }
+
+    #[test]
+    fn stale_starting_guard_does_not_clear_a_new_start_owner() {
+        let engine = crate::state::EngineState::default();
+        assert!(engine.try_begin_funasr_start(1));
+        let stale_guard = StartingFlagGuard {
+            engine: &engine,
+            owner: 1,
+            child: None,
+        };
+
+        // set_engine/迁移会取消旧启动并释放标志，随后新启动获得所有权。
+        engine.block_funasr_starting();
+        engine.unblock_funasr_starting();
+        assert!(engine.try_begin_funasr_start(2));
+
+        drop(stale_guard);
+
+        assert!(
+            engine.is_funasr_starting(),
+            "旧启动 guard 不得清除新启动持有的标志"
+        );
+    }
+
+    #[test]
+    fn stale_engine_extraction_progress_is_suppressed_after_stop() {
+        let generation = Arc::new(AtomicU64::new(4));
+        let gate = EngineProgressGate {
+            generation: generation.clone(),
+            status_commit: Arc::new(parking_lot::Mutex::new(())),
+            expected_generation: 4,
+        };
+        assert!(gate.is_current());
+
+        generation.fetch_add(1, Ordering::SeqCst);
+
+        assert!(
+            !gate.is_current(),
+            "old extraction progress must not emit after an engine switch changes generation"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_json_response_accepts_valid_json_line() {
+        let response = read_response_from_chunks(&[br#"{"success":true,"message":"ok"}\n"#]).await;
+
+        assert_eq!(response.success, Some(true));
+        assert_eq!(response.message.as_deref(), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn read_json_response_recovers_from_non_utf8_prefix() {
+        let response =
+            read_response_from_chunks(&[b"\xff\xfe", br#"{"success":true,"message":"ok"}\n"#])
+                .await;
+
+        assert_eq!(response.success, Some(true));
+        assert_eq!(response.message.as_deref(), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn read_json_response_recovers_json_from_mixed_line() {
+        let response =
+            read_response_from_chunks(&[br#"noise >>> {"success":true,"message":"ok"}\n"#]).await;
+
+        assert_eq!(response.success, Some(true));
+        assert_eq!(response.message.as_deref(), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn read_json_response_skips_python_dict_noise_and_reads_next_json() {
+        let response = read_response_from_chunks(&[
+            b"{'load_data': '0.001'}\n",
+            br#"{"success":true,"message":"ok"}\n"#,
+        ])
+        .await;
+
+        assert_eq!(response.success, Some(true));
+        assert_eq!(response.message.as_deref(), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn read_json_response_reports_stdout_eof_without_a_response() {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        writer.shutdown().await.unwrap();
+        let mut reader = BufReader::new(reader);
+
+        let error =
+            read_json_response::<ServerResponse, _>(&mut reader, Duration::from_secs(1), "test")
+                .await
+                .expect_err("closed stdout must fail instead of waiting for a response");
+
+        assert_eq!(error.to_string(), "ASR错误: test失败：stdout 已关闭");
+    }
+
+    #[tokio::test]
+    async fn read_json_response_times_out_when_stdout_stays_open_without_data() {
+        let (_writer, reader) = tokio::io::duplex(1024);
+        let mut reader = BufReader::new(reader);
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            read_json_response::<ServerResponse, _>(&mut reader, Duration::from_millis(20), "test"),
+        )
+        .await
+        .expect("response timeout path must not hang the test")
+        .expect_err("silent stdout must respect the response timeout");
+
+        assert_eq!(error.to_string(), "ASR错误: test超时");
+    }
+
+    #[tokio::test]
+    async fn read_json_response_ignores_stale_response_before_matching_request() {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        writer
+            .write_all(
+                br#"{"request_id":1,"success":true,"message":"stale"}
+{"request_id":2,"success":true,"message":"fresh"}
+"#,
+            )
+            .await
+            .unwrap();
+        writer.shutdown().await.unwrap();
+        let mut reader = BufReader::new(reader);
+        let response = read_json_response_matching(
+            &mut reader,
+            Duration::from_secs(1),
+            "test",
+            |response: &ServerResponse| response.request_id == Some(2),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            response.message.as_deref(),
+            Some("fresh"),
+            "ASR IPC must correlate responses by request_id and skip stale responses left behind by a cancelled request"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_json_response_accepts_legacy_response_without_request_id() {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        writer
+            .write_all(
+                br#"{"success":true,"message":"legacy"}
+{"request_id":7,"success":true,"message":"matched"}
+"#,
+            )
+            .await
+            .unwrap();
+        writer.shutdown().await.unwrap();
+        let mut reader = BufReader::new(reader);
+        let response = read_json_response_matching(
+            &mut reader,
+            Duration::from_secs(1),
+            "test",
+            |response: &ServerResponse| match response.request_id {
+                Some(id) => id == 7,
+                None => true,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.message.as_deref(), Some("legacy"));
+    }
+
+    #[test]
+    fn engine_extraction_preserves_existing_engine_until_archive_succeeds() {
+        let root = std::env::temp_dir().join(format!(
+            "speak_flow_engine_replace_test_{}_{}",
+            std::process::id(),
+            super::now_unix_ms()
+        ));
+        let engine_dir = root.join("engine");
+        let missing_staging_dir = root.join("missing-staging");
+        let backup_dir = root.join("engine.backup");
+        std::fs::create_dir_all(&engine_dir).unwrap();
+        std::fs::write(engine_dir.join("engine.exe"), b"old-engine").unwrap();
+
+        let result = super::replace_engine_dir(&engine_dir, &missing_staging_dir, &backup_dir);
+
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read(engine_dir.join("engine.exe")).unwrap(),
+            b"old-engine"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
