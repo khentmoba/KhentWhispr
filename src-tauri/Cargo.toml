@@ -1,6 +1,6 @@
 [package]
 name = "speak-flow"
-version = "1.0.1"
+version = "1.0.2"
 description = "轻语 - 本地与云端语音转文字桌面应用"
 authors = ["sun"]
 license = "GPL-3.0-only"
@@ -82,6 +82,7 @@ zip = "2"
 # 原生文件/文件夹选择对话框
 rfd = "0.15"
 scraper = { version = "0.27", default-features = false }
+tauri-plugin-updater = "2"
 
 # Windows 键盘模拟
 [target.'cfg(target_os = "windows")'.dependencies]

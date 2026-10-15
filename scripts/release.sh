@@ -9,7 +9,7 @@ set -euo pipefail
 VERSION="${1:-}"
 RELEASE_NOTES="${2:---generate-notes}"
 ENGINE_MODE="${3:---rebuild-engine}"
-TAG="v${VERSION}"
+TAG="${RELEASE_TAG:-${VERSION}}"
 RELEASE_BRANCH="${RELEASE_BRANCH:-main}"
 CI_WORKFLOW="${CI_WORKFLOW:-ci.yml}"
 CI_DISCOVERY_TIMEOUT_SECONDS="${CI_DISCOVERY_TIMEOUT_SECONDS:-300}"
@@ -22,6 +22,7 @@ PYPROJECT_TOML="pyproject.toml"
 UV_LOCK="uv.lock"
 ENGINE_ARCHIVE="src-tauri/resources/engine.tar.xz"
 INSTALLER="src-tauri/target/release/bundle/nsis/SpeakFlow_${VERSION}_x64-setup.exe"
+UPDATE_MANIFEST="$(dirname "$INSTALLER")/latest.json"
 RELEASE_FILES=(
     "$PKG_JSON"
     "$TAURI_CONF"
@@ -60,6 +61,11 @@ preflight() {
     done
     find_seven_zip >/dev/null
 
+    if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+        [[ -f "$HOME/.tauri/speakflow-updater.key" ]] || fail "Set TAURI_SIGNING_PRIVATE_KEY to the updater signing key"
+        export TAURI_SIGNING_PRIVATE_KEY="$(cat "$HOME/.tauri/speakflow-updater.key")"
+    fi
+    export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
     gh auth status >/dev/null
 
     if [[ -n "$(git status --porcelain)" ]]; then
@@ -146,6 +152,7 @@ run_local_checks() {
     uv run --no-sync python -m unittest discover -s src-tauri/resources -p "test_*.py"
     uv run --no-sync python scripts/test_build_engine_atomicity.py
     uv run --no-sync python scripts/test_release_ci.py
+    uv run --no-sync python scripts/test_generate_update_manifest.py
 
     cargo fmt --manifest-path "$CARGO_TOML" --all -- --check
     cargo clippy --manifest-path "$CARGO_TOML" --all-targets --locked -- -D warnings
@@ -196,6 +203,7 @@ verify_installer() {
     seven_zip="$(find_seven_zip)"
     "$seven_zip" t "$INSTALLER"
     sha256sum "$INSTALLER"
+    python scripts/generate_update_manifest.py "$VERSION" "$TAG" "$INSTALLER"
 }
 
 assert_expected_release_diff() {
@@ -300,13 +308,13 @@ publish_release() {
     git push origin "refs/tags/$TAG"
 
     if [[ "$RELEASE_NOTES" == "--generate-notes" ]]; then
-        gh release create "$TAG" "$INSTALLER" \
+        gh release create "$TAG" "$INSTALLER" "$INSTALLER.sig" "$UPDATE_MANIFEST" \
             --title "$TAG" \
             --generate-notes \
             --verify-tag \
             --fail-on-no-commits
     else
-        gh release create "$TAG" "$INSTALLER" \
+        gh release create "$TAG" "$INSTALLER" "$INSTALLER.sig" "$UPDATE_MANIFEST" \
             --title "$TAG" \
             --notes "$RELEASE_NOTES" \
             --verify-tag \

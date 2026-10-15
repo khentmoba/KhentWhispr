@@ -14,6 +14,7 @@ interface SystemSettingsSectionsProps {
   updateStatusText: string;
   latestAvailableVersion: string | null;
   updateChecking: boolean;
+  updateInstalling?: boolean;
   onExport: () => void;
   onCopyExportPath: () => void;
   onImport: (json: string) => Promise<void>;
@@ -34,6 +35,7 @@ export default function SystemSettingsSections({
   updateStatusText,
   latestAvailableVersion,
   updateChecking,
+  updateInstalling = false,
   onExport,
   onCopyExportPath,
   onImport,
@@ -162,7 +164,7 @@ export default function SystemSettingsSections({
             <RefreshCw size={14} className="icon-tertiary" />
             <div className="settings-column settings-update-details">
               <span className="permission-label">{t("settings.checkAppUpdate")}</span>
-              <p className="settings-hint">
+              <p className="settings-hint" role="status" aria-live="polite">
                 {updateStatusText || t("settings.currentVersion", { version: appVersion || "..." })}
               </p>
               {latestAvailableVersion && (
@@ -177,10 +179,12 @@ export default function SystemSettingsSections({
             onClick={onUpdateAction}
             disabled={updateChecking}
           >
-            {updateChecking
+            {updateInstalling
+              ? t("settings.updating")
+              : updateChecking
               ? t("settings.checking")
               : latestAvailableVersion
-                ? t("settings.goToDownload")
+                ? t("settings.installUpdate")
                 : t("settings.checkUpdate")}
           </button>
         </div>

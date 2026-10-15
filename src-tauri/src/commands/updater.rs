@@ -2,6 +2,101 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::AppError;
 
+static UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProgress {
+    phase: &'static str,
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+fn ensure_update_idle(state: &crate::state::AppState) -> Result<(), AppError> {
+    use crate::state::RecordingPhase;
+    if state.recording.recording.lock().is_some()
+        || state.recording.snapshot().is_some_and(|snapshot| {
+            matches!(
+                snapshot.phase,
+                RecordingPhase::Starting | RecordingPhase::Recording | RecordingPhase::Processing
+            )
+        })
+    {
+        return Err(AppError::Other(
+            "Finish recording and transcription before updating.".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn install_app_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+    expected_version: String,
+    on_progress: tauri::ipc::Channel<UpdateProgress>,
+) -> Result<(), AppError> {
+    use tauri_plugin_updater::UpdaterExt;
+    let _operation = UPDATE_LOCK
+        .try_lock()
+        .map_err(|_| AppError::Other("An update is already in progress.".into()))?;
+    ensure_update_idle(&state)?;
+    let exit_handle = app.clone();
+    let updater = app
+        .updater_builder()
+        .on_before_exit(move || crate::stop_funasr_on_exit(&exit_handle))
+        .timeout(std::time::Duration::from_secs(30 * 60))
+        .build()
+        .map_err(|error| AppError::Download(error.to_string()))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| AppError::Download(error.to_string()))?
+        .ok_or_else(|| AppError::Other("No newer signed update is available.".into()))?;
+    if update.version != expected_version {
+        return Err(AppError::Other(
+            "The available update changed. Check for updates again.".into(),
+        ));
+    }
+    let mut downloaded = 0_u64;
+    let mut last_percent = None;
+    let bytes = update
+        .download(
+            |chunk, total| {
+                downloaded += chunk as u64;
+                let percent = total
+                    .filter(|total| *total > 0)
+                    .map(|total| downloaded * 100 / total);
+                if percent != last_percent || last_percent.is_none() {
+                    let _ = on_progress.send(UpdateProgress {
+                        phase: "downloading",
+                        downloaded,
+                        total,
+                    });
+                    last_percent = percent;
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(|error| AppError::Download(error.to_string()))?;
+    // Download verifies the signature before the installer can run.
+    ensure_update_idle(&state)?;
+    let _ = on_progress.send(UpdateProgress {
+        phase: "installing",
+        downloaded: bytes.len() as u64,
+        total: Some(bytes.len() as u64),
+    });
+    tauri::async_runtime::spawn_blocking(move || update.install(bytes))
+        .await
+        .map_err(|error| AppError::Other(error.to_string()))?
+        .map_err(|error| AppError::Other(error.to_string()))?;
+    // The Windows installer relaunches the app; other desktops restart here.
+    #[cfg(not(target_os = "windows"))]
+    app.restart();
+    Ok(())
+}
+
 const GITHUB_RELEASE_API: &str =
     "https://api.github.com/repos/khentmoba/KhentWhispr/releases/latest";
 const GITHUB_RELEASES_URL: &str = "https://github.com/khentmoba/KhentWhispr/releases";
@@ -196,6 +291,43 @@ mod validation_tests {
     use super::{
         app_update_info, is_version_newer, validate_release_url, GitHubRelease, GITHUB_RELEASES_URL,
     };
+
+    #[test]
+    fn updates_reject_in_flight_recording_and_transcription() {
+        use crate::state::{AppState, RecordingMode, RecordingPhase};
+        let state = AppState::default();
+        assert!(super::ensure_update_idle(&state).is_ok());
+        for phase in [
+            RecordingPhase::Starting,
+            RecordingPhase::Recording,
+            RecordingPhase::Processing,
+        ] {
+            state.recording.transition_snapshot_if_current(
+                0,
+                phase,
+                RecordingMode::Dictation,
+                None,
+                None,
+            );
+            assert!(super::ensure_update_idle(&state).is_err());
+        }
+        state.recording.transition_snapshot_if_current(
+            0,
+            RecordingPhase::Idle,
+            RecordingMode::Dictation,
+            None,
+            None,
+        );
+        assert!(super::ensure_update_idle(&state).is_ok());
+    }
+
+    #[tokio::test]
+    async fn update_lock_rejects_a_duplicate_and_recovers_after_release() {
+        let guard = super::UPDATE_LOCK.try_lock().unwrap();
+        assert!(super::UPDATE_LOCK.try_lock().is_err());
+        drop(guard);
+        assert!(super::UPDATE_LOCK.try_lock().is_ok());
+    }
 
     #[test]
     fn no_published_release_is_not_an_update_error() {

@@ -453,6 +453,9 @@
     ],
     "commands::funasr::set_gpu_idle_seconds": [
       "gpu-idle"
+    ],
+    "commands::updater::install_app_update": [
+      "updater"
     ]
   },
   "events": {
@@ -1228,7 +1231,7 @@
       "assumptions": "Current bundled servers echo request_id; older incompatible engines need updating. Clock/scheduler/network timeout fairness required; providers may fail."
     },
     "updater": {
-      "obligation": "Update versions compare by the actual numeric parser; release opening accepts HTTPS GitHub hosts only and reports errors.",
+      "obligation": "Update versions compare by the actual numeric parser; release opening accepts HTTPS GitHub hosts only and reports errors. Native installation requires a newer configured update and a verified Tauri signature, excludes concurrent update attempts, and rejects active recording/transcription.",
       "models": {
         "SettingsContracts": [
           "OpenUrl",
@@ -1247,7 +1250,7 @@
         "src-tauri/src/commands/updater.rs#validation_tests",
         "src/pages/__tests__/SettingsPageExportPath.test.tsx"
       ],
-      "assumptions": "GitHub release metadata and parsed version components are input partitions; numeric comparison is not a SemVer compliance claim."
+      "assumptions": "GitHub release metadata and parsed version components are input partitions; numeric comparison is not a SemVer compliance claim. Signature verification and Windows installer/relaunch semantics are provided by tauri-plugin-updater. Download/install/relaunch are tested at the IPC and UI boundaries and are not state variables in the existing URL-opening models."
     },
     "ui-preferences": {
       "obligation": "Theme follows system only in system mode; autostart reports success only after an authoritative confirmation.",
@@ -1978,6 +1981,7 @@
     "commands::history::export_transcription_history": "src-tauri/src/commands/history.rs#fn export_transcription_history(",
     "commands::history::reprocess_transcription_history": "src-tauri/src/commands/history.rs#fn reprocess_transcription_history(",
     "commands::funasr::get_gpu_idle_seconds": "src-tauri/src/commands/funasr.rs#fn get_gpu_idle_seconds(",
-    "commands::funasr::set_gpu_idle_seconds": "src-tauri/src/commands/funasr.rs#fn set_gpu_idle_seconds("
+    "commands::funasr::set_gpu_idle_seconds": "src-tauri/src/commands/funasr.rs#fn set_gpu_idle_seconds(",
+    "commands::updater::install_app_update": "src-tauri/src/commands/updater.rs#fn install_app_update("
   }
 }
