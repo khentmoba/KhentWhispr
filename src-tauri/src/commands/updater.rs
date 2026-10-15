@@ -50,7 +50,7 @@ fn app_update_info(current_version: &str, release: Option<GitHubRelease>) -> App
         };
     };
     let latest_version = normalize_version(&release.tag_name);
-    let available = is_version_newer(&latest_version, &current_version);
+    let available = is_version_newer(&latest_version, current_version);
 
     AppUpdateInfo {
         available,
