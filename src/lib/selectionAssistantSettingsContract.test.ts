@@ -24,11 +24,9 @@ describe("selection assistant independent model settings contract", () => {
     expect(selectionSettings).toContain('className="picker-inline-row"');
   });
 
-  it("exposes the same OpenAI authentication and Codex login controls", () => {
-    expect(selectionSettings).toContain("openaiControls");
-    expect(settingsPage).toMatch(
-      /openaiControls={[\s\S]*renderOpenaiAuthModeToggle\(\)[\s\S]*renderOpenaiCodexOauthBlock\("assistant", true, "selectionChatgptAccount"\)/,
-    );
+  it("does not expose the removed selection assistant in settings", () => {
+    expect(settingsPage).not.toContain("<SelectionAssistantSettingsSection");
+    expect(settingsPage).not.toContain('id: "selection-assistant"');
   });
 
   it("resolves selection requests through the Codex OAuth-aware route", () => {

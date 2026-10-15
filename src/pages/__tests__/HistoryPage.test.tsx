@@ -151,9 +151,9 @@ describe("HistoryPage", () => {
     render(<HistoryPage onNavigate={vi.fn()} />);
     await screen.findByText("润色后的最终文本");
 
-    fireEvent.click(screen.getByRole("button", { name: "使用当前模型重新润色" }));
+    fireEvent.click(screen.getByRole("button", { name: "使用当前引擎重新识别" }));
     await waitFor(() => {
-      expect(api.reprocessTranscriptionHistory).toHaveBeenCalledWith(7, "polish");
+      expect(api.reprocessTranscriptionHistory).toHaveBeenCalledWith(7, "asr");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "删除记录" }));

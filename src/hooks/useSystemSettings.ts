@@ -20,14 +20,12 @@ interface UseSystemSettingsOptions {
   inputMethod: "sendInput" | "clipboard";
   profile: UserProfile | null;
   refreshProfile: () => Promise<UserProfile | undefined>;
-  refreshAiPolishKey: () => Promise<unknown>;
 }
 
 export function useSystemSettings({
   inputMethod,
   profile,
   refreshProfile,
-  refreshAiPolishKey,
 }: UseSystemSettingsOptions) {
   const { t } = useTranslation();
   const [autostart, setAutostart] = useState(false);
@@ -65,7 +63,12 @@ export function useSystemSettings({
     try {
       const updateInfo = await checkAppUpdate();
       setLatestReleaseUrl(updateInfo.releaseUrl ?? null);
-      if (!updateInfo.available || !updateInfo.latestVersion) {
+      if (!updateInfo.latestVersion) {
+        setUpdateStatusText(t("toast.noPublishedReleases"));
+        toast.info(t("toast.noPublishedReleases"));
+        return;
+      }
+      if (!updateInfo.available) {
         setUpdateStatusText(t("toast.alreadyLatest"));
         toast.success(t("toast.alreadyLatest"));
         return;
@@ -174,12 +177,11 @@ export function useSystemSettings({
     try {
       await importUserProfile(json);
       await refreshProfile();
-      await refreshAiPolishKey();
       toast.success(t("toast.configImported"));
     } catch {
       toast.error(t("toast.configImportFailed"));
     }
-  }, [refreshAiPolishKey, refreshProfile, t]);
+  }, [refreshProfile, t]);
 
   const handleTestPaste = useCallback(async () => {
     try {

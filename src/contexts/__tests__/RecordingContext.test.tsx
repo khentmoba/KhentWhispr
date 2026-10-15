@@ -153,7 +153,7 @@ describe("RecordingProvider startup sync error reporting", () => {
     expect(logged).toMatch(/setInputMethod|set_input_method/i);
   });
 
-  it("reports getAiPolishApiKey rejection via console.error and does not throw", async () => {
+  it("ignores the legacy AI polish preference on startup", async () => {
     storageMock.readLocalStorage.mockImplementation(
       (key) => (key === AI_POLISH_ENABLED_KEY ? STORAGE_TRIGGERS[key] : null),
     );
@@ -170,7 +170,9 @@ describe("RecordingProvider startup sync error reporting", () => {
     ).not.toThrow();
     await flushPromises();
 
-    expect(consoleErrorSpy).toHaveBeenCalled();
+    expect(tauriMock.getAiPolishApiKey).not.toHaveBeenCalled();
+    expect(tauriMock.setAiPolishConfig).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   it("does not call console.error when all backend calls succeed", async () => {

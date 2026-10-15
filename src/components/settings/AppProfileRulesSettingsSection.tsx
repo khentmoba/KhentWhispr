@@ -7,7 +7,6 @@ import { setAppProfileRules } from "@/api/tauri";
 import type {
   AppProfileRule,
   AppRuleOverride,
-  AppTranslationOverride,
   UserProfile,
 } from "@/types";
 
@@ -94,53 +93,14 @@ function RuleEditor({ value, onChange, onCancel, onSubmit }: {
       </label>
 
       <div className="app-rule-editor-grid">
-        <label className="settings-column app-rule-field">
-          <span>{t("settings.appRuleAiPolish")}</span>
-          <OverrideSelect value={value.ai_polish} onChange={(ai_polish) => patch({ ai_polish })} />
-        </label>
-        <label className="settings-column app-rule-field">
-          <span>{t("settings.appRuleScreenContext")}</span>
-          <OverrideSelect value={value.screen_context} onChange={(screen_context) => patch({ screen_context })} />
-        </label>
+
+
         <label className="settings-column app-rule-field">
           <span>{t("settings.appRuleHistory")}</span>
           <OverrideSelect value={value.history} onChange={(history) => patch({ history })} />
         </label>
-        <label className="settings-column app-rule-field">
-          <span>{t("settings.appRuleTranslation")}</span>
-          <select
-            className="settings-input app-rule-select"
-            value={value.translation}
-            onChange={(event) => patch({ translation: event.target.value as AppTranslationOverride })}
-          >
-            <option value="inherit">{t("settings.appRuleInherit")}</option>
-            <option value="disabled">{t("settings.appRuleDisabled")}</option>
-            <option value="target">{t("settings.appRuleTranslationTarget")}</option>
-          </select>
-        </label>
+
       </div>
-
-      {value.translation === "target" && (
-        <label className="settings-column app-rule-field">
-          <span>{t("settings.appRuleTargetLanguage")}</span>
-          <input
-            className="settings-input"
-            value={value.translation_target ?? ""}
-            placeholder={t("settings.appRuleTargetPlaceholder")}
-            onChange={(event) => patch({ translation_target: event.target.value || null })}
-          />
-        </label>
-      )}
-
-      <label className="settings-column app-rule-field">
-        <span>{t("settings.appRuleCustomPrompt")}</span>
-        <textarea
-          className="settings-input app-rule-textarea"
-          value={value.custom_prompt ?? ""}
-          placeholder={t("settings.appRuleCustomPromptPlaceholder")}
-          onChange={(event) => patch({ custom_prompt: event.target.value || null })}
-        />
-      </label>
 
       <div className="app-rule-editor-actions">
         <button type="button" className="btn-ghost btn-ghost-sm" onClick={onCancel}>
@@ -149,7 +109,7 @@ function RuleEditor({ value, onChange, onCancel, onSubmit }: {
         <button
           type="button"
           className="test-btn"
-          disabled={!value.process_name.trim() || (value.translation === "target" && !value.translation_target?.trim())}
+          disabled={!value.process_name.trim()}
           onClick={onSubmit}
         >
           {t("settings.appRuleSave")}
