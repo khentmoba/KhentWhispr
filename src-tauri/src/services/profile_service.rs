@@ -872,12 +872,14 @@ mod tests {
 
     #[test]
     fn removed_features_are_disabled_in_legacy_profiles() {
-        let mut profile = UserProfile::default();
-        profile.translation_target = Some("en".into());
-        profile.translation_hotkey = Some("F3".into());
-        profile.assistant_hotkey = Some("F4".into());
-        profile.ai_polish_screen_context_enabled = true;
-        profile.assistant_screen_context_enabled = true;
+        let mut profile = UserProfile {
+            translation_target: Some("en".into()),
+            translation_hotkey: Some("F3".into()),
+            assistant_hotkey: Some("F4".into()),
+            ai_polish_screen_context_enabled: true,
+            assistant_screen_context_enabled: true,
+            ..Default::default()
+        };
         profile.selection_assistant.enabled = true;
         profile.web_search.enabled = true;
         profile.jev.enabled = true;
