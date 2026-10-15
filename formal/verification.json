@@ -794,10 +794,9 @@
       ],
       "evidence": [
         "src/hooks/__tests__/useModelDiscovery.test.tsx",
-        "src/hooks/__tests__/useAsrEngineSettings.test.tsx",
-        "src/pages/__tests__/SettingsPageProviderDiscovery.test.tsx"
+        "src/hooks/__tests__/useAsrEngineSettings.test.tsx"
       ],
-      "assumptions": "Upstream catalog contents and availability are inputs; finite two-request/context interleavings; HTTP schemas are checked by implementation tests."
+      "assumptions": "Upstream catalog contents and availability are inputs; finite two-request/context interleavings; HTTP schemas are checked by implementation tests. Provider-discovery settings controls were removed from the UI; the retained discovery hooks are covered directly by their regression tests."
     },
     "oauth": {
       "obligation": "Browser/device/refresh owners must remain current; logout and newer login reject old commits and stale fatal refresh.",
