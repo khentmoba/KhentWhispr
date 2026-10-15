@@ -480,6 +480,9 @@
     "jev-polish-audit": [
       "routing"
     ],
+    "live-transcript-changed": [
+      "ui-preferences"
+    ],
     "microphone-level": [
       "monitor"
     ],
@@ -1262,16 +1265,18 @@
         "src/hooks/useSystemSettings.ts",
         "src/main.tsx",
         "src-tauri/src/commands/profile.rs#fn set_autostart_minimized(",
-        "src-tauri/src/lib.rs#fn should_start_hidden("
+        "src-tauri/src/lib.rs#fn should_start_hidden(",
+        "src/hooks/useLiveTranscript.ts"
       ],
       "evidence": [
         "src/components/settings/__tests__/P0SettingsSections.test.tsx",
         "src/pages/__tests__/SettingsPageExportPath.test.tsx",
         "src-tauri/src/lib.rs#fn autostart_minimized_requires_both_the_preference_and_login_argument(",
         "src-tauri/src/state/user_profile.rs#fn autostart_minimized_defaults_off_for_legacy_profiles_and_round_trips(",
-        "formal/lean/StateContracts.lean"
+        "formal/lean/StateContracts.lean",
+        "src/hooks/useLiveTranscript.test.tsx"
       ],
-      "assumptions": "localStorage/media query/Tauri autostart are platform primitives; visuals/accessibility need UI tests. Failed initial autostart read does not establish a known value. The optional tray startup preference is bound to the abstract preference/profile contracts; login-argument and legacy-default behavior have implementation tests, not a proof of native Windows startup."
+      "assumptions": "localStorage/media query/Tauri autostart are platform primitives; visuals/accessibility need UI tests. Failed initial autostart read does not establish a known value. The optional tray startup preference is bound to the abstract preference/profile contracts; login-argument and legacy-default behavior have implementation tests, not a proof of native Windows startup. The live-transcript visibility toggle and same-window notification are covered by hook and subtitle UI regression tests; they are not additional state variables in UiPreferences."
     },
     "gpu-idle": {
       "obligation": "Enabling at startup or runtime starts an idle window; no unload during commands or native streams; readiness survives suspension; successful next commands reload; stale initial settings reads cannot overwrite edits.",
