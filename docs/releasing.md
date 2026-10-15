@@ -9,6 +9,8 @@ Write documentation and release notes in concise English. Keep only `README.zh-C
 - Keep the working tree clean. Confirm the target version and tag do not exist.
 - Install the [development tools](development.md), GitHub CLI, Git Bash and 7-Zip.
 - Authenticate with `gh auth status`.
+- Preserve the updater signing key. It lives outside the repository at `~/.tauri/speakflow-updater.key` on the development PC, with access restricted to its owner and SYSTEM. Back it up securely; losing it prevents installed clients from trusting future updates. The public key is committed in `src-tauri/tauri.conf.json`.
+- `release.sh` loads that key by default. Other builders must set `TAURI_SIGNING_PRIVATE_KEY` (key content or path) and, when applicable, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Never commit the private key.
 - If the R2T2 source, patch or native dependencies changed, rebuild both native packages first; see [R2T2](r2t2-native.md).
 
 ## Publish
@@ -33,3 +35,9 @@ For a manual release, follow the same gates: [local checks](development.md#check
 - Asset replacement is a separate release operation requiring explicit authorization; immutable releases prohibit it.
 
 Building or publishing an installer does not update the application currently installed on the development machine.
+
+## In-app updates
+
+Release builds create an installer and its `.sig` file. The release script generates `latest.json` with the version, Windows x64 installer URL, and signature, then uploads all three assets together. The app reads the latest release's feed, verifies the downloaded installer using its embedded public key, runs the Windows installer in passive mode, and reopens automatically. Do not publish `latest.json` without its matching installer and signature.
+
+Versions through 1.0.1 only open a download page. Users need to install the first native-updater build once; subsequent releases can update inside Settings. Recording or transcription must finish before installation. Network or signature failures leave the installed app untouched and allow a retry.

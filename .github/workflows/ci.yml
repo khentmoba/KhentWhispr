@@ -155,6 +155,7 @@ jobs:
           uv run --no-sync python -m unittest discover -s src-tauri/resources -p "test_*.py"
           uv run --no-sync python scripts/test_build_engine_atomicity.py
           uv run --no-sync python scripts/test_release_ci.py
+          uv run --no-sync python scripts/test_generate_update_manifest.py
           uv run --no-sync python scripts/test_ci_fail_fast.py
 
       - name: Verify tracked files are unchanged

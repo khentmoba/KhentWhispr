@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppUpdateInfo, UserProfile } from "@/types";
@@ -7,6 +7,7 @@ const tauriMock = vi.hoisted(() => ({
   addCustomProvider: vi.fn(),
   addHotWord: vi.fn(),
   checkAppUpdate: vi.fn(),
+  installAppUpdate: vi.fn(),
   completeGrokBuildOauthDeviceCode: vi.fn(),
   completeOpenaiCodexOauthDeviceCode: vi.fn(),
   copyToClipboard: vi.fn(),
@@ -157,7 +158,11 @@ const labels: Record<string, string> = {
   "settings.checkUpdate": "Check for Updates",
   "settings.checking": "Checking...",
   "settings.currentVersion": "Current version v{{version}}",
-  "settings.goToDownload": "Go to Download",
+  "settings.installUpdate": "Update and restart",
+  "settings.updating": "Updating...",
+  "settings.downloadingUpdate": "Downloading update...",
+  "settings.updateDownloadProgress": "Downloading update... {{percent}}%",
+  "settings.installingUpdate": "Installing update. SpeakFlow will restart automatically.",
   "settings.newVersionAvailable": "New version v{{version}} available",
   "settings.update": "Update",
   "settings.updateSource": "Source: GitHub Releases",
@@ -176,11 +181,9 @@ const labels: Record<string, string> = {
   "toast.openReleaseFailed": "Failed to open download page",
 };
 
-function translate(key: string, options?: { version?: string | number }) {
+function translate(key: string, options?: { version?: string | number; percent?: number }) {
   const template = labels[key] ?? key;
-  return options?.version === undefined
-    ? template
-    : template.replace("{{version}}", String(options.version));
+  return template.replace(/\{\{(version|percent)\}\}/g, (match, key: "version" | "percent") => options?.[key] === undefined ? match : String(options[key]));
 }
 
 vi.mock("@/i18n", () => ({
@@ -434,7 +437,7 @@ describe("SettingsPage correction rules dialog", () => {
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Correction rules" })).not.toBeInTheDocument());
-    expect(trigger).toHaveFocus();
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it("closes only when the backdrop itself is clicked", async () => {
@@ -567,7 +570,7 @@ describe("SettingsPage app updates", () => {
       expect(toastMock.success).toHaveBeenCalledWith("Already up to date");
       expect(action).not.toBeDisabled();
     });
-    expect(screen.queryByRole("button", { name: "Go to Download" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update and restart" })).not.toBeInTheDocument();
   });
 
   it("reports that this project has no published releases without showing an error", async () => {
@@ -580,10 +583,10 @@ describe("SettingsPage app updates", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Check for Updates" }));
     await waitFor(() => expect(screen.getByText("No SpeakFlow releases have been published yet.")).toBeInTheDocument());
     expect(toastMock.error).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Go to Download" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update and restart" })).not.toBeInTheDocument();
   });
 
-  it("shows an available version and opens its release page on the follow-up action", async () => {
+  it("shows an available version and installs it in the app on the follow-up action", async () => {
     const releaseUrl = "https://github.com/khentmoba/KhentWhispr/releases/tag/v1.6.0";
     const updateInfo: AppUpdateInfo = {
       available: true,
@@ -592,7 +595,7 @@ describe("SettingsPage app updates", () => {
       releaseUrl,
     };
     tauriMock.checkAppUpdate.mockResolvedValueOnce(updateInfo);
-    tauriMock.openAppReleasePage.mockResolvedValueOnce("Opened download page");
+    tauriMock.installAppUpdate.mockResolvedValueOnce(undefined);
 
     const { default: SettingsPage } = await import("@/pages/SettingsPage");
     render(<SettingsPage active onNavigate={vi.fn()} />);
@@ -605,12 +608,35 @@ describe("SettingsPage app updates", () => {
       expect(toastMock.info).toHaveBeenCalledWith("New version v1.6.0 available");
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Go to Download" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Update and restart" }));
 
     await waitFor(() => {
-      expect(tauriMock.openAppReleasePage).toHaveBeenCalledWith(releaseUrl);
-      expect(toastMock.success).toHaveBeenCalledWith("Opened download page");
+      expect(tauriMock.installAppUpdate).toHaveBeenCalledWith("1.6.0", expect.any(Function));
+      expect(tauriMock.openAppReleasePage).not.toHaveBeenCalled();
     });
+  });
+
+  it("reports download progress, prevents duplicate installs, and lets a failed update retry", async () => {
+    tauriMock.checkAppUpdate.mockResolvedValue({ available: true, currentVersion: "1.0.1", latestVersion: "1.0.2" });
+    let rejectInstall!: (reason: Error) => void;
+    const pending = new Promise<void>((_resolve, reject) => { rejectInstall = reject; });
+    tauriMock.installAppUpdate.mockReturnValueOnce(pending);
+    const { default: SettingsPage } = await import("@/pages/SettingsPage");
+    render(<SettingsPage active onNavigate={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Check for Updates" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Update and restart" }));
+    const action = await screen.findByRole("button", { name: "Updating..." });
+    expect(action).toBeDisabled();
+    fireEvent.click(action);
+    expect(tauriMock.installAppUpdate).toHaveBeenCalledTimes(1);
+    const onProgress = tauriMock.installAppUpdate.mock.calls[0][1];
+    act(() => onProgress({ phase: "downloading", downloaded: 25, total: 100 }));
+    expect(screen.getByRole("status")).toHaveTextContent("Downloading update... 25%");
+    act(() => onProgress({ phase: "installing", downloaded: 100, total: 100 }));
+    expect(screen.getByRole("status")).toHaveTextContent("SpeakFlow will restart automatically");
+    await act(async () => rejectInstall(new Error("installer failed")));
+    expect(action).not.toBeDisabled();
+    expect(screen.getByText("installer failed")).toBeInTheDocument();
   });
 
   it("keeps the update action disabled during a pending check and ignores a repeated click", async () => {
@@ -652,17 +678,17 @@ describe("SettingsPage app updates", () => {
       latestVersion: "1.6.0",
       releaseUrl: "https://github.com/khentmoba/KhentWhispr/releases/tag/v1.6.0",
     } satisfies AppUpdateInfo);
-    tauriMock.openAppReleasePage.mockRejectedValueOnce(new Error("browser unavailable"));
+    tauriMock.installAppUpdate.mockRejectedValueOnce(new Error("signature verification failed"));
 
     const { default: SettingsPage } = await import("@/pages/SettingsPage");
     render(<SettingsPage active onNavigate={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Check for Updates" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Go to Download" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Update and restart" }));
 
     await waitFor(() => {
-      expect(screen.getByText("browser unavailable")).toBeInTheDocument();
-      expect(toastMock.error).toHaveBeenCalledWith("browser unavailable");
+      expect(screen.getByText("signature verification failed")).toBeInTheDocument();
+      expect(toastMock.error).toHaveBeenCalledWith("signature verification failed");
     });
   });
 

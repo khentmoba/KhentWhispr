@@ -10,7 +10,7 @@ import {
   exportUserProfile,
   importUserProfile,
   isAutostartEnabled,
-  openAppReleasePage,
+  installAppUpdate,
   pasteText,
   setAutostartMinimized,
 } from "@/api/tauri";
@@ -36,7 +36,8 @@ export function useSystemSettings({
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateStatusText, setUpdateStatusText] = useState("");
   const [latestAvailableVersion, setLatestAvailableVersion] = useState<string | null>(null);
-  const [latestReleaseUrl, setLatestReleaseUrl] = useState<string | null>(null);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const updatePending = useRef(false);
   const [lastExportPath, setLastExportPath] = useState("");
   const [exporting, setExporting] = useState(false);
   const exportPending = useRef(false);
@@ -53,16 +54,15 @@ export function useSystemSettings({
   }, []);
 
   const handleCheckForUpdates = useCallback(async () => {
-    if (updateChecking) return;
+    if (updatePending.current) return;
+    updatePending.current = true;
 
     setUpdateChecking(true);
     setLatestAvailableVersion(null);
-    setLatestReleaseUrl(null);
     setUpdateStatusText(t("toast.checkingGitHub"));
 
     try {
       const updateInfo = await checkAppUpdate();
-      setLatestReleaseUrl(updateInfo.releaseUrl ?? null);
       if (!updateInfo.latestVersion) {
         setUpdateStatusText(t("toast.noPublishedReleases"));
         toast.info(t("toast.noPublishedReleases"));
@@ -82,20 +82,35 @@ export function useSystemSettings({
       setUpdateStatusText(message);
       toast.error(message);
     } finally {
+      updatePending.current = false;
       setUpdateChecking(false);
     }
-  }, [t, updateChecking]);
+  }, [t]);
 
-  const handleOpenReleasePage = useCallback(async () => {
+  const handleInstallUpdate = useCallback(async () => {
+    if (updatePending.current || !latestAvailableVersion) return;
+    updatePending.current = true;
+    setUpdateChecking(true);
+    setUpdateInstalling(true);
+    setUpdateStatusText(t("settings.downloadingUpdate"));
     try {
-      const message = await openAppReleasePage(latestReleaseUrl);
-      toast.success(message);
+      await installAppUpdate(latestAvailableVersion, (progress) => {
+        setUpdateStatusText(progress.phase === "installing"
+          ? t("settings.installingUpdate")
+          : progress.total
+            ? t("settings.updateDownloadProgress", { percent: Math.min(100, Math.floor(progress.downloaded * 100 / progress.total)) })
+            : t("settings.downloadingUpdate"));
+      });
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("toast.openReleaseFailed");
+      const message = error instanceof Error ? error.message : t("toast.installUpdateFailed");
       setUpdateStatusText(message);
       toast.error(message);
+    } finally {
+      updatePending.current = false;
+      setUpdateChecking(false);
+      setUpdateInstalling(false);
     }
-  }, [latestReleaseUrl, t]);
+  }, [latestAvailableVersion, t]);
 
   const handleAutostartToggle = useCallback(async () => {
     if (autostartLoading) return;
@@ -205,11 +220,12 @@ export function useSystemSettings({
     handleCopyExportPath,
     handleExportConfig,
     handleImportConfig,
-    handleOpenReleasePage,
+    handleInstallUpdate,
     handleTestPaste,
     lastExportPath,
     latestAvailableVersion,
     updateChecking,
+    updateInstalling,
     updateStatusText,
   };
 }

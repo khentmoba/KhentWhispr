@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import i18n from "@/i18n";
 import {
   disable as disableAutostart,
@@ -102,6 +102,19 @@ function createNoArgCommand<T = string>(
 
 export const startFunASR = createNoArgCommand<string>("start_funasr");
 export const checkAppUpdate = createNoArgCommand<AppUpdateInfo>("check_app_update");
+
+export interface AppUpdateProgress {
+  phase: "downloading" | "installing";
+  downloaded: number;
+  total: number | null;
+}
+
+export function installAppUpdate(expectedVersion: string, onProgress: (progress: AppUpdateProgress) => void): Promise<void> {
+  const channel = new Channel<AppUpdateProgress>();
+  channel.onmessage = onProgress;
+  return invokeCommand<void>("install_app_update", { expectedVersion, onProgress: channel });
+}
+
 
 export function transcribeAudio(audioBase64: string): Promise<TranscriptionResult> {
   return invokeCommand<TranscriptionResult>("transcribe_audio", { audioBase64 });

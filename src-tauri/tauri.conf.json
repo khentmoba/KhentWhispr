@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SpeakFlow",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "identifier": "com.speak-flow.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -60,7 +60,20 @@
       ]
     }
   },
-  "bundle": {
+  "plugins": {
+  "updater": {
+    "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNFNDI4NTgyMzZDNUQ5RUIKUldUcjJjVTJnb1ZDUGxWMXhsYzJNZm9KR0J2bWhVREhraHRmOXBqTjc5ZkxkdmFhZTVSL0VLNnEK",
+    "endpoints": [
+      "https://github.com/khentmoba/KhentWhispr/releases/latest/download/latest.json"
+    ],
+    "windows": {
+      "installMode": "passive"
+    }
+  }
+},
+
+  "bundle": {
+    "createUpdaterArtifacts": true,
     "active": true,
     "license": "GPL-3.0-only",
     "licenseFile": "../LICENSE",

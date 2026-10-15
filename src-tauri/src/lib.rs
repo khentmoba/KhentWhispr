@@ -1,674 +1,676 @@
-mod commands;
-mod ipc_policy;
-mod services;
-mod state;
-mod tray_icon;
-mod utils;
-
-#[cfg(test)]
-mod ipc_dto_contract_tests;
-
-use state::{AppState, RecordingSlot};
-use tauri::{Emitter, Manager};
-
-pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--minimized"]),
-        ))
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            let minimized = app
-                .state::<AppState>()
-                .with_profile(|profile| profile.autostart_minimized);
-            if should_start_hidden(minimized, args.into_iter()) {
-                return;
-            }
-            // 已有实例运行时，聚焦主窗口
-            focus_main_window(app);
-        }))
-        .plugin(tauri_plugin_keyring::init())
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .clear_targets()
-                .target(tauri_plugin_log::Target::new(
-                    tauri_plugin_log::TargetKind::Stdout,
-                ))
-                .target(tauri_plugin_log::Target::new(
-                    tauri_plugin_log::TargetKind::LogDir {
-                        file_name: Some("app".into()),
-                    },
-                ))
-                .level(log::LevelFilter::Info)
-                .build(),
-        )
-        .manage(AppState::new())
-        .setup(|app| {
-            if !mark_setup_once() {
-                log::warn!("setup() 被重复调用，已跳过");
-                return Ok(());
-            }
-
-            let app_handle = app.handle().clone();
-            log::info!(
-                "SpeakFlow 应用启动，数据目录: {:?}",
-                utils::paths::get_data_dir()
-            );
-
-            // 启动时加载用户画像
-            {
-                let state = app_handle.state::<AppState>();
-                let loaded = services::profile_service::load_profile();
-                // The main window starts hidden to avoid a flash during autostart.
-                // A normal launch still opens it, regardless of this preference.
-                if !should_start_hidden(loaded.autostart_minimized, std::env::args()) {
-                    focus_main_window(&app_handle);
-                }
-                // 迁移旧版 custom API key 到新 keyring key（仅在目标 key 不存在时执行）
-                if loaded.llm_provider.active == "custom_migrated" {
-                    use tauri_plugin_keyring::KeyringExt;
-                    let new_user =
-                        services::llm_provider::keyring_user_for_provider("custom_migrated");
-                    let existing = app_handle
-                        .keyring()
-                        .get_password("speak-flow", &new_user)
-                        .ok()
-                        .flatten();
-                    if existing.as_deref().unwrap_or("").is_empty() {
-                        if let Some(old_key) = app_handle
-                            .keyring()
-                            .get_password("speak-flow", "custom-api-key")
-                            .ok()
-                            .flatten()
-                            .filter(|k| !k.is_empty())
-                        {
-                            let _ = app_handle.keyring().set_password(
-                                "speak-flow",
-                                &new_user,
-                                &old_key,
-                            );
-                            log::info!("已迁移 custom API key 到 {}", new_user);
-                        }
-                    }
-                }
-                state.update_profile_mut(|profile| *profile = loaded);
-                log::info!("已加载用户画像");
-            }
-
-            {
-                let app_handle = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(error) = services::history_service::initialize().await {
-                        log::warn!("初始化本地转写历史失败: {error}");
-                        return;
-                    }
-                    let retention_days = app_handle
-                        .state::<AppState>()
-                        .with_profile(|profile| profile.history_settings.retention_days);
-                    if let Err(error) = services::history_service::cleanup(retention_days).await {
-                        log::warn!("清理过期转写历史失败: {error}");
-                    }
-                });
-            }
-
-            // 注册翻译/助手热键
-            {
-                type HotkeyRegisterFn =
-                    dyn Fn(tauri::AppHandle, Option<String>) -> Result<String, utils::AppError>;
-                let state = app_handle.state::<AppState>();
-                let hotkeys: [(&str, &HotkeyRegisterFn, Option<String>); 2] = [
-                    (
-                        "翻译",
-                        &commands::hotkey::register_translation_hotkey_inner,
-                        state.with_profile(|p| p.translation_hotkey.clone()),
-                    ),
-                    (
-                        "助手",
-                        &commands::hotkey::register_assistant_hotkey_inner,
-                        state.with_profile(|p| p.assistant_hotkey.clone()),
-                    ),
-                ];
-                for (label, register, shortcut) in hotkeys {
-                    if let Some(s) = shortcut.filter(|v| !v.trim().is_empty()) {
-                        if let Err(err) = register(app_handle.clone(), Some(s)) {
-                            log::warn!("注册{}热键失败: {}", label, err);
-                        }
-                    }
-                }
-            }
-
-            // 启动时从系统密钥环加载 API Key
-            {
-                use tauri_plugin_keyring::KeyringExt;
-                let state = app_handle.state::<AppState>();
-                let provider = state.active_llm_provider();
-                let key = services::llm_provider::sync_runtime_api_key(&app_handle, state.inner());
-                if !key.is_empty() {
-                    log::info!("已从密钥环加载 AI 润色 API Key (provider: {})", provider);
-                }
-                // 从密钥环加载当前活跃在线引擎对应的 API Key（GLM / Alibaba-CN / Alibaba-Intl）
-                commands::funasr::reload_online_asr_key(&app_handle, state.inner());
-                if !state.read_online_asr_api_key().is_empty() {
-                    log::info!(
-                        "已从密钥环加载在线 ASR API Key ({})",
-                        commands::funasr::active_online_keyring_user()
-                    );
-                }
-                // 加载需要密钥的联网搜索提供商（密钥始终保存在系统密钥环）。
-                for search_provider in [
-                    crate::state::user_profile::WebSearchProvider::Exa,
-                    crate::state::user_profile::WebSearchProvider::Tavily,
-                    crate::state::user_profile::WebSearchProvider::Google,
-                ] {
-                    let Some(keyring_user) =
-                        commands::assistant::web_search_keyring_user(&search_provider)
-                    else {
-                        continue;
-                    };
-                    state.with_web_search_key_operation(|| {
-                        if let Some(ws_key) = app_handle
-                            .keyring()
-                            .get_password("speak-flow", keyring_user)
-                            .ok()
-                            .flatten()
-                            .filter(|key| !key.is_empty())
-                        {
-                            let cache_key = commands::assistant::web_search_provider_cache_key(
-                                &search_provider,
-                            );
-                            state.set_web_search_api_key(cache_key, ws_key);
-                            log::info!("已从密钥环加载联网搜索 API Key ({})", cache_key);
-                        }
-                    });
-                }
-
-                if services::codex_oauth_service::sync_runtime_session(&app_handle, state.inner())
-                    .is_some()
-                {
-                    log::info!("已从密钥环加载 OpenAI Codex OAuth 会话");
-                    spawn_openai_codex_oauth_prewarm(app_handle.clone());
-                }
-                if services::grok_build_oauth_service::sync_runtime_session(
-                    &app_handle,
-                    state.inner(),
-                )
-                .is_some()
-                {
-                    log::info!("已从密钥环加载 Grok Build OAuth 会话");
-                    spawn_grok_build_oauth_prewarm(app_handle.clone());
-                }
-            }
-
-            spawn_funasr_startup(app_handle.clone());
-            spawn_subtitle_prewarm(app_handle.clone());
-            spawn_profile_maintenance(app_handle.clone());
-            if let Err(error) = services::selection_service::create_selection_window(&app_handle) {
-                log::warn!("划词助手窗口预创建失败，首次使用时会重试: {error}");
-            }
-            if app_handle
-                .state::<AppState>()
-                .with_profile(|profile| profile.selection_assistant.enabled)
-            {
-                if let Err(error) =
-                    services::selection_service::start_selection_listener(app_handle.clone())
-                {
-                    log::error!("启动划词助手监听失败: {error}");
-                }
-            }
-            setup_system_tray(&app_handle)?;
-
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-            }
-        })
-        .invoke_handler(ipc_policy::restrict_app_commands(tauri::generate_handler![
-            commands::funasr::start_funasr,
-            commands::funasr::transcribe_audio,
-            commands::funasr::check_funasr_status,
-            commands::funasr::check_model_files,
-            commands::funasr::download_models,
-            commands::funasr::cancel_model_download,
-            commands::funasr::restart_funasr,
-            commands::funasr::get_engine,
-            commands::funasr::set_engine,
-            commands::funasr::get_gpu_idle_seconds,
-            commands::funasr::set_gpu_idle_seconds,
-            commands::funasr::set_online_asr_api_key,
-            commands::funasr::get_online_asr_api_key,
-            commands::funasr::get_online_asr_endpoint,
-            commands::funasr::set_online_asr_endpoint,
-            commands::funasr::get_alibaba_asr_config,
-            commands::funasr::set_alibaba_asr_model,
-            commands::funasr::list_alibaba_asr_models,
-            commands::funasr::get_models_dir,
-            commands::funasr::set_models_dir,
-            commands::funasr::pick_folder,
-            commands::clipboard::copy_to_clipboard,
-            commands::clipboard::paste_text,
-            commands::codex_oauth::login_openai_codex_oauth,
-            commands::codex_oauth::start_openai_codex_oauth_device_code,
-            commands::codex_oauth::complete_openai_codex_oauth_device_code,
-            commands::codex_oauth::logout_openai_codex_oauth,
-            commands::codex_oauth::remove_chatgpt_account,
-            commands::codex_oauth::get_openai_codex_oauth_status,
-            commands::grok_build_oauth::login_grok_build_oauth,
-            commands::grok_build_oauth::start_grok_build_oauth_device_code,
-            commands::grok_build_oauth::complete_grok_build_oauth_device_code,
-            commands::grok_build_oauth::logout_grok_build_oauth,
-            commands::grok_build_oauth::get_grok_build_oauth_status,
-            commands::window::hide_main_window,
-            commands::profile::set_autostart_minimized,
-            commands::window::show_subtitle_window,
-            commands::window::hide_subtitle_window,
-            commands::hotkey::register_custom_hotkey,
-            commands::hotkey::register_translation_hotkey,
-            commands::hotkey::register_assistant_hotkey,
-            commands::hotkey::unregister_all_hotkeys,
-            commands::hotkey::set_recording_mode,
-            commands::hotkey::get_hotkey_diagnostic,
-            commands::audio::start_recording,
-            commands::audio::stop_recording,
-            commands::audio::get_recording_snapshot,
-            commands::audio::test_microphone,
-            commands::audio::list_input_devices,
-            commands::audio::set_input_device,
-            commands::audio::start_microphone_level_monitor,
-            commands::audio::stop_microphone_level_monitor,
-            commands::audio::set_input_method,
-            commands::audio::set_sound_enabled,
-            commands::funasr::set_r2t2_config,
-            commands::ai_polish::set_ai_polish_config,
-            commands::ai_polish::get_ai_polish_api_key,
-            commands::ai_polish::set_ai_polish_api_key,
-            commands::ai_polish::set_ai_polish_screen_context_enabled,
-            commands::ai_polish::set_screen_context_enabled,
-            commands::ai_polish::list_ai_models,
-            commands::ai_polish::set_assistant_api_key,
-            commands::ai_polish::get_assistant_api_key,
-            commands::jev::set_jev_config,
-            commands::jev::set_jev_provider,
-            commands::jev::set_polish_mode,
-            commands::jev::set_jev_features,
-            commands::jev::set_screen_context_mode,
-            commands::jev::set_web_search_mode,
-            commands::jev::get_jev_api_key,
-            commands::jev::set_jev_api_key,
-            commands::profile::get_user_profile,
-            commands::profile::set_history_settings,
-            commands::profile::set_app_profile_rules,
-            commands::profile::add_hot_word,
-            commands::profile::remove_hot_word,
-            commands::profile::set_llm_provider_config,
-            commands::profile::set_screen_vision_config,
-            commands::profile::get_screen_vision_api_key,
-            commands::profile::set_screen_vision_api_key,
-            commands::profile::get_llm_reasoning_support,
-            commands::profile::export_user_profile,
-            commands::profile::import_user_profile,
-            commands::profile::submit_user_correction,
-            commands::profile::set_translation_target,
-            commands::profile::set_translation_hotkey,
-            commands::profile::set_custom_prompt,
-            commands::profile::set_polish_structure_level,
-            commands::profile::set_openai_fast_mode,
-            commands::profile::add_custom_provider,
-            commands::profile::update_custom_provider,
-            commands::profile::remove_custom_provider,
-            commands::profile::validate_corrections,
-            commands::profile::set_correction_validation_config,
-            commands::profile::remove_correction,
-            commands::updater::check_app_update,
-            commands::updater::open_app_release_page,
-            commands::assistant::set_assistant_hotkey,
-            commands::assistant::set_assistant_system_prompt,
-            commands::assistant::set_assistant_screen_context_enabled,
-            commands::assistant::continue_assistant_conversation,
-            commands::assistant::cancel_assistant_conversation,
-            commands::assistant::retry_assistant_request,
-            commands::assistant::open_assistant_source,
-            commands::assistant::set_web_search_config,
-            commands::assistant::set_web_search_api_key,
-            commands::assistant::get_web_search_api_key,
-            commands::selection::set_selection_assistant_config,
-            commands::selection::set_selection_api_key,
-            commands::selection::get_selection_api_key,
-            commands::selection::resize_selection_window,
-            commands::selection::hide_selection_assistant,
-            commands::selection::start_selection_window_drag,
-            commands::selection::get_selection_overlay_state,
-            commands::selection::copy_selection,
-            commands::selection::replace_selection,
-            commands::selection::search_selection,
-            commands::selection::run_selection_action,
-            commands::selection::cancel_selection_action,
-            commands::history::list_transcription_history,
-            commands::history::get_transcription_history_stats,
-            commands::history::delete_transcription_history,
-            commands::history::export_transcription_history,
-            commands::history::reprocess_transcription_history,
-        ]))
-        .run(tauri::generate_context!())
-        .expect("启动SpeakFlow 时发生错误");
-}
-
-fn mark_setup_once() -> bool {
-    use std::sync::Once;
-
-    static SETUP_ONCE: Once = Once::new();
-    let mut first_run = false;
-    SETUP_ONCE.call_once(|| {
-        first_run = true;
-    });
-    first_run
-}
-
-fn spawn_funasr_startup(app_handle: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let engine = utils::paths::read_engine_config();
-        let state = app_handle.state::<AppState>();
-
-        if utils::paths::is_online_engine(&engine) {
-            let has_key = !state.read_online_asr_api_key().is_empty();
-            state.set_funasr_ready(has_key);
-            let label = match engine.as_str() {
-                "alibaba-asr" => "Alibaba DashScope",
-                _ => "GLM-ASR",
-            };
-            let _ = app_handle.emit(
-                "funasr-status",
-                serde_json::json!({
-                    "status": if has_key { "ready" } else { "need_api_key" },
-                    "message": if has_key {
-                        format!("{} 在线服务就绪", label)
-                    } else {
-                        format!("请配置 {} API Key", label)
-                    },
-                    "device": "cloud",
-                    "gpu_name": serde_json::Value::Null,
-                    "models_present": true,
-                    "missing_models": [],
-                }),
-            );
-            log::info!(
-                "在线引擎 {}，跳过 Python 启动 (has_key={})",
-                engine,
-                has_key
-            );
-            return;
-        }
-
-        log::info!("正在后台启动 FunASR 服务器...");
-        if let Err(err) = services::funasr_service::start_server(&app_handle, state.inner()).await {
-            log::error!("FunASR 服务器启动失败: {}", err);
-            let _ = app_handle.emit(
-                "funasr-status",
-                serde_json::json!({
-                    "status": "error",
-                    "message": format!("FunASR 启动失败: {}", err),
-                }),
-            );
-        }
-    });
-}
-
-fn spawn_subtitle_prewarm(app_handle: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        match commands::window::create_subtitle_window(app_handle).await {
-            Ok(_) => log::info!("字幕窗口预创建成功"),
-            Err(err) => log::warn!("字幕窗口预创建失败（首次录音会重试）: {}", err),
-        }
-    });
-}
-
-fn spawn_openai_codex_oauth_prewarm(app_handle: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let state = app_handle.state::<AppState>();
-        if let Err(err) =
-            services::codex_oauth_service::prewarm_runtime_session(&app_handle, state.inner()).await
-        {
-            log::warn!("OpenAI Codex OAuth 启动预热失败: {}", err);
-        }
-    });
-}
-
-fn spawn_grok_build_oauth_prewarm(app_handle: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let state = app_handle.state::<AppState>();
-        if let Err(err) =
-            services::grok_build_oauth_service::prewarm_runtime_session(&app_handle, state.inner())
-                .await
-        {
-            log::warn!("Grok Build OAuth 启动预热失败: {}", err);
-        }
-    });
-}
-
-fn spawn_profile_maintenance(app_handle: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        const HOT_WORD_CLEANUP_INTERVAL_SECS: u64 = 24 * 60 * 60;
-        log::info!(
-            "已启动定期热词清理任务，周期 {} 秒",
-            HOT_WORD_CLEANUP_INTERVAL_SECS
-        );
-
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-            HOT_WORD_CLEANUP_INTERVAL_SECS,
-        ));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-        loop {
-            interval.tick().await;
-
-            let should_save_profile = {
-                let state = app_handle.state::<AppState>();
-                let cleanup = state.update_profile_mut(services::profile_service::cleanup_profile);
-                if cleanup.removed_hot_words > 0 || cleanup.removed_corrections > 0 {
-                    log::info!(
-                        "定期画像清理完成：热词移除 {} 条，纠错移除 {} 条",
-                        cleanup.removed_hot_words,
-                        cleanup.removed_corrections
-                    );
-                    true
-                } else {
-                    false
-                }
-            };
-
-            if should_save_profile {
-                let state = app_handle.state::<AppState>();
-                if let Err(err) = services::profile_service::save_profile_async(state.inner()).await
-                {
-                    log::warn!("定期热词清理后保存用户画像失败: {}", err);
-                }
-            }
-
-            // LLM 纠错审核：启用且距上次超过 24h 时自动执行
-            let should_validate = {
-                let state = app_handle.state::<AppState>();
-                state.with_profile(|p| {
-                    if !p.correction_validation_enabled {
-                        return false;
-                    }
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    now.saturating_sub(p.last_correction_validation)
-                        >= HOT_WORD_CLEANUP_INTERVAL_SECS
-                })
-            };
-
-            if should_validate {
-                let state = app_handle.state::<AppState>();
-                match commands::profile::run_correction_validation(&app_handle, state.inner()).await
-                {
-                    Ok(removed) if removed > 0 => {
-                        log::info!("定期 LLM 纠错审核完成：删除 {} 条", removed);
-                    }
-                    Err(err) => {
-                        log::warn!("定期 LLM 纠错审核失败: {}", err);
-                    }
-                    _ => {}
-                }
-            }
-        }
-    });
-}
-
-fn should_start_hidden(autostart_minimized: bool, mut args: impl Iterator<Item = String>) -> bool {
-    autostart_minimized && args.any(|arg| arg == "--minimized")
-}
-
-fn focus_main_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-    }
-}
-
-fn hide_main_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
-}
-
-fn stop_funasr_on_exit(app: &tauri::AppHandle) {
-    let state = app.state::<AppState>();
-    services::audio_service::stop_microphone_level_monitor(state.inner());
-
-    if let Some(recording) = state.recording.recording.lock().take() {
-        match recording {
-            RecordingSlot::Starting(s) => {
-                s.stop_flag
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                s.stop_notify.notify_waiters();
-            }
-            RecordingSlot::Active(s) => {
-                s.stop_flag
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                s.stop_notify.notify_waiters();
-                if let Some(task) = s.interim_task {
-                    task.abort();
-                }
-            }
-        }
-    }
-
-    let funasr_process = state.engine.funasr_process.clone();
-
-    tauri::async_runtime::block_on(async {
-        match tokio::time::timeout(std::time::Duration::from_secs(2), funasr_process.lock()).await {
-            Ok(mut guard) => {
-                if let Some(ref mut process) = *guard {
-                    log::info!("正在停止 FunASR 进程...");
-                    let _ = process.child.start_kill();
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(3),
-                        process.child.wait(),
-                    )
-                    .await;
-                }
-            }
-            Err(_) => {
-                log::warn!("退出时获取 FunASR 进程锁超时，进程可能未被清理");
-            }
-        }
-    });
-}
-
-fn setup_system_tray(app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    use tauri::menu::{MenuBuilder, MenuItemBuilder};
-    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-    use tauri::Listener;
-
-    let scale = app_handle
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .map_or(1.0, |monitor| monitor.scale_factor());
-    let icon_size = tray_icon::size_for_scale(scale);
-
-    let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app_handle)?;
-    let hide_item = MenuItemBuilder::with_id("hide", "隐藏主窗口").build(app_handle)?;
-    let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app_handle)?;
-    let menu = MenuBuilder::new(app_handle)
-        .item(&show_item)
-        .item(&hide_item)
-        .item(&quit_item)
-        .build()?;
-
-    let _tray = TrayIconBuilder::with_id("main-tray")
-        .icon(tray_icon::image(icon_size, false))
-        .tooltip("SpeakFlow - 语音转文字")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => focus_main_window(app),
-            "hide" => hide_main_window(app),
-            "quit" => {
-                log::info!("用户请求退出应用");
-                stop_funasr_on_exit(app);
-                app.exit(0);
-            }
-            _ => log::warn!("未知托盘菜单项: {:?}", event.id()),
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                focus_main_window(tray.app_handle());
-            }
-        })
-        .build(app_handle)?;
-
-    let app = app_handle.clone();
-    app_handle.listen("recording-state", move |_| {
-        // Read canonical state so a delayed event from an older session cannot
-        // clear the mark while a newer recording is active.
-        let recording = app
-            .state::<AppState>()
-            .recording
-            .snapshot()
-            .is_some_and(|snapshot| snapshot.phase == state::RecordingPhase::Recording);
-        if let Some(tray) = app.tray_by_id("main-tray") {
-            if let Err(error) = tray.set_icon(Some(tray_icon::image(icon_size, recording))) {
-                log::warn!("更新托盘录音图标失败: {error}");
-            }
-        }
-    });
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod startup_tests {
-    use super::should_start_hidden;
-
-    #[test]
-    fn autostart_minimized_requires_both_the_preference_and_login_argument() {
-        for (enabled, args, hidden) in [
-            (false, vec!["speak-flow"], false),
-            (true, vec!["speak-flow"], false),
-            (false, vec!["speak-flow", "--minimized"], false),
-            (true, vec!["speak-flow", "--minimized"], true),
-            (true, vec!["speak-flow", "--minimized=false"], false),
-        ] {
-            assert_eq!(
-                should_start_hidden(enabled, args.into_iter().map(str::to_owned)),
-                hidden
-            );
-        }
-    }
-}
+mod commands;
+mod ipc_policy;
+mod services;
+mod state;
+mod tray_icon;
+mod utils;
+
+#[cfg(test)]
+mod ipc_dto_contract_tests;
+
+use state::{AppState, RecordingSlot};
+use tauri::{Emitter, Manager};
+
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let minimized = app
+                .state::<AppState>()
+                .with_profile(|profile| profile.autostart_minimized);
+            if should_start_hidden(minimized, args.into_iter()) {
+                return;
+            }
+            // 已有实例运行时，聚焦主窗口
+            focus_main_window(app);
+        }))
+        .plugin(tauri_plugin_keyring::init())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .clear_targets()
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Stdout,
+                ))
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("app".into()),
+                    },
+                ))
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
+        .manage(AppState::new())
+        .setup(|app| {
+            if !mark_setup_once() {
+                log::warn!("setup() 被重复调用，已跳过");
+                return Ok(());
+            }
+
+            let app_handle = app.handle().clone();
+            log::info!(
+                "SpeakFlow 应用启动，数据目录: {:?}",
+                utils::paths::get_data_dir()
+            );
+
+            // 启动时加载用户画像
+            {
+                let state = app_handle.state::<AppState>();
+                let loaded = services::profile_service::load_profile();
+                // The main window starts hidden to avoid a flash during autostart.
+                // A normal launch still opens it, regardless of this preference.
+                if !should_start_hidden(loaded.autostart_minimized, std::env::args()) {
+                    focus_main_window(&app_handle);
+                }
+                // 迁移旧版 custom API key 到新 keyring key（仅在目标 key 不存在时执行）
+                if loaded.llm_provider.active == "custom_migrated" {
+                    use tauri_plugin_keyring::KeyringExt;
+                    let new_user =
+                        services::llm_provider::keyring_user_for_provider("custom_migrated");
+                    let existing = app_handle
+                        .keyring()
+                        .get_password("speak-flow", &new_user)
+                        .ok()
+                        .flatten();
+                    if existing.as_deref().unwrap_or("").is_empty() {
+                        if let Some(old_key) = app_handle
+                            .keyring()
+                            .get_password("speak-flow", "custom-api-key")
+                            .ok()
+                            .flatten()
+                            .filter(|k| !k.is_empty())
+                        {
+                            let _ = app_handle.keyring().set_password(
+                                "speak-flow",
+                                &new_user,
+                                &old_key,
+                            );
+                            log::info!("已迁移 custom API key 到 {}", new_user);
+                        }
+                    }
+                }
+                state.update_profile_mut(|profile| *profile = loaded);
+                log::info!("已加载用户画像");
+            }
+
+            {
+                let app_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = services::history_service::initialize().await {
+                        log::warn!("初始化本地转写历史失败: {error}");
+                        return;
+                    }
+                    let retention_days = app_handle
+                        .state::<AppState>()
+                        .with_profile(|profile| profile.history_settings.retention_days);
+                    if let Err(error) = services::history_service::cleanup(retention_days).await {
+                        log::warn!("清理过期转写历史失败: {error}");
+                    }
+                });
+            }
+
+            // 注册翻译/助手热键
+            {
+                type HotkeyRegisterFn =
+                    dyn Fn(tauri::AppHandle, Option<String>) -> Result<String, utils::AppError>;
+                let state = app_handle.state::<AppState>();
+                let hotkeys: [(&str, &HotkeyRegisterFn, Option<String>); 2] = [
+                    (
+                        "翻译",
+                        &commands::hotkey::register_translation_hotkey_inner,
+                        state.with_profile(|p| p.translation_hotkey.clone()),
+                    ),
+                    (
+                        "助手",
+                        &commands::hotkey::register_assistant_hotkey_inner,
+                        state.with_profile(|p| p.assistant_hotkey.clone()),
+                    ),
+                ];
+                for (label, register, shortcut) in hotkeys {
+                    if let Some(s) = shortcut.filter(|v| !v.trim().is_empty()) {
+                        if let Err(err) = register(app_handle.clone(), Some(s)) {
+                            log::warn!("注册{}热键失败: {}", label, err);
+                        }
+                    }
+                }
+            }
+
+            // 启动时从系统密钥环加载 API Key
+            {
+                use tauri_plugin_keyring::KeyringExt;
+                let state = app_handle.state::<AppState>();
+                let provider = state.active_llm_provider();
+                let key = services::llm_provider::sync_runtime_api_key(&app_handle, state.inner());
+                if !key.is_empty() {
+                    log::info!("已从密钥环加载 AI 润色 API Key (provider: {})", provider);
+                }
+                // 从密钥环加载当前活跃在线引擎对应的 API Key（GLM / Alibaba-CN / Alibaba-Intl）
+                commands::funasr::reload_online_asr_key(&app_handle, state.inner());
+                if !state.read_online_asr_api_key().is_empty() {
+                    log::info!(
+                        "已从密钥环加载在线 ASR API Key ({})",
+                        commands::funasr::active_online_keyring_user()
+                    );
+                }
+                // 加载需要密钥的联网搜索提供商（密钥始终保存在系统密钥环）。
+                for search_provider in [
+                    crate::state::user_profile::WebSearchProvider::Exa,
+                    crate::state::user_profile::WebSearchProvider::Tavily,
+                    crate::state::user_profile::WebSearchProvider::Google,
+                ] {
+                    let Some(keyring_user) =
+                        commands::assistant::web_search_keyring_user(&search_provider)
+                    else {
+                        continue;
+                    };
+                    state.with_web_search_key_operation(|| {
+                        if let Some(ws_key) = app_handle
+                            .keyring()
+                            .get_password("speak-flow", keyring_user)
+                            .ok()
+                            .flatten()
+                            .filter(|key| !key.is_empty())
+                        {
+                            let cache_key = commands::assistant::web_search_provider_cache_key(
+                                &search_provider,
+                            );
+                            state.set_web_search_api_key(cache_key, ws_key);
+                            log::info!("已从密钥环加载联网搜索 API Key ({})", cache_key);
+                        }
+                    });
+                }
+
+                if services::codex_oauth_service::sync_runtime_session(&app_handle, state.inner())
+                    .is_some()
+                {
+                    log::info!("已从密钥环加载 OpenAI Codex OAuth 会话");
+                    spawn_openai_codex_oauth_prewarm(app_handle.clone());
+                }
+                if services::grok_build_oauth_service::sync_runtime_session(
+                    &app_handle,
+                    state.inner(),
+                )
+                .is_some()
+                {
+                    log::info!("已从密钥环加载 Grok Build OAuth 会话");
+                    spawn_grok_build_oauth_prewarm(app_handle.clone());
+                }
+            }
+
+            spawn_funasr_startup(app_handle.clone());
+            spawn_subtitle_prewarm(app_handle.clone());
+            spawn_profile_maintenance(app_handle.clone());
+            if let Err(error) = services::selection_service::create_selection_window(&app_handle) {
+                log::warn!("划词助手窗口预创建失败，首次使用时会重试: {error}");
+            }
+            if app_handle
+                .state::<AppState>()
+                .with_profile(|profile| profile.selection_assistant.enabled)
+            {
+                if let Err(error) =
+                    services::selection_service::start_selection_listener(app_handle.clone())
+                {
+                    log::error!("启动划词助手监听失败: {error}");
+                }
+            }
+            setup_system_tray(&app_handle)?;
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .invoke_handler(ipc_policy::restrict_app_commands(tauri::generate_handler![
+            commands::funasr::start_funasr,
+            commands::funasr::transcribe_audio,
+            commands::funasr::check_funasr_status,
+            commands::funasr::check_model_files,
+            commands::funasr::download_models,
+            commands::funasr::cancel_model_download,
+            commands::funasr::restart_funasr,
+            commands::funasr::get_engine,
+            commands::funasr::set_engine,
+            commands::funasr::get_gpu_idle_seconds,
+            commands::funasr::set_gpu_idle_seconds,
+            commands::funasr::set_online_asr_api_key,
+            commands::funasr::get_online_asr_api_key,
+            commands::funasr::get_online_asr_endpoint,
+            commands::funasr::set_online_asr_endpoint,
+            commands::funasr::get_alibaba_asr_config,
+            commands::funasr::set_alibaba_asr_model,
+            commands::funasr::list_alibaba_asr_models,
+            commands::funasr::get_models_dir,
+            commands::funasr::set_models_dir,
+            commands::funasr::pick_folder,
+            commands::clipboard::copy_to_clipboard,
+            commands::clipboard::paste_text,
+            commands::codex_oauth::login_openai_codex_oauth,
+            commands::codex_oauth::start_openai_codex_oauth_device_code,
+            commands::codex_oauth::complete_openai_codex_oauth_device_code,
+            commands::codex_oauth::logout_openai_codex_oauth,
+            commands::codex_oauth::remove_chatgpt_account,
+            commands::codex_oauth::get_openai_codex_oauth_status,
+            commands::grok_build_oauth::login_grok_build_oauth,
+            commands::grok_build_oauth::start_grok_build_oauth_device_code,
+            commands::grok_build_oauth::complete_grok_build_oauth_device_code,
+            commands::grok_build_oauth::logout_grok_build_oauth,
+            commands::grok_build_oauth::get_grok_build_oauth_status,
+            commands::window::hide_main_window,
+            commands::profile::set_autostart_minimized,
+            commands::window::show_subtitle_window,
+            commands::window::hide_subtitle_window,
+            commands::hotkey::register_custom_hotkey,
+            commands::hotkey::register_translation_hotkey,
+            commands::hotkey::register_assistant_hotkey,
+            commands::hotkey::unregister_all_hotkeys,
+            commands::hotkey::set_recording_mode,
+            commands::hotkey::get_hotkey_diagnostic,
+            commands::audio::start_recording,
+            commands::audio::stop_recording,
+            commands::audio::get_recording_snapshot,
+            commands::audio::test_microphone,
+            commands::audio::list_input_devices,
+            commands::audio::set_input_device,
+            commands::audio::start_microphone_level_monitor,
+            commands::audio::stop_microphone_level_monitor,
+            commands::audio::set_input_method,
+            commands::audio::set_sound_enabled,
+            commands::funasr::set_r2t2_config,
+            commands::ai_polish::set_ai_polish_config,
+            commands::ai_polish::get_ai_polish_api_key,
+            commands::ai_polish::set_ai_polish_api_key,
+            commands::ai_polish::set_ai_polish_screen_context_enabled,
+            commands::ai_polish::set_screen_context_enabled,
+            commands::ai_polish::list_ai_models,
+            commands::ai_polish::set_assistant_api_key,
+            commands::ai_polish::get_assistant_api_key,
+            commands::jev::set_jev_config,
+            commands::jev::set_jev_provider,
+            commands::jev::set_polish_mode,
+            commands::jev::set_jev_features,
+            commands::jev::set_screen_context_mode,
+            commands::jev::set_web_search_mode,
+            commands::jev::get_jev_api_key,
+            commands::jev::set_jev_api_key,
+            commands::profile::get_user_profile,
+            commands::profile::set_history_settings,
+            commands::profile::set_app_profile_rules,
+            commands::profile::add_hot_word,
+            commands::profile::remove_hot_word,
+            commands::profile::set_llm_provider_config,
+            commands::profile::set_screen_vision_config,
+            commands::profile::get_screen_vision_api_key,
+            commands::profile::set_screen_vision_api_key,
+            commands::profile::get_llm_reasoning_support,
+            commands::profile::export_user_profile,
+            commands::profile::import_user_profile,
+            commands::profile::submit_user_correction,
+            commands::profile::set_translation_target,
+            commands::profile::set_translation_hotkey,
+            commands::profile::set_custom_prompt,
+            commands::profile::set_polish_structure_level,
+            commands::profile::set_openai_fast_mode,
+            commands::profile::add_custom_provider,
+            commands::profile::update_custom_provider,
+            commands::profile::remove_custom_provider,
+            commands::profile::validate_corrections,
+            commands::profile::set_correction_validation_config,
+            commands::profile::remove_correction,
+            commands::updater::check_app_update,
+            commands::updater::install_app_update,
+            commands::updater::open_app_release_page,
+            commands::assistant::set_assistant_hotkey,
+            commands::assistant::set_assistant_system_prompt,
+            commands::assistant::set_assistant_screen_context_enabled,
+            commands::assistant::continue_assistant_conversation,
+            commands::assistant::cancel_assistant_conversation,
+            commands::assistant::retry_assistant_request,
+            commands::assistant::open_assistant_source,
+            commands::assistant::set_web_search_config,
+            commands::assistant::set_web_search_api_key,
+            commands::assistant::get_web_search_api_key,
+            commands::selection::set_selection_assistant_config,
+            commands::selection::set_selection_api_key,
+            commands::selection::get_selection_api_key,
+            commands::selection::resize_selection_window,
+            commands::selection::hide_selection_assistant,
+            commands::selection::start_selection_window_drag,
+            commands::selection::get_selection_overlay_state,
+            commands::selection::copy_selection,
+            commands::selection::replace_selection,
+            commands::selection::search_selection,
+            commands::selection::run_selection_action,
+            commands::selection::cancel_selection_action,
+            commands::history::list_transcription_history,
+            commands::history::get_transcription_history_stats,
+            commands::history::delete_transcription_history,
+            commands::history::export_transcription_history,
+            commands::history::reprocess_transcription_history,
+        ]))
+        .run(tauri::generate_context!())
+        .expect("启动SpeakFlow 时发生错误");
+}
+
+fn mark_setup_once() -> bool {
+    use std::sync::Once;
+
+    static SETUP_ONCE: Once = Once::new();
+    let mut first_run = false;
+    SETUP_ONCE.call_once(|| {
+        first_run = true;
+    });
+    first_run
+}
+
+fn spawn_funasr_startup(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let engine = utils::paths::read_engine_config();
+        let state = app_handle.state::<AppState>();
+
+        if utils::paths::is_online_engine(&engine) {
+            let has_key = !state.read_online_asr_api_key().is_empty();
+            state.set_funasr_ready(has_key);
+            let label = match engine.as_str() {
+                "alibaba-asr" => "Alibaba DashScope",
+                _ => "GLM-ASR",
+            };
+            let _ = app_handle.emit(
+                "funasr-status",
+                serde_json::json!({
+                    "status": if has_key { "ready" } else { "need_api_key" },
+                    "message": if has_key {
+                        format!("{} 在线服务就绪", label)
+                    } else {
+                        format!("请配置 {} API Key", label)
+                    },
+                    "device": "cloud",
+                    "gpu_name": serde_json::Value::Null,
+                    "models_present": true,
+                    "missing_models": [],
+                }),
+            );
+            log::info!(
+                "在线引擎 {}，跳过 Python 启动 (has_key={})",
+                engine,
+                has_key
+            );
+            return;
+        }
+
+        log::info!("正在后台启动 FunASR 服务器...");
+        if let Err(err) = services::funasr_service::start_server(&app_handle, state.inner()).await {
+            log::error!("FunASR 服务器启动失败: {}", err);
+            let _ = app_handle.emit(
+                "funasr-status",
+                serde_json::json!({
+                    "status": "error",
+                    "message": format!("FunASR 启动失败: {}", err),
+                }),
+            );
+        }
+    });
+}
+
+fn spawn_subtitle_prewarm(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        match commands::window::create_subtitle_window(app_handle).await {
+            Ok(_) => log::info!("字幕窗口预创建成功"),
+            Err(err) => log::warn!("字幕窗口预创建失败（首次录音会重试）: {}", err),
+        }
+    });
+}
+
+fn spawn_openai_codex_oauth_prewarm(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let state = app_handle.state::<AppState>();
+        if let Err(err) =
+            services::codex_oauth_service::prewarm_runtime_session(&app_handle, state.inner()).await
+        {
+            log::warn!("OpenAI Codex OAuth 启动预热失败: {}", err);
+        }
+    });
+}
+
+fn spawn_grok_build_oauth_prewarm(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let state = app_handle.state::<AppState>();
+        if let Err(err) =
+            services::grok_build_oauth_service::prewarm_runtime_session(&app_handle, state.inner())
+                .await
+        {
+            log::warn!("Grok Build OAuth 启动预热失败: {}", err);
+        }
+    });
+}
+
+fn spawn_profile_maintenance(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        const HOT_WORD_CLEANUP_INTERVAL_SECS: u64 = 24 * 60 * 60;
+        log::info!(
+            "已启动定期热词清理任务，周期 {} 秒",
+            HOT_WORD_CLEANUP_INTERVAL_SECS
+        );
+
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            HOT_WORD_CLEANUP_INTERVAL_SECS,
+        ));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            interval.tick().await;
+
+            let should_save_profile = {
+                let state = app_handle.state::<AppState>();
+                let cleanup = state.update_profile_mut(services::profile_service::cleanup_profile);
+                if cleanup.removed_hot_words > 0 || cleanup.removed_corrections > 0 {
+                    log::info!(
+                        "定期画像清理完成：热词移除 {} 条，纠错移除 {} 条",
+                        cleanup.removed_hot_words,
+                        cleanup.removed_corrections
+                    );
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if should_save_profile {
+                let state = app_handle.state::<AppState>();
+                if let Err(err) = services::profile_service::save_profile_async(state.inner()).await
+                {
+                    log::warn!("定期热词清理后保存用户画像失败: {}", err);
+                }
+            }
+
+            // LLM 纠错审核：启用且距上次超过 24h 时自动执行
+            let should_validate = {
+                let state = app_handle.state::<AppState>();
+                state.with_profile(|p| {
+                    if !p.correction_validation_enabled {
+                        return false;
+                    }
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    now.saturating_sub(p.last_correction_validation)
+                        >= HOT_WORD_CLEANUP_INTERVAL_SECS
+                })
+            };
+
+            if should_validate {
+                let state = app_handle.state::<AppState>();
+                match commands::profile::run_correction_validation(&app_handle, state.inner()).await
+                {
+                    Ok(removed) if removed > 0 => {
+                        log::info!("定期 LLM 纠错审核完成：删除 {} 条", removed);
+                    }
+                    Err(err) => {
+                        log::warn!("定期 LLM 纠错审核失败: {}", err);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+}
+
+fn should_start_hidden(autostart_minimized: bool, mut args: impl Iterator<Item = String>) -> bool {
+    autostart_minimized && args.any(|arg| arg == "--minimized")
+}
+
+fn focus_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn hide_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
+fn stop_funasr_on_exit(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    services::audio_service::stop_microphone_level_monitor(state.inner());
+
+    if let Some(recording) = state.recording.recording.lock().take() {
+        match recording {
+            RecordingSlot::Starting(s) => {
+                s.stop_flag
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                s.stop_notify.notify_waiters();
+            }
+            RecordingSlot::Active(s) => {
+                s.stop_flag
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                s.stop_notify.notify_waiters();
+                if let Some(task) = s.interim_task {
+                    task.abort();
+                }
+            }
+        }
+    }
+
+    let funasr_process = state.engine.funasr_process.clone();
+
+    tauri::async_runtime::block_on(async {
+        match tokio::time::timeout(std::time::Duration::from_secs(2), funasr_process.lock()).await {
+            Ok(mut guard) => {
+                if let Some(ref mut process) = *guard {
+                    log::info!("正在停止 FunASR 进程...");
+                    let _ = process.child.start_kill();
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        process.child.wait(),
+                    )
+                    .await;
+                }
+            }
+            Err(_) => {
+                log::warn!("退出时获取 FunASR 进程锁超时，进程可能未被清理");
+            }
+        }
+    });
+}
+
+fn setup_system_tray(app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tauri::Listener;
+
+    let scale = app_handle
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map_or(1.0, |monitor| monitor.scale_factor());
+    let icon_size = tray_icon::size_for_scale(scale);
+
+    let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app_handle)?;
+    let hide_item = MenuItemBuilder::with_id("hide", "隐藏主窗口").build(app_handle)?;
+    let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app_handle)?;
+    let menu = MenuBuilder::new(app_handle)
+        .item(&show_item)
+        .item(&hide_item)
+        .item(&quit_item)
+        .build()?;
+
+    let _tray = TrayIconBuilder::with_id("main-tray")
+        .icon(tray_icon::image(icon_size, false))
+        .tooltip("SpeakFlow - 语音转文字")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => focus_main_window(app),
+            "hide" => hide_main_window(app),
+            "quit" => {
+                log::info!("用户请求退出应用");
+                stop_funasr_on_exit(app);
+                app.exit(0);
+            }
+            _ => log::warn!("未知托盘菜单项: {:?}", event.id()),
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                focus_main_window(tray.app_handle());
+            }
+        })
+        .build(app_handle)?;
+
+    let app = app_handle.clone();
+    app_handle.listen("recording-state", move |_| {
+        // Read canonical state so a delayed event from an older session cannot
+        // clear the mark while a newer recording is active.
+        let recording = app
+            .state::<AppState>()
+            .recording
+            .snapshot()
+            .is_some_and(|snapshot| snapshot.phase == state::RecordingPhase::Recording);
+        if let Some(tray) = app.tray_by_id("main-tray") {
+            if let Err(error) = tray.set_icon(Some(tray_icon::image(icon_size, recording))) {
+                log::warn!("更新托盘录音图标失败: {error}");
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::should_start_hidden;
+
+    #[test]
+    fn autostart_minimized_requires_both_the_preference_and_login_argument() {
+        for (enabled, args, hidden) in [
+            (false, vec!["speak-flow"], false),
+            (true, vec!["speak-flow"], false),
+            (false, vec!["speak-flow", "--minimized"], false),
+            (true, vec!["speak-flow", "--minimized"], true),
+            (true, vec!["speak-flow", "--minimized=false"], false),
+        ] {
+            assert_eq!(
+                should_start_hidden(enabled, args.into_iter().map(str::to_owned)),
+                hidden
+            );
+        }
+    }
+}

@@ -287,11 +287,12 @@ export default function SettingsPage({
     handleExportConfig,
     exporting,
     handleImportConfig,
-    handleOpenReleasePage,
+    handleInstallUpdate,
     handleTestPaste,
     lastExportPath,
     latestAvailableVersion,
     updateChecking,
+    updateInstalling,
     updateStatusText,
   } = useSystemSettings({ inputMethod, profile, refreshProfile });
 
@@ -1133,6 +1134,7 @@ export default function SettingsPage({
             updateStatusText={updateStatusText}
             latestAvailableVersion={latestAvailableVersion}
             updateChecking={updateChecking}
+            updateInstalling={updateInstalling}
             onExport={() => { void handleExportConfig(); }}
             onCopyExportPath={() => { void handleCopyExportPath(); }}
             onImport={handleImportConfig}
@@ -1140,7 +1142,7 @@ export default function SettingsPage({
             onToggleAutostart={() => { void handleAutostartToggle(); }}
             onToggleAutostartMinimized={() => { void handleAutostartMinimizedToggle(); }}
             onUpdateAction={() => {
-              void (latestAvailableVersion ? handleOpenReleasePage() : handleCheckForUpdates());
+              void (latestAvailableVersion ? handleInstallUpdate() : handleCheckForUpdates());
             }}
           />
         </div>
