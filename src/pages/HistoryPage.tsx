@@ -13,7 +13,6 @@ import {
   Minus,
   RefreshCw,
   Search,
-  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -160,7 +159,6 @@ export default function HistoryPage({
   const hasActiveFilter = Boolean(query || mode || status);
   const latencyCards = useMemo(() => stats ? [
     { label: t("historyPage.asrLatency"), value: stats.asr },
-    { label: t("historyPage.polishLatency"), value: stats.polish },
     { label: t("historyPage.totalLatency"), value: stats.totalLatency },
   ] : [], [stats, t]);
 
@@ -379,7 +377,6 @@ export default function HistoryPage({
 
                   <div className="history-latency-strip" aria-label={t("historyPage.totalLatency")}>
                     <span><b>{t("historyPage.asrLatency")}</b>{formatLatency(record.asrMs)}</span>
-                    <span><b>{t("historyPage.polishLatency")}</b>{formatLatency(record.polishMs)}</span>
                     <span><b>{t("historyPage.totalLatency")}</b>{formatLatency(record.totalMs)}</span>
                     {record.engine && <span className="history-engine-label">{record.engine}</span>}
                   </div>
@@ -392,11 +389,6 @@ export default function HistoryPage({
                       </button>
                     )}
                     <span className="history-action-spacer" />
-                    {canReprocess && (
-                      <button className="icon-btn icon-btn-sm" disabled={isWorking || (!record.text && !record.originalText)} title={t("historyPage.reprocessPolish")} aria-label={t("historyPage.reprocessPolish")} onClick={() => void reprocess(record, "polish")}>
-                        {isWorking ? <RefreshCw className="history-spin" size={13} /> : <Sparkles size={13} />}
-                      </button>
-                    )}
                     {canReprocess && record.audioAvailable && (
                       <button className="icon-btn icon-btn-sm" disabled={isWorking} title={t("historyPage.reprocessAsr")} aria-label={t("historyPage.reprocessAsr")} onClick={() => void reprocess(record, "asr")}>
                         <RefreshCw size={13} />

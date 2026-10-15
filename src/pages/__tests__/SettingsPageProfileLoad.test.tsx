@@ -142,7 +142,11 @@ describe("SettingsPage profile load", () => {
     const historyToggle = await screen.findByRole("switch", { name: "Save local history" });
     expect(historyToggle).toHaveAttribute("aria-checked", "true");
     expect(tauri.setHistorySettings).not.toHaveBeenCalled();
-    await waitFor(() => expect(tauri.getGrokBuildOauthStatus).toHaveBeenCalledTimes(1));
+    for (const label of ["settings.aiPolish", "settings.contextAndSearch", "settings.jevNav", "settings.assistant", "settings.selectionAssistant", "settings.translation"]) {
+      expect(screen.queryByRole("heading", { name: label })).not.toBeInTheDocument();
+    }
+    expect(screen.getByRole("switch", { name: "settings.showLiveTranscript" })).toBeInTheDocument();
+    expect(tauri.getGrokBuildOauthStatus).not.toHaveBeenCalled();
   });
 
   it("blocks default-profile writes on load failure and restores saved settings after retry", async () => {
@@ -164,7 +168,7 @@ describe("SettingsPage profile load", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     const restoredToggle = await screen.findByRole("switch", { name: "Save local history" });
     expect(restoredToggle).toHaveAttribute("aria-checked", "true");
-    await waitFor(() => expect(tauri.getGrokBuildOauthStatus).toHaveBeenCalledTimes(1));
+    expect(tauri.getGrokBuildOauthStatus).not.toHaveBeenCalled();
     fireEvent.click(restoredToggle);
     await waitFor(() => expect(tauri.setHistorySettings).toHaveBeenCalledWith(false, false, 30));
   });

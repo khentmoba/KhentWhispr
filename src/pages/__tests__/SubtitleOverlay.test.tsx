@@ -114,6 +114,7 @@ import SubtitleOverlay from "@/pages/SubtitleOverlay";
 import { useSmoothText } from "@/hooks/useSmoothText";
 
 beforeEach(() => {
+  localStorage.removeItem("show-live-transcript");
   tauriEvents.reset();
   tauriApiMocks.getRecordingSnapshot.mockReset();
   tauriApiMocks.getRecordingSnapshot.mockResolvedValue(null);
@@ -184,6 +185,29 @@ function readSubtitleText(container: HTMLElement): string {
 }
 
 describe("SubtitleOverlay stale-flash cleanup", () => {
+  it("hides live words when disabled, updates across windows, and keeps the final result", async () => {
+    localStorage.setItem("show-live-transcript", "false");
+    const { container } = render(<SubtitleOverlay />);
+    await flushAsyncListeners();
+    await act(async () => {
+      tauriEvents.emit("recording-state", { sessionId: 10, isRecording: true, isProcessing: false });
+      tauriEvents.emit("transcription-result", { sessionId: 10, text: "private words", interim: true });
+    });
+    expect(readSubtitleText(container)).not.toContain("private words");
+    expect(container.querySelector(".subtitle-waveform-indicator")).not.toBeNull();
+    await act(async () => {
+      localStorage.setItem("show-live-transcript", "true");
+      window.dispatchEvent(new StorageEvent("storage", { key: "show-live-transcript", newValue: "true" }));
+    });
+    expect(readSubtitleText(container)).toContain("private words");
+    await act(async () => {
+      localStorage.setItem("show-live-transcript", "false");
+      window.dispatchEvent(new StorageEvent("storage", { key: "show-live-transcript", newValue: "false" }));
+      tauriEvents.emit("transcription-result", { sessionId: 10, text: "final words", interim: false });
+    });
+    expect(readSubtitleText(container)).toContain("final words");
+  });
+
   it("keeps the final result when a late interim event arrives for the same session", async () => {
     const { container } = render(<SubtitleOverlay />);
     await flushAsyncListeners();

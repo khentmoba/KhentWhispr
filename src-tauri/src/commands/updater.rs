@@ -32,14 +32,29 @@ struct GitHubRelease {
 
 #[tauri::command]
 pub async fn check_app_update() -> Result<AppUpdateInfo, AppError> {
-    let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let release = fetch_latest_release().await?;
+    Ok(app_update_info(
+        env!("CARGO_PKG_VERSION"),
+        fetch_latest_release().await?,
+    ))
+}
+
+fn app_update_info(current_version: &str, release: Option<GitHubRelease>) -> AppUpdateInfo {
+    let Some(release) = release else {
+        return AppUpdateInfo {
+            available: false,
+            current_version: current_version.to_string(),
+            latest_version: None,
+            notes: None,
+            published_at: None,
+            release_url: Some(GITHUB_RELEASES_URL.to_string()),
+        };
+    };
     let latest_version = normalize_version(&release.tag_name);
     let available = is_version_newer(&latest_version, &current_version);
 
-    Ok(AppUpdateInfo {
+    AppUpdateInfo {
         available,
-        current_version,
+        current_version: current_version.to_string(),
         latest_version: Some(latest_version),
         notes: if available {
             release.body.filter(|body| !body.trim().is_empty())
@@ -48,7 +63,7 @@ pub async fn check_app_update() -> Result<AppUpdateInfo, AppError> {
         },
         published_at: release.published_at,
         release_url: Some(release.html_url),
-    })
+    }
 }
 
 #[tauri::command]
@@ -84,7 +99,7 @@ fn validate_release_url(value: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-async fn fetch_latest_release() -> Result<GitHubRelease, AppError> {
+async fn fetch_latest_release() -> Result<Option<GitHubRelease>, AppError> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(UPDATER_REQUEST_TIMEOUT_SECS))
         .build()
@@ -97,6 +112,10 @@ async fn fetch_latest_release() -> Result<GitHubRelease, AppError> {
         .await
         .map_err(|err| AppError::Download(format!("请求 GitHub Release 失败: {}", err)))?;
 
+    // GitHub returns 404 when this repository has no published releases.
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
     if !response.status().is_success() {
         return Err(AppError::Download(format!(
             "GitHub Release 检查失败: HTTP {}",
@@ -107,6 +126,7 @@ async fn fetch_latest_release() -> Result<GitHubRelease, AppError> {
     response
         .json::<GitHubRelease>()
         .await
+        .map(Some)
         .map_err(|err| AppError::Download(format!("解析 GitHub Release 数据失败: {}", err)))
 }
 
@@ -173,7 +193,37 @@ fn open_external_url(url: &str) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod validation_tests {
-    use super::{is_version_newer, validate_release_url};
+    use super::{
+        app_update_info, is_version_newer, validate_release_url, GitHubRelease, GITHUB_RELEASES_URL,
+    };
+
+    #[test]
+    fn no_published_release_is_not_an_update_error() {
+        let info = app_update_info("1.0.0", None);
+        assert!(!info.available);
+        assert_eq!(info.current_version, "1.0.0");
+        assert!(info.latest_version.is_none());
+        assert_eq!(info.release_url.as_deref(), Some(GITHUB_RELEASES_URL));
+    }
+
+    #[test]
+    fn checks_this_projects_published_release_against_the_installed_version() {
+        let info = app_update_info(
+            "1.0.0",
+            Some(GitHubRelease {
+                tag_name: "v1.0.1".into(),
+                body: Some("SpeakFlow update".into()),
+                published_at: None,
+                html_url: format!("{GITHUB_RELEASES_URL}/tag/v1.0.1"),
+            }),
+        );
+        assert!(info.available);
+        assert_eq!(info.latest_version.as_deref(), Some("1.0.1"));
+        assert_eq!(
+            info.release_url.as_deref(),
+            Some("https://github.com/khentmoba/KhentWhispr/releases/tag/v1.0.1")
+        );
+    }
 
     #[test]
     fn release_urls_require_exact_github_host_and_https() {

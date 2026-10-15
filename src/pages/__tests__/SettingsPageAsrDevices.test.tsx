@@ -318,7 +318,7 @@ async function renderSettings(profile: UserProfile = baseProfile, active = true)
   const { default: SettingsPage } = await import("@/pages/SettingsPage");
   const rendered = render(<SettingsPage active={active} onNavigate={vi.fn()} />);
   await waitFor(() => expect(tauriMock.getUserProfile).toHaveBeenCalledWith());
-  await waitFor(() => expect(tauriMock.getAiPolishApiKey).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(tauriMock.getEngine).toHaveBeenCalled());
   return rendered;
 }
 

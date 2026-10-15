@@ -1,3 +1,4 @@
+import { useLiveTranscript } from "@/hooks/useLiveTranscript";
 import { ChevronDown, Languages, Monitor, Moon, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "@/hooks/useTheme";
@@ -20,6 +21,7 @@ interface AppearancePickerProps {
 }
 
 export default function AppearanceSettingsSection({ picker }: { picker: AppearancePickerProps }) {
+  const [showLiveTranscript, setShowLiveTranscript] = useLiveTranscript();
   const { t, i18n } = useTranslation();
   const { isDark, theme, setTheme } = useTheme();
 
@@ -84,6 +86,18 @@ export default function AppearanceSettingsSection({ picker }: { picker: Appearan
             </div>
           )}
         </div>
+      </div>
+      <div className="settings-row">
+        <div className="settings-column">
+          <span className="settings-option-desc">{t("settings.showLiveTranscript")}</span>
+          <p id="live-transcript-hint" className="settings-hint">{t("settings.showLiveTranscriptHint")}</p>
+        </div>
+        <button type="button" role="switch" className="toggle-switch"
+          aria-label={t("settings.showLiveTranscript")} aria-describedby="live-transcript-hint"
+          aria-checked={showLiveTranscript} data-active={showLiveTranscript}
+          onClick={() => setShowLiveTranscript(!showLiveTranscript)}>
+          <div className="toggle-knob" />
+        </button>
       </div>
     </section>
   );

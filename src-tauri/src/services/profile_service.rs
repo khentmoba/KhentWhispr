@@ -54,6 +54,21 @@ pub fn load_profile() -> UserProfile {
 }
 
 pub fn normalize_profile(profile: &mut UserProfile) -> ProfileCleanupStats {
+    profile.translation_target = None;
+    profile.translation_hotkey = None;
+    profile.assistant_hotkey = None;
+    profile.ai_polish_screen_context_enabled = false;
+    profile.assistant_screen_context_enabled = false;
+    profile.selection_assistant.enabled = false;
+    profile.web_search.enabled = false;
+    profile.jev = Default::default();
+    for rule in &mut profile.app_profile_rules {
+        rule.ai_polish = AppRuleOverride::Disabled;
+        rule.screen_context = AppRuleOverride::Disabled;
+        rule.translation = AppTranslationOverride::Disabled;
+        rule.translation_target = None;
+        rule.custom_prompt = None;
+    }
     migrate_custom_provider(profile);
     migrate_reasoning_modes(profile);
     cleanup_profile(profile)
@@ -852,7 +867,29 @@ fn extract_diff_segments(original: &str, polished: &str) -> Vec<(String, String)
 
 #[cfg(test)]
 mod tests {
-    use super::collect_diff_correction_pairs;
+    use super::{collect_diff_correction_pairs, normalize_profile};
+    use crate::state::user_profile::*;
+
+    #[test]
+    fn removed_features_are_disabled_in_legacy_profiles() {
+        let mut profile = UserProfile::default();
+        profile.translation_target = Some("en".into());
+        profile.translation_hotkey = Some("F3".into());
+        profile.assistant_hotkey = Some("F4".into());
+        profile.ai_polish_screen_context_enabled = true;
+        profile.assistant_screen_context_enabled = true;
+        profile.selection_assistant.enabled = true;
+        profile.web_search.enabled = true;
+        profile.jev.enabled = true;
+        normalize_profile(&mut profile);
+        assert!(profile.translation_target.is_none());
+        assert!(profile.translation_hotkey.is_none());
+        assert!(profile.assistant_hotkey.is_none());
+        assert!(!profile.screen_context_enabled());
+        assert!(!profile.selection_assistant.enabled);
+        assert!(!profile.web_search.enabled);
+        assert!(!profile.jev.enabled);
+    }
 
     #[test]
     fn collect_diff_correction_pairs_merges_and_dedupes_baselines() {

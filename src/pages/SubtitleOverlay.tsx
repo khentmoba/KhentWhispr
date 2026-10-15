@@ -1,3 +1,4 @@
+import { useLiveTranscript } from "@/hooks/useLiveTranscript";
 import {
   lazy,
   Suspense,
@@ -225,6 +226,7 @@ export default function SubtitleOverlay() {
   );
   const interactiveAssistantResult = mode === "assistant" && phase === "result" && text.trim().length > 0;
   const assistantInteractive = interactiveAssistantResult || conversationOpen;
+  const [showLiveTranscript] = useLiveTranscript();
   const { t, i18n } = useTranslation();
 
   const updatePhase = useCallback((nextPhase: Phase) => {
@@ -932,7 +934,7 @@ export default function SubtitleOverlay() {
   }, [clearFadeTimer, updatePhase]);
 
   const isStreaming = !interimSegments && text.length > 0 && smoothText.length < text.length;
-  const hasText = (interimSegments ? text : smoothText).length > 0;
+  const hasText = (showLiveTranscript || phase === "result") && (interimSegments ? text : smoothText).length > 0;
   const isAssistant = mode === "assistant";
 
   let indicatorClass: string | null = null;

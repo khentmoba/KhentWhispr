@@ -165,6 +165,7 @@ const labels: Record<string, string> = {
   "settings.autostart": "Launch at Login",
   "settings.autostartMinimized": "Start in the system tray",
   "settings.webSearchMaxResults": "Search result count",
+  "toast.noPublishedReleases": "No SpeakFlow releases have been published yet.",
   "toast.alreadyLatest": "Already up to date",
   "toast.checkingGitHub": "Checking GitHub Release...",
   "toast.checkUpdateFailed": "Update check failed",
@@ -548,7 +549,7 @@ describe("SettingsPage app updates", () => {
     const updateInfo: AppUpdateInfo = {
       available: false,
       currentVersion: "1.5.9",
-      latestVersion: null,
+      latestVersion: "1.5.9",
       releaseUrl: null,
     };
     tauriMock.checkAppUpdate.mockResolvedValueOnce(updateInfo);
@@ -566,6 +567,19 @@ describe("SettingsPage app updates", () => {
       expect(toastMock.success).toHaveBeenCalledWith("Already up to date");
       expect(action).not.toBeDisabled();
     });
+    expect(screen.queryByRole("button", { name: "Go to Download" })).not.toBeInTheDocument();
+  });
+
+  it("reports that this project has no published releases without showing an error", async () => {
+    tauriMock.checkAppUpdate.mockResolvedValueOnce({
+      available: false, currentVersion: "1.0.0", latestVersion: null,
+      releaseUrl: "https://github.com/khentmoba/KhentWhispr/releases",
+    });
+    const { default: SettingsPage } = await import("@/pages/SettingsPage");
+    render(<SettingsPage active onNavigate={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Check for Updates" }));
+    await waitFor(() => expect(screen.getByText("No SpeakFlow releases have been published yet.")).toBeInTheDocument());
+    expect(toastMock.error).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Go to Download" })).not.toBeInTheDocument();
   });
 

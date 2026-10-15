@@ -401,10 +401,7 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
         });
 
     if gpu_idle_at_spawn > 0 {
-        cmd.env(
-            "SPEAK_FLOW_GPU_IDLE_SECONDS",
-            gpu_idle_at_spawn.to_string(),
-        );
+        cmd.env("SPEAK_FLOW_GPU_IDLE_SECONDS", gpu_idle_at_spawn.to_string());
     }
 
     // Windows 上隐藏控制台窗口
