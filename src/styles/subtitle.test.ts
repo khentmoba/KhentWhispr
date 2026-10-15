@@ -49,7 +49,7 @@ describe("subtitle entrance motion", () => {
 
     expect(capsuleRule).toMatch(/transform-origin:\s*50%\s+100%;/);
     expect(capsuleRule).toMatch(/animation:\s*subtitle-rise-in\s+200ms/);
-    expect(capsuleRule).toMatch(/background:\s*rgba\(26,\s*25,\s*23,\s*0\.82\);/);
+    expect(capsuleRule).toMatch(/background:\s*rgba\(11,\s*13,\s*16,\s*0\.82\);/);
     expect(capsuleRule).not.toMatch(/(?:linear|radial)-gradient\(/);
     expect(ruleBody(subtitleCss, ".subtitle-capsule::before")).toBe("");
     expect(subtitleCss).toMatch(
