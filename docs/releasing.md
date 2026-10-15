@@ -38,6 +38,8 @@ Building or publishing an installer does not update the application currently in
 
 ## In-app updates
 
+Use the pinned Tauri CLI 2.12.3 or newer: older signers can generate unusable keys with empty passwords. Update signatures must include the app version, which the bundler adds automatically.
+
 Release builds create an installer and its `.sig` file. The release script generates `latest.json` with the version, Windows x64 installer URL, and signature, then uploads all three assets together. The app reads the latest release's feed, verifies the downloaded installer using its embedded public key, runs the Windows installer in passive mode, and reopens automatically. Do not publish `latest.json` without its matching installer and signature.
 
 Versions through 1.0.1 only open a download page. Users need to install the first native-updater build once; subsequent releases can update inside Settings. Recording or transcription must finish before installation. Network or signature failures leave the installed app untouched and allow a retry.
