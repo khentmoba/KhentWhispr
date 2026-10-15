@@ -1,6 +1,6 @@
 /* ============================================================
    SpeakFlow Design System
-   Quiet Instrument — neutral working surfaces, one warm signal color,
+   Quiet Instrument — near-black working surfaces, one restrained blue signal,
    compact typography, and state-driven motion.
    ============================================================ */
 
@@ -8,32 +8,32 @@
 :root {
   color-scheme: light;
   /* Surfaces — neutral layers keep long settings sessions visually quiet */
-  --color-bg-primary: #F5F6F7;
-  --color-bg-secondary: #EFF1F3;
-  --color-bg-tertiary: #E7EAED;
+  --color-bg-primary: #F5F7FA;
+  --color-bg-secondary: #EDF0F5;
+  --color-bg-tertiary: #E3E8EF;
   --color-bg-elevated: #FFFFFF;
-  --color-bg-overlay: rgba(245, 246, 247, 0.94);
-  --color-bg-sunken: #E9ECEF;
+  --color-bg-overlay: rgba(245, 247, 250, 0.94);
+  --color-bg-sunken: #E7ECF2;
 
   /* Text — compact product hierarchy with WCAG AA contrast */
-  --color-text-primary: #1a1a18;
-  --color-text-secondary: #5a5854;
-  --color-text-tertiary: #6e6c67;
-  --color-text-inverse: #F5F5F0;
-  --color-text-brand: #d97757;
+  --color-text-primary: #171B22;
+  --color-text-secondary: #515B6B;
+  --color-text-tertiary: #5C6777;
+  --color-text-inverse: #FFFFFF;
+  --color-text-brand: var(--color-accent);
 
   /* Brand signal — recording, polish, and primary actions */
-  --color-accent: #ae5630;
-  --color-accent-hover: #c4633a;
-  --color-accent-active: #943f22;
-  --color-accent-subtle: rgba(174, 86, 48, 0.10);
-  --color-accent-muted: rgba(174, 86, 48, 0.05);
-  --color-accent-rgb: 174, 86, 48;
+  --color-accent: #036A91;
+  --color-accent-hover: #025A7C;
+  --color-accent-active: #024B68;
+  --color-accent-subtle: rgba(3, 106, 145, 0.10);
+  --color-accent-muted: rgba(3, 106, 145, 0.05);
+  --color-accent-rgb: 3, 106, 145;
 
   /* Borders */
-  --color-border: #a8a59a;
+  --color-border: #A1ACBC;
   --color-border-subtle: rgba(0, 0, 0, 0.08);
-  --color-border-accent: rgba(174, 86, 48, 0.30);
+  --color-border-accent: rgba(3, 106, 145, 0.30);
 
   /* Status */
   --color-success: #2E8B57;
@@ -51,9 +51,9 @@
   --color-learned: #10b981;
 
   /* Shadows — enhanced for subtle background distinction */
-  --shadow-xs: 0 1px 2px rgba(45, 40, 32, 0.06);
-  --shadow-sm: 0 2px 4px rgba(45, 40, 32, 0.08), 0 1px 2px rgba(45, 40, 32, 0.04);
-  --shadow-md: 0 4px 12px rgba(45, 40, 32, 0.12), 0 2px 4px rgba(45, 40, 32, 0.06);
+  --shadow-xs: 0 1px 2px rgba(23, 32, 48, 0.06);
+  --shadow-sm: 0 2px 4px rgba(23, 32, 48, 0.08), 0 1px 2px rgba(23, 32, 48, 0.04);
+  --shadow-md: 0 4px 12px rgba(23, 32, 48, 0.12), 0 2px 4px rgba(23, 32, 48, 0.06);
   --shadow-lg: 0 6px 12px rgba(26, 31, 36, 0.12), 0 2px 4px rgba(26, 31, 36, 0.06);
   --shadow-xl: 0 10px 18px rgba(26, 31, 36, 0.16), 0 4px 8px rgba(26, 31, 36, 0.08);
   --shadow-glow: 0 0 0 3px rgba(var(--color-accent-rgb), 0.15);
@@ -140,29 +140,29 @@
 [data-theme="dark"],
 .dark {
   color-scheme: dark;
-  --color-bg-primary: #1A1917;
-  --color-bg-secondary: #232220;
-  --color-bg-tertiary: #2E2D2A;
-  --color-bg-elevated: #232220;
-  --color-bg-overlay: rgba(26, 25, 23, 0.94);
-  --color-bg-sunken: #141312;
-
-  --color-text-primary: #eeeeee;
-  --color-text-secondary: #b0aea5;
-  --color-text-tertiary: #9a9893;
-  --color-text-inverse: #1A1917;
-  --color-text-brand: #d97757;
-
-  --color-accent: #d97757;
-  --color-accent-hover: #e08b5a;
-  --color-accent-active: #eca06e;
-  --color-accent-subtle: rgba(217, 119, 87, 0.14);
-  --color-accent-muted: rgba(217, 119, 87, 0.07);
-  --color-accent-rgb: 217, 119, 87;
-
-  --color-border: #3D3B37;
+  --color-bg-primary: #0B0D10;
+  --color-bg-secondary: #12161C;
+  --color-bg-tertiary: #1C222B;
+  --color-bg-elevated: #171C24;
+  --color-bg-overlay: rgba(11, 13, 16, 0.94);
+  --color-bg-sunken: #080A0D;
+
+  --color-text-primary: #EDF1F7;
+  --color-text-secondary: #ACB6C5;
+  --color-text-tertiary: #929EAF;
+  --color-text-inverse: #0B0D10;
+  --color-text-brand: var(--color-accent);
+
+  --color-accent: #38BDF8;
+  --color-accent-hover: #70D2FC;
+  --color-accent-active: #28AFE8;
+  --color-accent-subtle: rgba(56, 189, 248, 0.14);
+  --color-accent-muted: rgba(56, 189, 248, 0.07);
+  --color-accent-rgb: 56, 189, 248;
+
+  --color-border: #343E4D;
   --color-border-subtle: rgba(255, 255, 255, 0.06);
-  --color-border-accent: rgba(217, 119, 87, 0.30);
+  --color-border-accent: rgba(56, 189, 248, 0.30);
 
   --color-success: #5DB86A;
   --color-success-bg: rgba(93, 184, 106, 0.10);
@@ -525,7 +525,7 @@ textarea,
   width: 2.5px;
   height: 18px;
   border-radius: 1.5px;
-  background: white; /* always on --color-accent button, matches RecordingButton color: "white" */
+  background: currentColor;
   transform-origin: center;
   transition: transform var(--dur-1) linear;
   will-change: transform;
@@ -589,16 +589,16 @@ textarea,
 
 @media (prefers-contrast: high) {
   :root {
-    --color-border: #78716C;
-    --color-text-secondary: #3D3B37;
-    --color-text-tertiary: #5e5d59;
+    --color-border: #69778B;
+    --color-text-secondary: #343E4D;
+    --color-text-tertiary: #505E72;
   }
 
   [data-theme="dark"],
   .dark {
-    --color-border: #A8A29E;
-    --color-text-secondary: #e8e6dc;
-    --color-text-tertiary: #b0aea5;
+    --color-border: #A6B4C8;
+    --color-text-secondary: #E7EDF7;
+    --color-text-tertiary: #ACB6C5;
   }
 }
 
