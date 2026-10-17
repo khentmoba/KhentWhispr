@@ -621,6 +621,10 @@ export function removeCorrection(original: string, corrected: string): Promise<v
   return invokeCommand<void>("remove_correction", { original, corrected });
 }
 
+export function setExternalCorrectionLearning(enabled: boolean): Promise<void> {
+  return invokeCommand<void>("set_external_correction_learning", { enabled });
+}
+
 export function validateCorrections(): Promise<number> {
   return invokeCommand<number>("validate_corrections");
 }

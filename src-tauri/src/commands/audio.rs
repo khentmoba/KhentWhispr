@@ -93,6 +93,7 @@ pub(crate) async fn start_recording_with_start_owner(
     mut edit_grab: Option<tokio::task::JoinHandle<Option<String>>>,
     start_owner: Option<(Arc<crate::commands::hotkey::HotkeyStartOwner>, u64)>,
 ) -> Result<u64, AppError> {
+    crate::services::external_correction_service::cancel();
     let lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
     if !state.is_funasr_ready() {
         return Err(AppError::Audio(RECORDING_NOT_READY_ERROR.into()));

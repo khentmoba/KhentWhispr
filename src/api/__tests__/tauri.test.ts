@@ -41,6 +41,17 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("external correction learning IPC", () => {
+  it("passes the explicit opt-in and opt-out values", async () => {
+    const { setExternalCorrectionLearning } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValue(undefined);
+    await setExternalCorrectionLearning(true);
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_external_correction_learning", { enabled: true });
+    await setExternalCorrectionLearning(false);
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_external_correction_learning", { enabled: false });
+  });
+});
+
 describe("GPU idle persistence IPC", () => {
   it("distinguishes the effective timer from its remembered timeout", async () => {
     const { getGpuIdleSeconds, setGpuIdleSeconds } = await import("@/api/tauri");

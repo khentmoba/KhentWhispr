@@ -324,6 +324,7 @@ pub fn run() {
             commands::profile::remove_custom_provider,
             commands::profile::validate_corrections,
             commands::profile::set_correction_validation_config,
+            commands::profile::set_external_correction_learning,
             commands::profile::remove_correction,
             commands::updater::check_app_update,
             commands::updater::install_app_update,

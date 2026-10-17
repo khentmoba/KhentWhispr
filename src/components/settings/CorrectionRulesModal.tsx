@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import {
   removeCorrection,
   setCorrectionValidationConfig,
+  setExternalCorrectionLearning,
   validateCorrections,
 } from "@/api/tauri";
 import type { CorrectionPattern, UserProfile } from "@/types";
@@ -58,6 +59,11 @@ export default function CorrectionRulesModal({
 }: CorrectionRulesModalProps) {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
+  const [externalLearning, setExternalLearning] = useState(Boolean(profile?.external_correction_learning));
+  const [savingExternalLearning, setSavingExternalLearning] = useState(false);
+  useEffect(() => {
+    setExternalLearning(Boolean(profile?.external_correction_learning));
+  }, [profile?.external_correction_learning]);
   const [sourceFilter, setSourceFilter] = useState<"all" | "user" | "ai">("all");
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -268,6 +274,37 @@ export default function CorrectionRulesModal({
         </div>
 
         <div style={{ padding: "12px 16px 14px", borderTop: "1px solid var(--color-border-subtle)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <label id="external-correction-label" style={{ fontSize: 13, color: "var(--color-text-primary)", flex: 1 }}>
+              {t("settings.externalCorrectionLearning")}
+            </label>
+            <button
+              type="button"
+              className="toggle-switch"
+              role="switch"
+              aria-checked={externalLearning}
+              aria-labelledby="external-correction-label"
+              aria-describedby="external-correction-hint"
+              disabled={savingExternalLearning}
+              onClick={async () => {
+                setSavingExternalLearning(true);
+                try {
+                  await setExternalCorrectionLearning(!externalLearning);
+                  setExternalLearning(!externalLearning);
+                  onRefreshProfile();
+                } catch {
+                  toast.error(t("settings.externalCorrectionLearningFailed"));
+                } finally {
+                  setSavingExternalLearning(false);
+                }
+              }}
+            >
+              <div className="toggle-knob" />
+            </button>
+          </div>
+          <p id="external-correction-hint" style={{ fontSize: 11, color: "var(--color-text-tertiary)", margin: "0 0 12px" }}>
+            {t("settings.externalCorrectionLearningHint")}
+          </p>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
             <label id="correction-validation-label" style={{ fontSize: 13, color: "var(--color-text-primary)", flex: 1 }}>
               {t("settings.correctionValidationToggle")}

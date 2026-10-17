@@ -28,6 +28,22 @@ automatically uploaded to the project maintainer. Review logs and exports before
 sharing them. Data and log locations are documented in
 [Development](development.md#troubleshooting).
 
+## Learning corrections in other apps
+
+The optional **Learn corrections in other apps** setting is off by default.
+On Windows, SpeakFlow briefly reads the accessible text of the field receiving
+an automatic paste (limited to 16,384 UTF-16 code units), identifies the inserted passage,
+and watches that same focused field for up to 60 seconds. Password fields and
+SpeakFlow itself are excluded. Switching focus, starting another recording,
+disabling the setting or making another paste stops observation. Unsupported
+fields and ambiguous edits are skipped; no keys or screenshots are recorded.
+
+Comparison is local and does not call an LLM. Temporary field text is not saved
+or logged; only the learned word correction is stored in your local profile.
+You can remove these rules in Settings under Correction Rules. Like other
+correction rules, learned words may subsequently be included in enabled cloud
+processing requests.
+
 ## Network requests
 
 | Feature | Data sent and destination |

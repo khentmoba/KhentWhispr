@@ -111,6 +111,9 @@ pub struct R2T2Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserProfile {
+    /// Opt-in local learning from edits in the field receiving automatic dictation.
+    #[serde(default)]
+    pub external_correction_learning: bool,
     /// 开机自启动时隐藏主窗口，仅保留系统托盘入口。
     #[serde(default)]
     pub autostart_minimized: bool,

@@ -4,6 +4,7 @@ pub mod assistant_service;
 pub mod audio_service;
 pub mod codex_oauth_service;
 pub mod download_service;
+pub mod external_correction_service;
 pub mod funasr_service;
 pub mod glm_asr_service;
 pub mod grok_build_oauth_service;
