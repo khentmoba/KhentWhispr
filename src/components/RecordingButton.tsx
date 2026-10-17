@@ -49,7 +49,9 @@ export default function RecordingButton({
         : t("recording.start");
 
   return (
-    <div className="record-btn-wrapper">
+    <div className={`record-btn-wrapper${isRecording ? " is-recording" : isProcessing ? " is-processing" : isIdle && isReady ? " is-idle" : ""}`}>
+      {/* Ambient acoustic breathing halo */}
+      <span className="record-ambient-halo" aria-hidden="true" />
       {isRecording && (
         <>
           <span className="recording-pulse-ring" />

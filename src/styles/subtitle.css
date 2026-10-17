@@ -721,7 +721,6 @@ body,
   border-radius: 1px;
   background: var(--color-accent);
   opacity: 0.85;
-  transition: height 70ms var(--ease-out-expo);
 }
 
 .subtitle-waveform-indicator.is-assistant .subtitle-waveform-indicator-bar {

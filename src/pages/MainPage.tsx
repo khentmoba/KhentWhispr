@@ -136,6 +136,7 @@ export default function MainPage({ onNavigate, animClass = "" }: {
     <div className="page-root main-page">
       <TitleBar
         title={t("app.title")}
+        showLogo
         leftAction={
           <div className="title-bar-cluster">
             <button aria-label={t("historyPage.open")} className="icon-btn plain" onClick={() => flushPendingEditAndNavigate("history")}>
@@ -183,6 +184,18 @@ export default function MainPage({ onNavigate, animClass = "" }: {
               onToggle={handleToggleRecording}
             />
           </StatusIndicator>
+
+          {/* Tactile Hotkey Bar */}
+          {isReady && !recordingError && !modelError && (
+            <div className="tactile-hotkey-bar" aria-hidden="true">
+              <span className={`tactile-hotkey-badge${isRecording ? " is-active" : ""}`}>
+                <kbd className="tactile-key">{hotkeyDisplay || "F2"}</kbd>
+                <span className="tactile-hotkey-label">
+                  {isToggleMode ? t("main.hotkeyHintToggle") : t("main.hotkeyHintHold")}
+                </span>
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Error */}
@@ -230,7 +243,7 @@ export default function MainPage({ onNavigate, animClass = "" }: {
           />
           {/* First-use onboarding hint */}
           {!onboardingDismissed && !transcriptionResult && !isProcessing && isReady && history.length === 0 && (
-            <div className="result-card result-card-first animate-fade-in">
+            <div className="result-card result-card-first onboarding-hero-card animate-fade-in">
                 <div className="result-card-header">
                   <span className="result-card-title">
                     <span className="result-dot" />
@@ -248,11 +261,17 @@ export default function MainPage({ onNavigate, animClass = "" }: {
                   </button>
                 </div>
                 <div className="onboarding-body">
-                  <p>
-                    {t("main.pressHotkey")} <strong className="onboarding-accent">{hotkeyDisplay}</strong> {isToggleMode ? t("main.hotkeyHintToggle") : t("main.hotkeyHintHold")}
-                  </p>
-                  <p>{t("main.autoInputHint")}</p>
-                  <p>{t("main.settingsHint")}</p>
+                  <div className="onboarding-step-row">
+                    <span className="onboarding-step-pill">1</span>
+                    <p>
+                      {t("main.pressHotkey")} <strong className="onboarding-accent">{hotkeyDisplay}</strong> {isToggleMode ? t("main.hotkeyHintToggle") : t("main.hotkeyHintHold")}
+                    </p>
+                  </div>
+                  <div className="onboarding-step-row">
+                    <span className="onboarding-step-pill">2</span>
+                    <p>{t("main.autoInputHint")}</p>
+                  </div>
+                  <p className="onboarding-subtext">{t("main.settingsHint")}</p>
                 </div>
             </div>
           )}

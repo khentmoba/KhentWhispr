@@ -80,15 +80,19 @@ export default function StatusIndicator({
     <>
       <div className="chip-container">
         {device && (
-          <span className={`chip ${isReady ? "animate-success" : "animate-fade-in"}`}>
-            {device === "cloud" ? <Globe size={10} strokeWidth={1.8} /> : <Cpu size={10} strokeWidth={1.8} />}
-            {getDeviceLabel(device, gpuName, t)}
+          <span className={`chip chip-device ${isReady ? "animate-success" : "animate-fade-in"}`}>
+            <span
+              className={`chip-dot ${device === "cloud" ? "chip-dot-cloud" : (device === "cuda" || device === "gpu") ? "chip-dot-gpu" : "chip-dot-cpu"}`}
+              aria-hidden="true"
+            />
+            {device === "cloud" ? <Globe size={11} strokeWidth={1.8} /> : <Cpu size={11} strokeWidth={1.8} />}
+            <span>{getDeviceLabel(device, gpuName, t)}</span>
           </span>
         )}
         {!isReady && stage !== "need_download" && (
           <span className="chip animate-fade-in">
-            <Loader2 size={10} className="animate-spin" />
-            {getChipLabel(stage, downloadMessage, t)}
+            <Loader2 size={11} className="animate-spin" />
+            <span>{getChipLabel(stage, downloadMessage, t)}</span>
           </span>
         )}
       </div>
@@ -124,7 +128,7 @@ export default function StatusIndicator({
             className={`download-progress-track${determinateProgress !== null && determinateProgress >= 100 ? " progress-complete" : ""}`}
           >
             {determinateProgress !== null
-              ? <div style={{ height: "100%", background: determinateProgress >= 100 ? "var(--color-success)" : "var(--color-accent)", borderRadius: 4, transition: "width 0.5s ease, background 0.3s ease", width: `${determinateProgress}%` }} />
+              ? <div style={{ height: "100%", width: "100%", background: determinateProgress >= 100 ? "var(--color-success)" : "var(--color-accent)", borderRadius: 4, transform: `scaleX(${Math.max(0, Math.min(100, determinateProgress)) / 100})`, transformOrigin: "left", transition: "transform 0.5s ease, background 0.3s ease" }} />
               : <div className="download-pulse-bar" />}
           </div>
           {stage === "downloading" && (

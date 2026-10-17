@@ -35,8 +35,10 @@ export default function TranscriptionResult({
   const { t } = useTranslation();
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const [draftText, setDraftText] = useState(text ?? "");
+  const [showOriginal, setShowOriginal] = useState(false);
   const hasResult = text !== null;
   const hasStats = !!text && durationSec && durationSec > 0 && charCount;
+  const hasPolishOrCorrection = Boolean(originalText && text && originalText.trim() !== text.trim());
   const editGrabHintKey =
     editGrabStatus === "timeout" || editGrabStatus === "empty"
       ? `result.editGrab.${editGrabStatus}`
@@ -47,6 +49,13 @@ export default function TranscriptionResult({
     timing?.totalMs != null ? t("result.latency.total", { ms: timing.totalMs }) : null,
   ].filter((part): part is string => !!part);
   const showMeta = hasStats || editGrabHintKey || latencyParts.length > 0;
+
+  const paceDisplay = hasStats && durationSec > 0 ? (() => {
+    const cpm = Math.round((charCount / durationSec) * 60);
+    const words = text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+    const wpm = Math.round((words / durationSec) * 60);
+    return words >= 3 && charCount / words < 9 ? `${wpm} WPM` : `${cpm} CPM`;
+  })() : null;
 
   useEffect(() => {
     setDraftText(text ?? "");
@@ -77,14 +86,25 @@ export default function TranscriptionResult({
           <div className={`result-card${isProcessing ? " result-card-busy" : ""}`} aria-busy={isProcessing}>
             <div className="result-card-header">
               <span className="result-card-title">
-                <span className="result-dot" />
+                <span className={`result-dot${isProcessing ? " result-dot-pulsing" : ""}`} />
                 {t("result.title")}
               </span>
-              <button aria-label={t("common.copy")} className="icon-btn icon-btn-sm" onClick={handleCopy}>
-                {copiedId === "original"
-                  ? <span className="animate-check-draw"><Check size={12} /></span>
-                  : <Copy size={12} strokeWidth={1.5} />}
-              </button>
+              <div className="result-card-header-actions">
+                {hasPolishOrCorrection && !isProcessing && (
+                  <button
+                    type="button"
+                    className={`result-diff-toggle${showOriginal ? " is-active" : ""}`}
+                    onClick={() => setShowOriginal((prev) => !prev)}
+                  >
+                    {showOriginal ? t("result.title") : t("settings.jevAuditOriginal")}
+                  </button>
+                )}
+                <button aria-label={t("common.copy")} className="icon-btn icon-btn-sm" onClick={handleCopy}>
+                  {copiedId === "original"
+                    ? <span className="animate-check-draw"><Check size={12} /></span>
+                    : <Copy size={12} strokeWidth={1.5} />}
+                </button>
+              </div>
             </div>
             {isProcessing && (
               <div className="result-processing" role="status">
@@ -103,10 +123,19 @@ export default function TranscriptionResult({
               onBlur={handleBlur}
               spellCheck={false}
             />
+            {showOriginal && hasPolishOrCorrection && (
+              <div className="result-original-comparison animate-fade-in">
+                <span className="result-original-label">{t("settings.jevAuditOriginal")}</span>
+                <p className="result-original-text">{originalText}</p>
+              </div>
+            )}
             {showMeta && (
               <p className="result-card-stats">
                 {hasStats && detectedLanguage && (
                   <span className="result-lang-tag">{detectedLanguage}</span>
+                )}
+                {hasStats && paceDisplay && (
+                  <span className="result-pace-tag">⚡ {paceDisplay}</span>
                 )}
                 {hasStats && t("result.stats", { chars: charCount, duration: durationSec.toFixed(1), cpm: Math.round((charCount / durationSec) * 60) })}
                 {latencyParts.length > 0 && (
