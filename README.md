@@ -17,7 +17,7 @@
 
 ## Get started
 
-1. **Install.** Download the Windows 10/11 x64 `*_x64-setup.exe` from [Releases](https://github.com/khentmoba/KhentWhispr/releases/latest). The recognition runtime is bundled; no separate Python or build tools are needed.
+1. **Install.** Download the lightweight Windows 10/11 x64 installer `*_x64-setup.exe` (~20 MB) from [Releases](https://github.com/khentmoba/KhentWhispr/releases/latest). App updates are equally compact (~20 MB). When using local ASR, the recognition engine runtime downloads automatically inside the app on first setup (or offline `engine.tar.xz` can be placed in `resources/`); no separate Python or build tools are needed.
 2. **Choose an engine.** Open Settings, select your microphone, then download a local model or configure a cloud API key and region.
 3. **Speak.** Focus the app you want to type into, hold <kbd>F2</kbd>, speak, then release. You can change the hotkey or switch to toggle recording in Settings.
 

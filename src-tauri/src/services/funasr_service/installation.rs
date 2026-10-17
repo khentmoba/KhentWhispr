@@ -22,7 +22,10 @@ fn to_normalized_path(path: &std::path::Path) -> String {
 }
 
 fn expected_engine_install_fingerprint(app_handle: &tauri::AppHandle) -> String {
-    if paths::get_engine_archive_path(app_handle).is_some() {
+    if ENGINE_ARCHIVE_FINGERPRINT
+        != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        || paths::get_engine_archive_path(app_handle).is_some()
+    {
         ENGINE_ARCHIVE_FINGERPRINT.to_string()
     } else {
         env!("CARGO_PKG_VERSION").to_string()
@@ -96,8 +99,16 @@ pub async fn find_engine(
     }
 
     // 策略4：开发模式
-    let python_path = find_python().await?;
-    Ok(EngineRuntime::Development { python_path })
+    if let Ok(python_path) = find_python().await {
+        return Ok(EngineRuntime::Development { python_path });
+    }
+
+    // 策略5：在线下载引擎归档（轻量化安装包首次运行或引擎升级）
+    log::info!("本地未找到可用语音引擎，尝试在线下载...");
+    let engine_exe = download_and_extract_engine(app_handle, &progress_gate).await?;
+    let path_str = paths::strip_win_prefix(&engine_exe);
+    log::info!("引擎下载解压完成: {}", path_str);
+    Ok(EngineRuntime::Bundled { exe_path: path_str })
 }
 
 /// 解压引擎归档到数据目录
@@ -339,8 +350,212 @@ fn report_extract_progress(
     });
 }
 
+struct TempFileGuard<'a>(&'a std::path::Path);
+impl<'a> Drop for TempFileGuard<'a> {
+    fn drop(&mut self) {
+        if self.0.exists() {
+            let _ = std::fs::remove_file(self.0);
+        }
+    }
+}
+
+fn candidate_engine_download_urls() -> Vec<String> {
+    let mut urls = Vec::new();
+
+    if let Ok(custom_url) = std::env::var("SPEAK_FLOW_ENGINE_URL") {
+        let trimmed = custom_url.trim();
+        if !trimmed.is_empty() {
+            urls.push(trimmed.to_string());
+        }
+    }
+
+    let default_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let raw_tag = env!("CARGO_PKG_VERSION");
+
+    urls.push(format!(
+        "https://github.com/khentmoba/KhentWhispr/releases/download/{}/engine.tar.xz",
+        raw_tag
+    ));
+    urls.push(format!(
+        "https://github.com/khentmoba/KhentWhispr/releases/download/{}/engine.tar.xz",
+        default_tag
+    ));
+    urls.push(
+        "https://github.com/khentmoba/KhentWhispr/releases/latest/download/engine.tar.xz"
+            .to_string(),
+    );
+    urls.push("https://ghproxy.net/https://github.com/khentmoba/KhentWhispr/releases/latest/download/engine.tar.xz".to_string());
+    urls.push("https://mirror.ghproxy.com/https://github.com/khentmoba/KhentWhispr/releases/latest/download/engine.tar.xz".to_string());
+
+    urls
+}
+
+async fn download_to_file(
+    client: &reqwest::Client,
+    url: &str,
+    target_path: &std::path::Path,
+    app_handle: &tauri::AppHandle,
+    progress_gate: &EngineProgressGate,
+) -> Result<(), AppError> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| AppError::Download(format!("请求失败: {e}")))?;
+
+    if !response.status().is_success() {
+        return Err(AppError::Download(format!(
+            "HTTP 错误: {}",
+            response.status()
+        )));
+    }
+
+    let total_size = response.content_length();
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(target_path)
+        .await
+        .map_err(|e| AppError::Download(format!("创建临时文件失败: {e}")))?;
+
+    let mut downloaded = 0_u64;
+    let mut last_percent = None;
+
+    while let Some(chunk_res) = tokio_stream::StreamExt::next(&mut stream).await {
+        if !progress_gate.is_current() {
+            let _ = tokio::fs::remove_file(target_path).await;
+            return Err(AppError::Asr("引擎下载已被取消".to_string()));
+        }
+
+        let chunk = chunk_res.map_err(|e| AppError::Download(format!("读取数据流失败: {e}")))?;
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+            .await
+            .map_err(|e| AppError::Download(format!("写入临时文件失败: {e}")))?;
+
+        downloaded += chunk.len() as u64;
+        let percent = total_size.map(|total| {
+            if total > 0 {
+                (downloaded * 100 / total).min(100)
+            } else {
+                0
+            }
+        });
+
+        if percent != last_percent {
+            last_percent = percent;
+            let pct = percent.unwrap_or(0);
+            let mb_downloaded = (downloaded as f64) / (1024.0 * 1024.0);
+            let message = if let Some(total) = total_size {
+                let mb_total = (total as f64) / (1024.0 * 1024.0);
+                format!(
+                    "首次启动，正在下载语音引擎 ({:.1}MB / {:.1}MB, {}%)...",
+                    mb_downloaded, mb_total, pct
+                )
+            } else {
+                format!("首次启动，正在下载语音引擎 ({:.1}MB)...", mb_downloaded)
+            };
+
+            progress_gate.commit_if_current(|| {
+                let _ = app_handle.emit(
+                    "funasr-status",
+                    serde_json::json!({
+                        "status": "loading",
+                        "message": &message,
+                    }),
+                );
+                let _ = app_handle.emit(
+                    "model-download-status",
+                    serde_json::json!({
+                        "status": "downloading",
+                        "model": "engine",
+                        "progress": pct,
+                        "overall_progress": pct,
+                        "message": &message,
+                    }),
+                );
+            });
+        }
+    }
+
+    tokio::io::AsyncWriteExt::flush(&mut file)
+        .await
+        .map_err(|e| AppError::Download(format!("刷新临时文件失败: {e}")))?;
+
+    if downloaded == 0 {
+        let _ = tokio::fs::remove_file(target_path).await;
+        return Err(AppError::Download("下载的引擎归档为空".into()));
+    }
+
+    Ok(())
+}
+
+async fn download_and_extract_engine(
+    app_handle: &tauri::AppHandle,
+    progress_gate: &EngineProgressGate,
+) -> Result<PathBuf, AppError> {
+    progress_gate.commit_if_current(|| {
+        let _ = app_handle.emit(
+            "funasr-status",
+            serde_json::json!({
+                "status": "loading",
+                "message": "首次启动，正在连接服务器下载语音引擎组件..."
+            }),
+        );
+        let _ = app_handle.emit(
+            "model-download-status",
+            serde_json::json!({
+                "status": "downloading",
+                "model": "engine",
+                "progress": 0,
+                "overall_progress": 0,
+                "message": "首次启动，正在连接服务器下载语音引擎组件..."
+            }),
+        );
+    });
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| AppError::Download(format!("创建 HTTP 客户端失败: {e}")))?;
+
+    let urls = candidate_engine_download_urls();
+    let temp_archive_path =
+        paths::get_data_dir().join(format!("engine.download.{}.tar.xz", now_unix_ms()));
+    let _cleanup_guard = TempFileGuard(&temp_archive_path);
+
+    let mut last_err = None;
+    let mut downloaded = false;
+
+    for url in &urls {
+        if !progress_gate.is_current() {
+            return Err(AppError::Asr("引擎下载已被取消".to_string()));
+        }
+
+        log::info!("尝试从下载语音引擎: {}", url);
+        match download_to_file(&client, url, &temp_archive_path, app_handle, progress_gate).await {
+            Ok(()) => {
+                downloaded = true;
+                break;
+            }
+            Err(err) => {
+                log::warn!("从 {} 下载语音引擎失败: {}", url, err);
+                last_err = Some(err);
+                if temp_archive_path.exists() {
+                    let _ = std::fs::remove_file(&temp_archive_path);
+                }
+            }
+        }
+    }
+
+    if !downloaded {
+        return Err(last_err
+            .unwrap_or_else(|| AppError::Download("下载语音引擎失败，所有下载源均不可用".into())));
+    }
+
+    // 下载成功，执行解压
+    extract_engine_archive(&temp_archive_path, app_handle, progress_gate).await
+}
+
 /// 查找可用的 Python 解释器（开发模式回退）
-async fn find_python() -> Result<String, AppError> {
+pub(super) async fn find_python() -> Result<String, AppError> {
     // ---- 策略1：检查项目 .venv 虚拟环境 ----
     let mut venv_candidates = vec![PathBuf::from(".venv"), PathBuf::from("..").join(".venv")];
     if let Ok(exe_path) = std::env::current_exe() {

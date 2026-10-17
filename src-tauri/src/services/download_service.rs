@@ -116,13 +116,28 @@ pub async fn run_download(
         });
     }
 
-    // 查找引擎运行时；失败时也必须释放刚登记的下载槽。
+    // 查找引擎运行时；失败或取消时也必须释放刚登记的下载槽。
     let generation = state.engine.funasr_generation.load(Ordering::SeqCst);
-    let runtime = match funasr_service::find_engine(app_handle, state, generation).await {
-        Ok(runtime) => runtime,
-        Err(err) => {
+    let runtime = tokio::select! {
+        _ = &mut cancel_rx => {
             clear_download_task(state, task_id).await;
-            return Err(err);
+            emit_download_status(
+                app_handle,
+                serde_json::json!({
+                    "status": "cancelled",
+                    "message": "引擎下载已取消"
+                }),
+            );
+            return Ok("引擎下载已取消".to_string());
+        }
+        res = funasr_service::find_engine(app_handle, state, generation) => {
+            match res {
+                Ok(runtime) => runtime,
+                Err(err) => {
+                    clear_download_task(state, task_id).await;
+                    return Err(err);
+                }
+            }
         }
     };
 
