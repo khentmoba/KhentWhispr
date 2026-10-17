@@ -1002,14 +1002,21 @@ pub async fn check_status(
             ));
         }
         let model_check = inspect_model_files_for_engine(&engine);
+        let has_engine = installation::find_python().await.is_ok()
+            || paths::get_engine_exe_path(app_handle).is_some()
+            || paths::get_engine_archive_path(app_handle).is_some()
+            || paths::get_resource_engine_exe_path(app_handle).is_some();
+        let all_present = model_check.all_present && has_engine;
         return Ok(FunASRStatus {
-            message: if model_check.all_present {
+            message: if all_present {
                 "FunASR 服务器未运行".to_string()
+            } else if !has_engine {
+                "语音引擎未下载，请先下载模型与引擎".to_string()
             } else {
                 "模型文件未下载，请先下载模型".to_string()
             },
             engine: Some(engine),
-            models_present: Some(model_check.all_present),
+            models_present: Some(all_present),
             missing_models: Some(model_check.missing_models.clone()),
             ..status_with_defaults(false, false, false, String::new())
         });

@@ -178,6 +178,8 @@ find_seven_zip() {
         command -v 7z.exe
     elif [[ -x "/c/Program Files/7-Zip/7z.exe" ]]; then
         printf '%s\n' "/c/Program Files/7-Zip/7z.exe"
+    elif [[ -x "/c/Program Files (x86)/7-Zip/7z.exe" ]]; then
+        printf '%s\n' "/c/Program Files (x86)/7-Zip/7z.exe"
     else
         fail "未找到 7-Zip，无法验证引擎归档和 NSIS 安装包"
     fi
@@ -308,13 +310,13 @@ publish_release() {
     git push origin "refs/tags/$TAG"
 
     if [[ "$RELEASE_NOTES" == "--generate-notes" ]]; then
-        gh release create "$TAG" "$INSTALLER" "$INSTALLER.sig" "$UPDATE_MANIFEST" \
+        gh release create "$TAG" "$INSTALLER" "$INSTALLER.sig" "$UPDATE_MANIFEST" "$ENGINE_ARCHIVE" \
             --title "$TAG" \
             --generate-notes \
             --verify-tag \
             --fail-on-no-commits
     else
-        gh release create "$TAG" "$INSTALLER" "$INSTALLER.sig" "$UPDATE_MANIFEST" \
+        gh release create "$TAG" "$INSTALLER" "$INSTALLER.sig" "$UPDATE_MANIFEST" "$ENGINE_ARCHIVE" \
             --title "$TAG" \
             --notes "$RELEASE_NOTES" \
             --verify-tag \

@@ -17,7 +17,7 @@
 
 ## 快速开始
 
-1. **安装**。从 [Releases](https://github.com/khentmoba/KhentWhispr/releases/latest) 下载 Windows 10/11 x64 的 `*_x64-setup.exe`。识别运行时已内置，无需另装 Python 或编译工具。
+1. **安装**。从 [Releases](https://github.com/khentmoba/KhentWhispr/releases/latest) 下载轻量级 Windows 10/11 x64 安装包 `*_x64-setup.exe`（约 20 MB，后续版本更新也仅约 20 MB）。使用本地 ASR 时，识别引擎运行时会在首次使用时在应用内自动下载并安装（亦可手动将 `engine.tar.xz` 放入 `resources/` 离线使用），无需另装 Python 或编译工具。
 2. **选择引擎**。打开设置，选择麦克风，然后下载本地模型，或配置云端 API Key 与区域。
 3. **开始说话**。将焦点放到目标应用，按住 <kbd>F2</kbd> 说话，松开后输出文字。热键可以修改，也可以改用点击切换录音。
 
