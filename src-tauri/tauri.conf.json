@@ -1,112 +1,110 @@
-{
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SpeakFlow",
-  "version": "1.0.3",
-  "identifier": "com.speak-flow.desktop",
-  "build": {
-    "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1422",
-    "beforeBuildCommand": "pnpm build:distribution",
-    "frontendDist": "../dist"
-  },
-  "app": {
-    "withGlobalTauri": false,
-    "windows": [
-      {
-        "label": "main",
-        "title": "SpeakFlow",
-        "width": 420,
-        "height": 560,
-        "minWidth": 360,
-        "minHeight": 400,
-        "resizable": true,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": false,
-        "skipTaskbar": false,
-        "visible": false,
-        "center": true,
-        "url": "/",
-        "windowEffects": {
-          "effects": [
-            "acrylic"
-          ],
-          "state": "active"
-        }
-      },
-      {
-        "label": "selection-toolbar",
-        "title": "划词助手",
-        "width": 404,
-        "height": 54,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "focus": false,
-        "focusable": false,
-        "shadow": false,
-        "visible": false,
-        "url": "/?window=selection"
-      }
-    ],
-    "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:",
-      "capabilities": [
-        "main",
-        "subtitle",
-        "selection"
-      ]
-    }
-  },
-  "plugins": {
-  "updater": {
-    "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxNzQ5RDM1RkM4NjYyQUIKUldTcllvYjhOWjEwVWJ0d1l5ZVRGVG5Iem01OTNXMnhGWGYxaHdPVnl5elZ4bzBoTVRpTXRLZW0K",
-    "endpoints": [
-      "https://github.com/khentmoba/KhentWhispr/releases/latest/download/latest.json"
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SpeakFlow",
+  "version": "1.0.4",
+  "identifier": "com.speak-flow.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1422",
+    "beforeBuildCommand": "pnpm build:distribution",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "SpeakFlow",
+        "width": 420,
+        "height": 560,
+        "minWidth": 360,
+        "minHeight": 400,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "visible": false,
+        "center": true,
+        "url": "/",
+        "windowEffects": {
+          "effects": [
+            "acrylic"
+          ],
+          "state": "active"
+        }
+      },
+      {
+        "label": "selection-toolbar",
+        "title": "划词助手",
+        "width": 404,
+        "height": 54,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "focusable": false,
+        "shadow": false,
+        "visible": false,
+        "url": "/?window=selection"
+      }
     ],
-    "requireSignedVersion": true,
-    "windows": {
-      "installMode": "passive"
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:",
+      "capabilities": [
+        "main",
+        "subtitle",
+        "selection"
+      ]
     }
-  }
-},
-
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxNzQ5RDM1RkM4NjYyQUIKUldTcllvYjhOWjEwVWJ0d1l5ZVRGVG5Iem01OTNXMnhGWGYxaHdPVnl5elZ4bzBoTVRpTXRLZW0K",
+      "endpoints": [
+        "https://github.com/khentmoba/KhentWhispr/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "createUpdaterArtifacts": true,
-    "active": true,
-    "license": "GPL-3.0-only",
-    "licenseFile": "../LICENSE",
-    "targets": [
-      "nsis"
-    ],
-    "icon": [
-      "icons/icon.ico"
-    ],
-    "windows": {
-      "nsis": {
-        "compression": "none"
-      }
-    },
-    "resources": {
-      "resources/qwen3_asr_server.py": "resources/qwen3_asr_server.py",
-      "resources/firered_vad.py": "resources/firered_vad.py",
-      "resources/fireredvad_vad.onnx": "resources/fireredvad_vad.onnx",
-      "resources/fireredvad_cmvn.json": "resources/fireredvad_cmvn.json",
-      "resources/FireRedVAD-LICENSE.txt": "resources/FireRedVAD-LICENSE.txt",
-      "resources/R2T2-CODE-LICENSE.txt": "resources/R2T2-CODE-LICENSE.txt",
-      "resources/R2T2-MODEL-LICENSE.txt": "resources/R2T2-MODEL-LICENSE.txt",
-      "resources/download_models.py": "resources/download_models.py",
-      "resources/hf_cache_utils.py": "resources/hf_cache_utils.py",
-      "resources/server_common.py": "resources/server_common.py",
-      "resources/gpu_idle.py": "resources/gpu_idle.py",
-      "resources/engine.tar.xz": "resources/engine.tar.xz",
+    "active": true,
+    "license": "GPL-3.0-only",
+    "licenseFile": "../LICENSE",
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "compression": "none"
+      }
+    },
+    "resources": {
+      "resources/qwen3_asr_server.py": "resources/qwen3_asr_server.py",
+      "resources/firered_vad.py": "resources/firered_vad.py",
+      "resources/fireredvad_vad.onnx": "resources/fireredvad_vad.onnx",
+      "resources/fireredvad_cmvn.json": "resources/fireredvad_cmvn.json",
+      "resources/FireRedVAD-LICENSE.txt": "resources/FireRedVAD-LICENSE.txt",
+      "resources/R2T2-CODE-LICENSE.txt": "resources/R2T2-CODE-LICENSE.txt",
+      "resources/R2T2-MODEL-LICENSE.txt": "resources/R2T2-MODEL-LICENSE.txt",
+      "resources/download_models.py": "resources/download_models.py",
+      "resources/hf_cache_utils.py": "resources/hf_cache_utils.py",
+      "resources/server_common.py": "resources/server_common.py",
+      "resources/gpu_idle.py": "resources/gpu_idle.py",
+      "resources/engine.tar.xz": "resources/engine.tar.xz",
       "icons/icon.ico": "SpeakFlow.ico",
-
-      "../LICENSE": "LICENSE.txt",
-      "../NOTICE": "NOTICE.txt",
-      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
-    }
-  }
-}
+      "../LICENSE": "LICENSE.txt",
+      "../NOTICE": "NOTICE.txt",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    }
+  }
+}
