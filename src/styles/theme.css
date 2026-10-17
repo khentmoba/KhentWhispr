@@ -58,6 +58,8 @@
   --shadow-xl: 0 10px 18px rgba(26, 31, 36, 0.16), 0 4px 8px rgba(26, 31, 36, 0.08);
   --shadow-glow: 0 0 0 3px rgba(var(--color-accent-rgb), 0.15);
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 4px 16px rgba(23, 32, 48, 0.10), 0 1px 3px rgba(23, 32, 48, 0.05);
+  --glow-acoustic: 0 0 20px rgba(3, 106, 145, 0.22);
   --shadow-record-ring: 0 0 0 4px rgba(var(--color-accent-rgb), 0.20);
 
   /* Radii */
@@ -184,6 +186,8 @@
   --shadow-xl: 0 12px 20px rgba(0, 0, 0, 0.36), 0 5px 10px rgba(0, 0, 0, 0.20);
   --shadow-glow: 0 0 0 3px rgba(var(--color-accent-rgb), 0.20);
   --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(255, 255, 255, 0.04);
+  --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.40), 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glow-acoustic: 0 0 28px rgba(56, 189, 248, 0.35);
   --shadow-record-ring: 0 0 0 4px rgba(var(--color-accent-rgb), 0.12);
 
   --bg-gradient: var(--color-bg-primary);
@@ -860,6 +864,16 @@ textarea,
   transition: background-color var(--dur-3) var(--ease-out-expo),
               border-color var(--dur-3) var(--ease-out-expo);
 }
+
+.title-bar-logo {
+  flex-shrink: 0;
+  filter: drop-shadow(0 1px 3px rgba(0, 210, 247, 0.35));
+  transition: transform var(--dur-2) var(--ease-out-expo);
+}
+
+.title-bar-logo:hover {
+  transform: scale(1.1);
+}
 
 /* Recording button — circular mic button with microinteractions */
 .record-btn {

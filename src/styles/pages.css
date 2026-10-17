@@ -233,6 +233,37 @@
   justify-content: center;
 }
 
+/* Ambient acoustic breathing halo behind the recording core */
+.record-ambient-halo {
+  position: absolute;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--color-accent-subtle) 0%, transparent 72%);
+  opacity: 0.6;
+  pointer-events: none;
+  transition: transform var(--dur-4) var(--ease-out-expo),
+              opacity var(--dur-4) var(--ease-out-expo);
+  transform: scale(1);
+}
+
+.record-btn-wrapper:hover .record-ambient-halo {
+  transform: scale(1.25);
+  opacity: 0.9;
+}
+
+.record-btn-wrapper.is-recording .record-ambient-halo {
+  transform: scale(1.45);
+  opacity: 1;
+  background: radial-gradient(circle, rgba(var(--color-accent-rgb), 0.35) 0%, transparent 75%);
+  animation: acoustic-halo-breath 2.2s ease-in-out infinite alternate;
+}
+
+@keyframes acoustic-halo-breath {
+  0% { transform: scale(1.25); opacity: 0.7; }
+  100% { transform: scale(1.48); opacity: 1; }
+}
+
 /* Recording pulse rings — dual staggered for depth */
 .recording-pulse-ring {
   position: absolute;
@@ -300,6 +331,85 @@
   flex-shrink: 0;
 }
 
+.result-dot-pulsing {
+  animation: result-dot-pulse 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes result-dot-pulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.4); opacity: 1; }
+}
+
+.result-card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.result-diff-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--dur-2) var(--ease-out-expo);
+}
+
+.result-diff-toggle:hover {
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.result-diff-toggle.is-active {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-border-accent);
+  color: var(--color-accent);
+}
+
+.result-original-comparison {
+  margin: 0 14px 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.result-original-label {
+  display: block;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 3px;
+}
+
+.result-original-text {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin: 0;
+  user-select: text;
+}
+
+.result-pace-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-right: 6px;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.15px;
+  border-radius: 3px;
+  background: rgba(var(--color-accent-rgb), 0.12);
+  color: var(--color-accent);
+  vertical-align: 1px;
+}
+
 /* History item — staggered entrance */
 .history-item {
   padding: 8px 10px;
@@ -313,6 +423,28 @@
   transition: background var(--dur-3) var(--ease-out-expo),
               border-color var(--dur-3) var(--ease-out-expo),
               box-shadow var(--dur-3) var(--ease-out-expo);
+}
+
+.history-item-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  opacity: 0.65;
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.history-item-clock {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 4px;
+  opacity: 0.7;
+}
+
+.history-item:hover .history-item-dot {
+  opacity: 1;
+  box-shadow: 0 0 6px var(--color-accent);
 }
 
 .history-item:hover {
@@ -665,9 +797,9 @@
 
 .history-raw-panel {
   margin: 0 10px 8px;
-  padding: 8px 9px;
-  border-left: 2px solid var(--color-border);
-  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
   background: var(--color-bg-sunken);
 }
 
@@ -944,6 +1076,139 @@
 /* Chip min-height container */
 .chip-container {
   min-height: 20px;
+}
+
+/* Chip status LED indicator */
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+
+.chip-dot-gpu {
+  background: #10B981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.75);
+  animation: led-pulse 2s ease-in-out infinite;
+}
+
+.chip-dot-cloud {
+  background: #00D2F7;
+  box-shadow: 0 0 8px rgba(0, 210, 247, 0.75);
+  animation: led-pulse 2s ease-in-out infinite;
+}
+
+.chip-dot-cpu {
+  background: #F59E0B;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+@keyframes led-pulse {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* Tactile hotkey bar — below status text */
+.tactile-hotkey-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.tactile-hotkey-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px 3px 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-xs);
+  transition: all var(--dur-2) var(--ease-out-expo);
+}
+
+.tactile-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-bottom: 2px solid var(--color-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1;
+  transition: all var(--dur-1) var(--ease-micro);
+}
+
+.tactile-hotkey-badge.is-active {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-border-accent);
+  box-shadow: var(--shadow-glow);
+}
+
+.tactile-hotkey-badge.is-active .tactile-key {
+  transform: translateY(1px);
+  border-bottom-width: 1px;
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+  border-color: var(--color-accent);
+}
+
+.tactile-hotkey-label {
+  font-size: var(--text-2xs);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+/* Onboarding hero card enhancements */
+.onboarding-hero-card {
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.onboarding-step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.onboarding-step-row p {
+  margin: 0;
+}
+
+.onboarding-step-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.onboarding-subtext {
+  margin-top: 6px;
+  font-size: var(--text-2xs);
+  color: var(--color-text-tertiary);
+  opacity: 0.9;
 }
 
 /* ---------- SettingsPage ---------- */

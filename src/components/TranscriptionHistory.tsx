@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, Clock } from "lucide-react";
 import type { HistoryItem } from "@/types";
 
 interface TranscriptionHistoryProps {
@@ -25,9 +25,13 @@ export default function TranscriptionHistory({
     <div className="history-list">
       {filtered.map((item, idx) => (
         <div key={item.id} className="history-item" data-history-id={item.id} style={{ animationDelay: `${idx * 50}ms` }}>
+          <span className="history-item-dot" aria-hidden="true" />
           <div className="history-item-body">
             <p className="history-item-text">{item.text}</p>
-            <span className="history-item-time">{item.timeDisplay}</span>
+            <span className="history-item-time">
+              <Clock size={10} className="history-item-clock" aria-hidden="true" />
+              <span>{item.timeDisplay}</span>
+            </span>
           </div>
           <button aria-label={t("common.copy")} className="icon-btn icon-btn-sm" onClick={() => onCopy(item.text, item.id)}>
             {copiedId === item.id
