@@ -333,6 +333,11 @@
       "preferences",
       "profile-save"
     ],
+    "commands::profile::set_external_correction_learning": [
+      "preferences",
+      "profile-save",
+      "personalization"
+    ],
     "commands::profile::set_correction_validation_config": [
       "preferences",
       "profile-save"
@@ -962,7 +967,7 @@
         "src-tauri/src/commands/profile.rs",
         "src/pages/__tests__/SettingsPageExportPath.test.tsx"
       ],
-      "assumptions": "Canonical text normalization, JSON schema and learned suggestions are input partitions; explicit user imports/removals may replace user rules."
+      "assumptions": "Canonical text normalization, JSON schema and learned suggestions are input partitions; explicit user imports/removals may replace user rules. External-field identity, bounded accessibility reads and spelling eligibility are implementation-tested, not formally modeled."
     },
     "app-rules": {
       "obligation": "First matching enabled rule wins; inheritance uses baseline; source window context stays captured.",
@@ -1950,6 +1955,7 @@
     "commands::profile::set_custom_prompt": "src-tauri/src/commands/profile.rs#fn set_custom_prompt(",
     "commands::profile::set_polish_structure_level": "src-tauri/src/commands/profile.rs#fn set_polish_structure_level(",
     "commands::profile::set_openai_fast_mode": "src-tauri/src/commands/profile.rs#fn set_openai_fast_mode(",
+    "commands::profile::set_external_correction_learning": "src-tauri/src/commands/profile.rs#fn set_external_correction_learning(",
     "commands::profile::set_correction_validation_config": "src-tauri/src/commands/profile.rs#fn set_correction_validation_config(",
     "commands::updater::check_app_update": "src-tauri/src/commands/updater.rs#fn check_app_update(",
     "commands::updater::open_app_release_page": "src-tauri/src/commands/updater.rs#fn open_app_release_page(",
