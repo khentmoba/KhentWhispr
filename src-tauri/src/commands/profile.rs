@@ -12,6 +12,18 @@ use crate::utils::paths;
 const PROFILE_EXPORT_FILE_NAME: &str = "speak-flow-profile.json";
 
 #[tauri::command]
+pub async fn set_external_correction_learning(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    crate::services::external_correction_service::cancel();
+    profile_service::update_profile_and_schedule(state.inner(), |profile| {
+        profile.external_correction_learning = enabled;
+    });
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn submit_user_correction(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,

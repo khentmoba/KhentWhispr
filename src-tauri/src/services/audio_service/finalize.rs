@@ -701,6 +701,9 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
     } else {
         // 普通听写模式
         let original = text.clone();
+        let text = state.with_profile(|profile| {
+            crate::services::external_correction_service::apply_spelling_rules(&text, profile)
+        });
         let ai_polish_enabled = app_profile
             .ai_polish_enabled
             .unwrap_or_else(|| state.profile.ai_polish_enabled.load(Ordering::Acquire));
@@ -773,8 +776,8 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
                 (outcome.text, outcome.provider, outcome.model, timing)
             }
             Err(error) => {
-                log::warn!("AI 润色失败，使用原文: {}", error);
-                (original.clone(), None, None, None)
+                log::warn!("AI 润色失败，保留本地纠错结果: {}", error);
+                (text.clone(), None, None, None)
             }
         };
         let polished = text != original;
@@ -1157,15 +1160,38 @@ async fn do_paste(app: &tauri::AppHandle, text: &str) {
     }
     full.push_str(text);
 
+    let generation = crate::services::external_correction_service::cancel();
+    let before = if state.with_profile(|p| p.external_correction_learning) {
+        tokio::task::spawn_blocking(crate::services::external_correction_service::capture)
+            .await.ok().flatten()
+    } else {
+        None
+    };
     let method = state.ui.input_method.lock().clone();
-    if let Err(e) = crate::commands::clipboard::paste_text_impl(app, &full, &method).await {
-        log::error!("自动粘贴失败: {}", e);
+    match crate::commands::clipboard::paste_text_impl(app, &full, &method).await {
+        Ok(_) => {
+            if let Some(before) = before {
+                crate::services::external_correction_service::watch(app.clone(), before, full, generation);
+            }
+        }
+        Err(e) => log::error!("自动粘贴失败: {}", e),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polish_failure_keeps_local_spelling_corrections() {
+        let source = include_str!("finalize.rs");
+        let dictation = source.split("// 普通听写模式").nth(1).unwrap();
+        assert!(dictation.find("apply_spelling_rules").unwrap()
+            < dictation.find("polish_text_with_overrides_detailed").unwrap());
+        let fallback = dictation.split("Err(error) => {").nth(1).unwrap().split("};").next().unwrap();
+        assert!(fallback.contains("(text.clone(), None, None, None)"));
+        assert!(!fallback.contains("original.clone()"));
+    }
 
     #[test]
     fn interim_reuse_requires_every_final_sample() {
