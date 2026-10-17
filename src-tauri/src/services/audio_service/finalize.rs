@@ -1163,7 +1163,9 @@ async fn do_paste(app: &tauri::AppHandle, text: &str) {
     let generation = crate::services::external_correction_service::cancel();
     let before = if state.with_profile(|p| p.external_correction_learning) {
         tokio::task::spawn_blocking(crate::services::external_correction_service::capture)
-            .await.ok().flatten()
+            .await
+            .ok()
+            .flatten()
     } else {
         None
     };
@@ -1171,7 +1173,12 @@ async fn do_paste(app: &tauri::AppHandle, text: &str) {
     match crate::commands::clipboard::paste_text_impl(app, &full, &method).await {
         Ok(_) => {
             if let Some(before) = before {
-                crate::services::external_correction_service::watch(app.clone(), before, full, generation);
+                crate::services::external_correction_service::watch(
+                    app.clone(),
+                    before,
+                    full,
+                    generation,
+                );
             }
         }
         Err(e) => log::error!("自动粘贴失败: {}", e),
@@ -1186,9 +1193,19 @@ mod tests {
     fn polish_failure_keeps_local_spelling_corrections() {
         let source = include_str!("finalize.rs");
         let dictation = source.split("// 普通听写模式").nth(1).unwrap();
-        assert!(dictation.find("apply_spelling_rules").unwrap()
-            < dictation.find("polish_text_with_overrides_detailed").unwrap());
-        let fallback = dictation.split("Err(error) => {").nth(1).unwrap().split("};").next().unwrap();
+        assert!(
+            dictation.find("apply_spelling_rules").unwrap()
+                < dictation
+                    .find("polish_text_with_overrides_detailed")
+                    .unwrap()
+        );
+        let fallback = dictation
+            .split("Err(error) => {")
+            .nth(1)
+            .unwrap()
+            .split("};")
+            .next()
+            .unwrap();
         assert!(fallback.contains("(text.clone(), None, None, None)"));
         assert!(!fallback.contains("original.clone()"));
     }
