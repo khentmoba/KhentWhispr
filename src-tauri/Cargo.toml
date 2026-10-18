@@ -1,6 +1,6 @@
 [package]
 name = "speak-flow"
-version = "1.0.5"
+version = "1.1.0"
 description = "SpeakFlow - Local and cloud speech-to-text desktop app"
 authors = ["sun"]
 license = "GPL-3.0-only"
