@@ -257,15 +257,7 @@ fn render_assistant_user_content(
         return sections.join("\n\n");
     }
 
-    if let Some(selected_text) = selected_text {
-        format!(
-            "{}\n\n{}",
-            crate::utils::foreground::wrap_xml_cdata("selected_text", selected_text),
-            crate::utils::foreground::wrap_xml_cdata("user_request", asr_text)
-        )
-    } else {
-        crate::utils::foreground::wrap_xml_cdata("user_request", asr_text)
-    }
+    crate::utils::foreground::wrap_xml_cdata("user_request", asr_text)
 }
 
 fn render_assistant_conversation_context(
