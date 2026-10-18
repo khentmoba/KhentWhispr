@@ -44,6 +44,16 @@ gh() {
                                "release-ci-test", CANDIDATE], env=environment,
                               text=True, encoding="utf-8", capture_output=True, timeout=15)
 
+    def test_rust_cache_cannot_restore_paths_from_a_renamed_repository(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        cache = workflow.split("      - name: Cache Rust dependencies and build outputs", 1)[1]
+        cache = cache.split("      - name:", 1)[0]
+        keys = [line.strip() for line in cache.splitlines()
+                if line.strip().startswith(("key: rust-", "rust-"))]
+        self.assertEqual(len(keys), 2)
+        for key in keys:
+            self.assertIn("rust-${{ github.repository }}-", key)
+
     def test_all_four_jobs_pass(self):
         result = self.run_gate("success")
         self.assertEqual(result.returncode, 0, result.stderr)

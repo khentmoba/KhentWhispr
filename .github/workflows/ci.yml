@@ -194,9 +194,9 @@ jobs:
             ~/.cargo/git
             src-tauri/target
             !src-tauri/target/**/incremental/**
-          key: rust-${{ runner.os }}-1.93.0-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ hashFiles('src-tauri/src/**/*.rs', 'src-tauri/build.rs', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}
+          key: rust-${{ github.repository }}-${{ runner.os }}-1.93.0-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ hashFiles('src-tauri/src/**/*.rs', 'src-tauri/build.rs', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}
           restore-keys: |
-            rust-${{ runner.os }}-1.93.0-${{ hashFiles('src-tauri/Cargo.lock') }}-
+            rust-${{ github.repository }}-${{ runner.os }}-1.93.0-${{ hashFiles('src-tauri/Cargo.lock') }}-
 
       - name: Check Rust formatting and lints
         run: |
