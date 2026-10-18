@@ -6,6 +6,7 @@ import type { EditGrabStatus, TranscriptionTiming } from "@/types";
 interface TranscriptionResultProps {
   text: string | null;
   originalText: string | null;
+  baselineText?: string | null;
   isProcessing: boolean;
   copiedId: string | null;
   onCopy: (text: string, id: string) => void;
@@ -21,6 +22,7 @@ interface TranscriptionResultProps {
 export default function TranscriptionResult({
   text,
   originalText,
+  baselineText,
   isProcessing,
   copiedId,
   onCopy,
@@ -38,7 +40,10 @@ export default function TranscriptionResult({
   const [showOriginal, setShowOriginal] = useState(false);
   const hasResult = text !== null;
   const hasStats = !!text && durationSec && durationSec > 0 && charCount;
-  const hasPolishOrCorrection = Boolean(originalText && text && originalText.trim() !== text.trim());
+  const committedText = baselineText ?? text;
+  const hasPolishOrCorrection = Boolean(
+    originalText && committedText && originalText.trim() !== committedText.trim(),
+  );
   const editGrabHintKey =
     editGrabStatus === "timeout" || editGrabStatus === "empty"
       ? `result.editGrab.${editGrabStatus}`
@@ -68,11 +73,11 @@ export default function TranscriptionResult({
 
   const handleBlur = useCallback(() => {
     const edited = draftText.trim();
-    const baseline = originalText?.trim() ?? "";
+    const baseline = (baselineText ?? originalText)?.trim() ?? "";
     if (edited && baseline && edited !== baseline) {
       onTextChange?.(edited);
     }
-  }, [draftText, originalText, onTextChange]);
+  }, [draftText, baselineText, originalText, onTextChange]);
 
   const handleCopy = useCallback(() => {
     const currentText = bodyRef.current?.value.trim() ?? draftText.trim() ?? text ?? "";

@@ -189,7 +189,7 @@ fn correction(before: &str, after: &str) -> Option<(String, String)> {
     }
     let a: Vec<char> = from.chars().collect();
     let b: Vec<char> = to.chars().collect();
-    if a.is_empty() || b.is_empty() || a.len() > 12 || b.len() > 12 {
+    if a.is_empty() || b.is_empty() || a.len() > 24 || b.len() > 24 {
         return None;
     }
     let mut row: Vec<usize> = (0..=b.len()).collect();
@@ -250,14 +250,32 @@ pub fn apply_spelling_rules(
 fn corrections(before: &str, after: &str) -> Option<Vec<(String, String)>> {
     let original = tokens(before);
     let updated = tokens(after);
-    if original.len() != updated.len() {
+    if updated.len() < original.len() {
         return None;
     }
+    if updated.len() > original.len()
+        && original
+            .last()
+            .is_some_and(|last| last.chars().any(char::is_alphanumeric))
+        && updated[original.len()].chars().any(char::is_alphanumeric)
+    {
+        return None;
+    }
+    let last_idx = original.len().saturating_sub(1);
     let pairs: Option<Vec<_>> = original
         .iter()
-        .zip(updated)
-        .filter(|(a, b)| **a != *b)
-        .map(|(a, b)| correction(a, b))
+        .enumerate()
+        .zip(updated.iter().take(original.len()))
+        .filter(|&((i, a), b)| {
+            if a == b {
+                return false;
+            }
+            !(i == last_idx
+                && updated.len() > original.len()
+                && !a.chars().any(char::is_alphanumeric)
+                && b.starts_with(*a))
+        })
+        .map(|((_, a), b)| correction(a, b))
         .collect();
     pairs.filter(|pairs| !pairs.is_empty())
 }
@@ -312,10 +330,10 @@ pub fn watch(app: tauri::AppHandle, before: Snapshot, pasted: String, generation
                 return;
             }
             let Some(current) = capture_field(Some(&before)) else {
-                return;
+                continue;
             };
             let Some(edited) = passage(&current.text, prefix, suffix) else {
-                return;
+                continue;
             };
             if edited != latest {
                 latest = edited.to_string();
@@ -408,6 +426,18 @@ mod tests {
     #[test]
     fn multiple_edits_must_all_be_small_word_corrections() {
         assert_eq!(corrections("teh recieve", "the receive").unwrap().len(), 2);
+        assert_eq!(
+            corrections("teh Speekflow", "the Speakflow is great").unwrap(),
+            vec![
+                ("teh".into(), "the".into()),
+                ("Speekflow".into(), "Speakflow".into()),
+            ]
+        );
+        assert_eq!(
+            corrections("Use configuraton.", "Use configuration. Next sentence").unwrap(),
+            vec![("configuraton".into(), "configuration".into())]
+        );
+        assert_eq!(corrections("hello", "hello there"), None);
         assert_eq!(corrections("teh hello!", "the hello?"), None);
         assert_eq!(corrections("teh hello", "the goodbye"), None);
         assert_eq!(corrections("hello", "hello"), None);

@@ -886,41 +886,39 @@ async fn do_final_asr(
     sample_rate: u32,
 ) -> Result<funasr_service::TranscriptionResult, String> {
     let data = std::mem::take(&mut *samples.lock());
-    let (asr_audio, asr_sample_rate) = match ChunkedResampler::new(sample_rate) {
-        Ok(mut resampler) => {
-            let mut output = Vec::with_capacity(
-                ((data.len() as f64 * TARGET_SAMPLE_RATE as f64 / sample_rate as f64).ceil()
-                    as usize)
-                    + 8,
-            );
-            match resampler
-                .process_chunk(&data, &mut output)
-                .and_then(|_| resampler.finish(&mut output))
-            {
-                Ok(()) => {
-                    if sample_rate == TARGET_SAMPLE_RATE {
+    let (asr_audio, asr_sample_rate) = if sample_rate == TARGET_SAMPLE_RATE {
+        (std::borrow::Cow::Borrowed(data.as_slice()), sample_rate)
+    } else {
+        match ChunkedResampler::new(sample_rate) {
+            Ok(mut resampler) => {
+                let mut output = Vec::with_capacity(
+                    ((data.len() as f64 * TARGET_SAMPLE_RATE as f64 / sample_rate as f64).ceil()
+                        as usize)
+                        + 8,
+                );
+                match resampler
+                    .process_chunk(&data, &mut output)
+                    .and_then(|_| resampler.finish(&mut output))
+                {
+                    Ok(()) => (std::borrow::Cow::Owned(output), TARGET_SAMPLE_RATE),
+                    Err(err) => {
+                        log::warn!(
+                            "Final audio resampling failed; keeping raw sample rate {}Hz: {}",
+                            sample_rate,
+                            err
+                        );
                         (std::borrow::Cow::Borrowed(data.as_slice()), sample_rate)
-                    } else {
-                        (std::borrow::Cow::Owned(output), TARGET_SAMPLE_RATE)
                     }
                 }
-                Err(err) => {
-                    log::warn!(
-                        "Final audio resampling failed; keeping raw sample rate {}Hz: {}",
-                        sample_rate,
-                        err
-                    );
-                    (std::borrow::Cow::Borrowed(data.as_slice()), sample_rate)
-                }
             }
-        }
-        Err(err) => {
-            log::warn!(
-                "Final audio resampling failed; keeping raw sample rate {}Hz: {}",
-                sample_rate,
-                err
-            );
-            (std::borrow::Cow::Borrowed(data.as_slice()), sample_rate)
+            Err(err) => {
+                log::warn!(
+                    "Final audio resampling failed; keeping raw sample rate {}Hz: {}",
+                    sample_rate,
+                    err
+                );
+                (std::borrow::Cow::Borrowed(data.as_slice()), sample_rate)
+            }
         }
     };
 

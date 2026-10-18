@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 
@@ -7,6 +7,7 @@ import {
   removeCorrection,
   setCorrectionValidationConfig,
   setExternalCorrectionLearning,
+  submitUserCorrection,
   validateCorrections,
 } from "@/api/tauri";
 import type { CorrectionPattern, UserProfile } from "@/types";
@@ -59,6 +60,9 @@ export default function CorrectionRulesModal({
 }: CorrectionRulesModalProps) {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
+  const [newOriginal, setNewOriginal] = useState("");
+  const [newCorrected, setNewCorrected] = useState("");
+  const [addingRule, setAddingRule] = useState(false);
   const [externalLearning, setExternalLearning] = useState(Boolean(profile?.external_correction_learning));
   const [savingExternalLearning, setSavingExternalLearning] = useState(false);
   useEffect(() => {
@@ -142,6 +146,24 @@ export default function CorrectionRulesModal({
     return true;
   });
 
+  const handleAddRule = async () => {
+    const orig = newOriginal.trim();
+    const corr = newCorrected.trim();
+    if (!orig || !corr || orig === corr || addingRule) return;
+    setAddingRule(true);
+    try {
+      await submitUserCorrection(orig, corr, null);
+      setNewOriginal("");
+      setNewCorrected("");
+      onRefreshProfile();
+      toast.success(t("toast.correctionRecorded"), { duration: 1500 });
+    } catch {
+      toast.error(t("toast.correctionFailed"));
+    } finally {
+      setAddingRule(false);
+    }
+  };
+
   const handleDelete = async (original: string, corrected: string) => {
     try {
       await removeCorrection(original, corrected);
@@ -220,6 +242,44 @@ export default function CorrectionRulesModal({
                   : t("settings.correctionFilterAi")}
             </button>
           ))}
+        </div>
+
+        <div style={{ padding: "8px 16px 0", display: "flex", gap: 6, alignItems: "center" }}>
+          <input
+            type="text"
+            aria-label={t("settings.correctionOriginalPlaceholder")}
+            placeholder={t("settings.correctionOriginalPlaceholder")}
+            value={newOriginal}
+            onChange={(event) => setNewOriginal(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void handleAddRule();
+            }}
+            className="settings-input"
+            style={{ flex: 1, padding: "6px 10px", fontSize: 12 }}
+          />
+          <span style={{ color: "var(--color-text-tertiary)", fontSize: 12 }}>→</span>
+          <input
+            type="text"
+            aria-label={t("settings.correctionCorrectedPlaceholder")}
+            placeholder={t("settings.correctionCorrectedPlaceholder")}
+            value={newCorrected}
+            onChange={(event) => setNewCorrected(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void handleAddRule();
+            }}
+            className="settings-input"
+            style={{ flex: 1, padding: "6px 10px", fontSize: 12 }}
+          />
+          <button
+            type="button"
+            className="test-btn"
+            aria-label={t("settings.correctionAddRuleLabel")}
+            disabled={addingRule || !newOriginal.trim() || !newCorrected.trim() || newOriginal.trim() === newCorrected.trim()}
+            onClick={() => void handleAddRule()}
+            style={{ padding: "6px 10px" }}
+          >
+            <Plus size={13} />
+          </button>
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px" }}>

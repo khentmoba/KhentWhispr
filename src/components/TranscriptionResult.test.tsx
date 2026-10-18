@@ -70,4 +70,23 @@ describe("TranscriptionResult", () => {
     fireEvent.blur(result);
     expect(onTextChange).toHaveBeenCalledWith("corrected text");
   });
+
+  it("shows original comparison when originalText differs from baselineText without flickering on draft edits", () => {
+    render(
+      <TranscriptionResult
+        text="the SpeakFlow"
+        originalText="teh Speekflow"
+        baselineText="the SpeakFlow"
+        isProcessing={false}
+        copiedId={null}
+        onCopy={vi.fn()}
+        durationSec={1}
+        charCount={13}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", { name: "settings.jevAuditOriginal" });
+    fireEvent.click(toggle);
+    expect(screen.getByText("teh Speekflow")).toBeInTheDocument();
+  });
 });

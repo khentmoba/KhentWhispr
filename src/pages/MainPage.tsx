@@ -135,7 +135,7 @@ export default function MainPage({ onNavigate, animClass = "" }: {
   return (
     <div className="page-root main-page">
       <TitleBar
-        title="Dictation"
+        title={t("main.title")}
         rightActions={
           <>
             <button aria-label={t("common.minimize")} className="icon-btn" onClick={() => getCurrentWindow().minimize()}>
@@ -151,18 +151,18 @@ export default function MainPage({ onNavigate, animClass = "" }: {
       <div className={`${pageContentClass} dictation-content`}>
         <header className="workspace-heading">
           <div>
-            <h1>Make room for your words.</h1>
-            <p>Speak naturally. SpeakFlow takes care of the typing.</p>
+            <h1>{t("main.heroTitle")}</h1>
+            <p>{t("main.heroSubtitle")}</p>
           </div>
           <button className="workspace-settings-link" onClick={() => flushPendingEditAndNavigate("settings")}>
-            <Settings size={15} aria-hidden="true" /> Configure
+            <Settings size={15} aria-hidden="true" /> {t("main.configure")}
           </button>
         </header>
         <div className="dictation-grid">
-        <section className="recording-panel" data-recording={isRecording || isStarting} aria-label="Recording controls">
+        <section className="recording-panel" data-recording={isRecording || isStarting} aria-label={t("main.recordingControlsLabel")}>
         <div className="recording-panel-heading">
-          <h2>{isRecording ? "Listening to you" : isStarting ? "Connecting" : isProcessing ? "Working on your words" : isReady ? "Ready when you are" : stage === "error" ? "Let’s get you set up" : "Getting ready"}</h2>
-          <p>{isRecording ? "Finish speaking, then stop the recording." : isReady ? "A thought, a message, a first draft." : "Your engine status appears below."}</p>
+          <h2>{isRecording ? t("main.statusListening") : isStarting ? t("main.statusConnecting") : isProcessing ? t("main.statusProcessing") : isReady ? t("main.statusReady") : stage === "error" ? t("main.statusError") : t("main.statusPreparing")}</h2>
+          <p>{isRecording ? t("main.hintListening") : isReady ? t("main.hintReady") : t("main.hintDefault")}</p>
         </div>
         <div className="recording-zone">
           <StatusIndicator
@@ -202,7 +202,7 @@ export default function MainPage({ onNavigate, animClass = "" }: {
         </div>
         <div className="recording-panel-footer">
           <Keyboard size={16} aria-hidden="true" />
-          <p>Works in your active app.<br /><span>No need to switch windows.</span></p>
+          <p>{t("main.footerActiveApp")}<br /><span>{t("main.footerNoSwitch")}</span></p>
         </div>
         </section>
 
@@ -222,16 +222,16 @@ export default function MainPage({ onNavigate, animClass = "" }: {
         )}
 
         {/* Results */}
-        <section ref={resultsRef} className="results-area" aria-label="Transcription workspace">
+        <section ref={resultsRef} className="results-area" aria-label={t("main.workspaceLabel")}>
           <div className="transcript-heading">
-            <h2>Your transcript</h2>
-            <button onClick={() => flushPendingEditAndNavigate("history")}>History <ArrowUpRight size={14} aria-hidden="true" /></button>
+            <h2>{t("main.transcriptTitle")}</h2>
+            <button onClick={() => flushPendingEditAndNavigate("history")}>{t("historyPage.title")} <ArrowUpRight size={14} aria-hidden="true" /></button>
           </div>
           {!transcriptionResult && !isProcessing && (
             <div className="transcript-empty">
               <FileText size={32} strokeWidth={1.25} aria-hidden="true" />
-              <h3>Your words will appear here.</h3>
-              <p>Start a recording to turn your voice into text. You can review, edit, and copy the result here.</p>
+              <h3>{t("main.emptyTitle")}</h3>
+              <p>{t("main.emptySubtitle")}</p>
             </div>
           )}
           {polishAuditWarning && (
@@ -242,7 +242,8 @@ export default function MainPage({ onNavigate, animClass = "" }: {
           )}
           <TranscriptionResult
             text={transcriptionResult}
-            originalText={editBaselineText}
+            originalText={originalAsrText}
+            baselineText={editBaselineText}
             isProcessing={isProcessing}
             copiedId={copiedId}
             onCopy={handleCopy}
@@ -283,14 +284,14 @@ export default function MainPage({ onNavigate, animClass = "" }: {
                   <div className="onboarding-step-row">
                     <span className="onboarding-step-pill">1</span>
                     <p>
-                      {isToggleMode ? "Press" : "Hold"} <strong className="onboarding-accent">{hotkeyDisplay || "F2"}</strong> {isToggleMode ? "to start. Press again to finish." : "and speak. Release to finish."}
+                      {isToggleMode ? t("main.pressHotkey") : t("main.holdHotkey")} <strong className="onboarding-accent">{hotkeyDisplay || "F2"}</strong> {isToggleMode ? t("main.step1ToggleSuffix") : t("main.step1HoldSuffix")}
                     </p>
                   </div>
                   <div className="onboarding-step-row">
                     <span className="onboarding-step-pill">2</span>
-                    <p>Your text is inserted at the cursor in your active app.</p>
+                    <p>{t("main.step2Text")}</p>
                   </div>
-                  <p className="onboarding-subtext">Change your microphone, hotkey, and engine in Settings.</p>
+                  <p className="onboarding-subtext">{t("main.onboardingSubtext")}</p>
                 </div>
             </div>
           )}

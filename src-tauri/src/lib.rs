@@ -139,69 +139,75 @@ pub fn run() {
                 }
             }
 
-            // 启动时从系统密钥环加载 API Key
+            // 启动时在后台从系统密钥环加载 API Key，避免同步阻塞主线程启动
             {
-                use tauri_plugin_keyring::KeyringExt;
-                let state = app_handle.state::<AppState>();
-                let provider = state.active_llm_provider();
-                let key = services::llm_provider::sync_runtime_api_key(&app_handle, state.inner());
-                if !key.is_empty() {
-                    log::info!("已从密钥环加载 AI 润色 API Key (provider: {})", provider);
-                }
-                // 从密钥环加载当前活跃在线引擎对应的 API Key（GLM / Alibaba-CN / Alibaba-Intl）
-                commands::funasr::reload_online_asr_key(&app_handle, state.inner());
-                if !state.read_online_asr_api_key().is_empty() {
-                    log::info!(
-                        "已从密钥环加载在线 ASR API Key ({})",
-                        commands::funasr::active_online_keyring_user()
-                    );
-                }
-                // 加载需要密钥的联网搜索提供商（密钥始终保存在系统密钥环）。
-                for search_provider in [
-                    crate::state::user_profile::WebSearchProvider::Exa,
-                    crate::state::user_profile::WebSearchProvider::Tavily,
-                    crate::state::user_profile::WebSearchProvider::Google,
-                ] {
-                    let Some(keyring_user) =
-                        commands::assistant::web_search_keyring_user(&search_provider)
-                    else {
-                        continue;
-                    };
-                    state.with_web_search_key_operation(|| {
-                        if let Some(ws_key) = app_handle
-                            .keyring()
-                            .get_password("speak-flow", keyring_user)
-                            .ok()
-                            .flatten()
-                            .filter(|key| !key.is_empty())
-                        {
-                            let cache_key = commands::assistant::web_search_provider_cache_key(
-                                &search_provider,
-                            );
-                            state.set_web_search_api_key(cache_key, ws_key);
-                            log::info!("已从密钥环加载联网搜索 API Key ({})", cache_key);
-                        }
-                    });
-                }
+                let app_handle = app_handle.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    use tauri_plugin_keyring::KeyringExt;
+                    let state = app_handle.state::<AppState>();
+                    let provider = state.active_llm_provider();
+                    let key =
+                        services::llm_provider::sync_runtime_api_key(&app_handle, state.inner());
+                    if !key.is_empty() {
+                        log::info!("已从密钥环加载 AI 润色 API Key (provider: {})", provider);
+                    }
+                    // 从密钥环加载当前活跃在线引擎对应的 API Key（GLM / Alibaba-CN / Alibaba-Intl）
+                    commands::funasr::reload_online_asr_key(&app_handle, state.inner());
+                    if !state.read_online_asr_api_key().is_empty() {
+                        log::info!(
+                            "已从密钥环加载在线 ASR API Key ({})",
+                            commands::funasr::active_online_keyring_user()
+                        );
+                    }
+                    // 加载需要密钥的联网搜索提供商（密钥始终保存在系统密钥环）。
+                    for search_provider in [
+                        crate::state::user_profile::WebSearchProvider::Exa,
+                        crate::state::user_profile::WebSearchProvider::Tavily,
+                        crate::state::user_profile::WebSearchProvider::Google,
+                    ] {
+                        let Some(keyring_user) =
+                            commands::assistant::web_search_keyring_user(&search_provider)
+                        else {
+                            continue;
+                        };
+                        state.with_web_search_key_operation(|| {
+                            if let Some(ws_key) = app_handle
+                                .keyring()
+                                .get_password("speak-flow", keyring_user)
+                                .ok()
+                                .flatten()
+                                .filter(|key| !key.is_empty())
+                            {
+                                let cache_key = commands::assistant::web_search_provider_cache_key(
+                                    &search_provider,
+                                );
+                                state.set_web_search_api_key(cache_key, ws_key);
+                                log::info!("已从密钥环加载联网搜索 API Key ({})", cache_key);
+                            }
+                        });
+                    }
 
-                if services::codex_oauth_service::sync_runtime_session(&app_handle, state.inner())
+                    if services::codex_oauth_service::sync_runtime_session(
+                        &app_handle,
+                        state.inner(),
+                    )
                     .is_some()
-                {
-                    log::info!("已从密钥环加载 OpenAI Codex OAuth 会话");
-                    spawn_openai_codex_oauth_prewarm(app_handle.clone());
-                }
-                if services::grok_build_oauth_service::sync_runtime_session(
-                    &app_handle,
-                    state.inner(),
-                )
-                .is_some()
-                {
-                    log::info!("已从密钥环加载 Grok Build OAuth 会话");
-                    spawn_grok_build_oauth_prewarm(app_handle.clone());
-                }
+                    {
+                        log::info!("已从密钥环加载 OpenAI Codex OAuth 会话");
+                        spawn_openai_codex_oauth_prewarm(app_handle.clone());
+                    }
+                    if services::grok_build_oauth_service::sync_runtime_session(
+                        &app_handle,
+                        state.inner(),
+                    )
+                    .is_some()
+                    {
+                        log::info!("已从密钥环加载 Grok Build OAuth 会话");
+                        spawn_grok_build_oauth_prewarm(app_handle.clone());
+                    }
+                    spawn_funasr_startup(app_handle);
+                });
             }
-
-            spawn_funasr_startup(app_handle.clone());
             spawn_subtitle_prewarm(app_handle.clone());
             spawn_profile_maintenance(app_handle.clone());
             if let Err(error) = services::selection_service::create_selection_window(&app_handle) {

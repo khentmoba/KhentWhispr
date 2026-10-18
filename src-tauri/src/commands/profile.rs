@@ -31,6 +31,25 @@ pub async fn submit_user_correction(
     corrected: String,
     raw_original: Option<String>,
 ) -> Result<(), String> {
+    let orig_trimmed = original.trim();
+    let corr_trimmed = corrected.trim();
+    if raw_original.is_none()
+        && !orig_trimmed.is_empty()
+        && !corr_trimmed.is_empty()
+        && orig_trimmed != corr_trimmed
+        && !orig_trimmed.contains(char::is_whitespace)
+        && !corr_trimmed.contains(char::is_whitespace)
+    {
+        profile_service::update_profile_and_schedule(state.inner(), |profile| {
+            profile_service::learn_from_structured(
+                profile,
+                &[(orig_trimmed.to_string(), corr_trimmed.to_string())],
+                &[],
+                CorrectionSource::User,
+            );
+        });
+        return Ok(());
+    }
     // 用 LLM 结合 ASR 原文和当前显示文本，提取词级纠错
     let corrections = extract_corrections_via_llm(
         &app_handle,
