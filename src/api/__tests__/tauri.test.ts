@@ -41,6 +41,34 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("assistant credential provider ownership", () => {
+  it("passes the captured provider through reads and delayed saves", async () => {
+    const { getAssistantApiKey, setAssistantApiKey } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValue(undefined);
+    await setAssistantApiKey("provider-a-key", "openai");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_assistant_api_key", {
+      apiKey: "provider-a-key", provider: "openai",
+    });
+    await getAssistantApiKey("xai");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("get_assistant_api_key", { provider: "xai" });
+    await setAssistantApiKey("provider-a-retry", "openai");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_assistant_api_key", {
+      apiKey: "provider-a-retry", provider: "openai",
+    });
+  });
+
+  it("retains current-provider compatibility for callers without an explicit owner", async () => {
+    const { getAssistantApiKey, setAssistantApiKey } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValue(undefined);
+    await getAssistantApiKey();
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("get_assistant_api_key", { provider: undefined });
+    await setAssistantApiKey("current-provider-key");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_assistant_api_key", {
+      apiKey: "current-provider-key", provider: undefined,
+    });
+  });
+});
+
 describe("external correction learning IPC", () => {
   it("passes the explicit opt-in and opt-out values", async () => {
     const { setExternalCorrectionLearning } = await import("@/api/tauri");

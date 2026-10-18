@@ -64,7 +64,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxNzQ5RDM1RkM4NjYyQUIKUldTcllvYjhOWjEwVWJ0d1l5ZVRGVG5Iem01OTNXMnhGWGYxaHdPVnl5elZ4bzBoTVRpTXRLZW0K",
       "endpoints": [
-        "https://github.com/khentmoba/KhentWhispr/releases/latest/download/latest.json"
+        "https://github.com/khentmoba/SpeakFlow/releases/latest/download/latest.json"
       ],
       "requireSignedVersion": true,
       "windows": {

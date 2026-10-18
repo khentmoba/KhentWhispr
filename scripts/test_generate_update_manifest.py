@@ -19,7 +19,7 @@ class UpdateManifestTests(unittest.TestCase):
             platform = feed["platforms"]["windows-x86_64"]
             self.assertEqual(feed["version"], "1.0.2")
             self.assertEqual(platform["signature"], "signed-installer")
-            self.assertEqual(platform["url"], "https://github.com/khentmoba/KhentWhispr/releases/download/1.0.2/SpeakFlow_1.0.2_x64-setup.exe")
+            self.assertEqual(platform["url"], "https://github.com/khentmoba/SpeakFlow/releases/download/1.0.2/SpeakFlow_1.0.2_x64-setup.exe")
             with self.assertRaises(ValueError):
                 manifest("1.0.3", "1.0.3", installer, "")
             signature.write_text("", encoding="utf-8")

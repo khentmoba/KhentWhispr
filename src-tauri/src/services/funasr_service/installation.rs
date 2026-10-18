@@ -383,19 +383,18 @@ fn candidate_engine_download_urls() -> Vec<String> {
     let raw_tag = env!("CARGO_PKG_VERSION");
 
     urls.push(format!(
-        "https://github.com/khentmoba/KhentWhispr/releases/download/{}/engine.tar.xz",
+        "https://github.com/khentmoba/SpeakFlow/releases/download/{}/engine.tar.xz",
         raw_tag
     ));
     urls.push(format!(
-        "https://github.com/khentmoba/KhentWhispr/releases/download/{}/engine.tar.xz",
+        "https://github.com/khentmoba/SpeakFlow/releases/download/{}/engine.tar.xz",
         default_tag
     ));
     urls.push(
-        "https://github.com/khentmoba/KhentWhispr/releases/latest/download/engine.tar.xz"
-            .to_string(),
+        "https://github.com/khentmoba/SpeakFlow/releases/latest/download/engine.tar.xz".to_string(),
     );
-    urls.push("https://ghproxy.net/https://github.com/khentmoba/KhentWhispr/releases/latest/download/engine.tar.xz".to_string());
-    urls.push("https://mirror.ghproxy.com/https://github.com/khentmoba/KhentWhispr/releases/latest/download/engine.tar.xz".to_string());
+    urls.push("https://ghproxy.net/https://github.com/khentmoba/SpeakFlow/releases/latest/download/engine.tar.xz".to_string());
+    urls.push("https://mirror.ghproxy.com/https://github.com/khentmoba/SpeakFlow/releases/latest/download/engine.tar.xz".to_string());
 
     urls
 }

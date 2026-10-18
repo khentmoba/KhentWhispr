@@ -97,9 +97,8 @@ pub async fn install_app_update(
     Ok(())
 }
 
-const GITHUB_RELEASE_API: &str =
-    "https://api.github.com/repos/khentmoba/KhentWhispr/releases/latest";
-const GITHUB_RELEASES_URL: &str = "https://github.com/khentmoba/KhentWhispr/releases";
+const GITHUB_RELEASE_API: &str = "https://api.github.com/repos/khentmoba/SpeakFlow/releases/latest";
+const GITHUB_RELEASES_URL: &str = "https://github.com/khentmoba/SpeakFlow/releases";
 const UPDATER_USER_AGENT: &str = concat!("speak-flow/", env!("CARGO_PKG_VERSION"));
 const UPDATER_REQUEST_TIMEOUT_SECS: u64 = 15;
 /// 限制 `open_app_release_page` 可打开的 host 白名单。命令是从前端传 URL
@@ -355,7 +354,7 @@ mod validation_tests {
         assert_eq!(info.latest_version.as_deref(), Some("1.0.1"));
         assert_eq!(
             info.release_url.as_deref(),
-            Some("https://github.com/khentmoba/KhentWhispr/releases/tag/v1.0.1")
+            Some("https://github.com/khentmoba/SpeakFlow/releases/tag/v1.0.1")
         );
     }
 

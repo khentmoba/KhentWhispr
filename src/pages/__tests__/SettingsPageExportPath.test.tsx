@@ -576,7 +576,7 @@ describe("SettingsPage app updates", () => {
   it("reports that this project has no published releases without showing an error", async () => {
     tauriMock.checkAppUpdate.mockResolvedValueOnce({
       available: false, currentVersion: "1.0.0", latestVersion: null,
-      releaseUrl: "https://github.com/khentmoba/KhentWhispr/releases",
+      releaseUrl: "https://github.com/khentmoba/SpeakFlow/releases",
     });
     const { default: SettingsPage } = await import("@/pages/SettingsPage");
     render(<SettingsPage active onNavigate={vi.fn()} />);
@@ -587,7 +587,7 @@ describe("SettingsPage app updates", () => {
   });
 
   it("shows an available version and installs it in the app on the follow-up action", async () => {
-    const releaseUrl = "https://github.com/khentmoba/KhentWhispr/releases/tag/v1.6.0";
+    const releaseUrl = "https://github.com/khentmoba/SpeakFlow/releases/tag/v1.6.0";
     const updateInfo: AppUpdateInfo = {
       available: true,
       currentVersion: "1.5.9",
@@ -676,7 +676,7 @@ describe("SettingsPage app updates", () => {
       available: true,
       currentVersion: "1.5.9",
       latestVersion: "1.6.0",
-      releaseUrl: "https://github.com/khentmoba/KhentWhispr/releases/tag/v1.6.0",
+      releaseUrl: "https://github.com/khentmoba/SpeakFlow/releases/tag/v1.6.0",
     } satisfies AppUpdateInfo);
     tauriMock.installAppUpdate.mockRejectedValueOnce(new Error("signature verification failed"));
 

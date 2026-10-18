@@ -61,6 +61,7 @@ fn emit_recording_state(
 }
 
 fn emit_start_error(app_handle: &tauri::AppHandle, snapshot: &RecordingSnapshot, error: &str) {
+    audio_service::flush_pending_paste(app_handle);
     emit_recording_state(app_handle, snapshot, false, false, false, Some(error));
     let _ = app_handle.emit(
         "recording-outcome",
@@ -96,6 +97,8 @@ pub(crate) async fn start_recording_with_start_owner(
 ) -> Result<u64, AppError> {
     crate::services::external_correction_service::cancel();
     let lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
+    // Starting a recording and dispatching queued output share the same boundary.
+    let paste_guard = state.recording.paste_dispatch.lock().await;
     if !state.is_funasr_ready() {
         return Err(AppError::Audio(RECORDING_NOT_READY_ERROR.into()));
     }
@@ -103,6 +106,7 @@ pub(crate) async fn start_recording_with_start_owner(
     // 在任何字幕窗口/异步任务启动前抓取目标应用。后续收尾可能延迟数秒，
     // 不能再读取届时的前台窗口来决定历史或截图策略。
     let foreground_app = crate::utils::foreground::get_foreground_app();
+    let paste_target = crate::services::selection_service::foreground_window_id();
 
     let (session_id, show_gen, stop_flag, stop_notify, starting_snapshot) = {
         let mut guard = state.recording.recording.lock();
@@ -153,6 +157,7 @@ pub(crate) async fn start_recording_with_start_owner(
         (session_id, show_gen, stop_flag, stop_notify, snapshot)
     };
     audio_service::stop_microphone_level_monitor(state);
+    drop(paste_guard);
     drop(lifecycle_guard);
 
     emit_recording_state(&app_handle, &starting_snapshot, true, false, false, None);
@@ -216,6 +221,7 @@ pub(crate) async fn start_recording_with_start_owner(
                 native_recording: None,
                 interim_cache,
                 foreground_app: foreground_app.clone(),
+                paste_target,
                 edit_grab: edit_grab.take(),
             })
             .await;
@@ -327,6 +333,7 @@ pub(crate) async fn start_recording_with_start_owner(
         native_recording,
         interim_cache,
         foreground_app,
+        paste_target,
         edit_grab: edit_grab.take(),
     });
 
@@ -438,6 +445,8 @@ pub(crate) async fn stop_recording_inner(
         };
         (recording, transition)
     };
+
+    audio_service::flush_pending_paste(&app_handle);
 
     let session = match recording {
         None => {

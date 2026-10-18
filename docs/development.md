@@ -13,8 +13,8 @@ Build on Windows 10/11 x64:
 Python 3.11 is selected by `.python-version`; the project supports Python 3.11–3.12. `uv` manages this environment.
 
 ```bash
-git clone https://github.com/khentmoba/KhentWhispr.git
-cd speak-flow
+git clone https://github.com/khentmoba/SpeakFlow.git
+cd SpeakFlow
 
 pnpm install --frozen-lockfile
 uv sync --frozen
@@ -74,6 +74,14 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked -- --skip services::qwen_hotword_service::tests::hotword_correction_p95_stays_below_one_millisecond
 git diff --check
+```
+
+The ported async-ownership fixes also have focused correspondence checks:
+
+```powershell
+python scripts/test_async_ownership_traces.py
+python scripts/test_async_output_wiring.py
+python scripts/check_formal.py --inventory-only
 ```
 
 CI measures the skipped timing-sensitive hotword benchmark separately as advisory.
