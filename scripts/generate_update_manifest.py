@@ -22,7 +22,7 @@ def manifest(version: str, tag: str, installer: Path, notes: str) -> dict:
         "pub_date": datetime.now(timezone.utc).isoformat(),
         "platforms": {
             "windows-x86_64": {
-                "url": f"https://github.com/khentmoba/KhentWhispr/releases/download/{quote(tag, safe='')}/{installer.name}",
+                "url": f"https://github.com/khentmoba/SpeakFlow/releases/download/{quote(tag, safe='')}/{installer.name}",
                 "signature": signature,
             },
         },

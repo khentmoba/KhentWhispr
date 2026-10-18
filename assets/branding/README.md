@@ -2,7 +2,7 @@
 
 Official vector and raster branding assets for **SpeakFlow** — local and cloud speech-to-text dictation for Windows.
 
-> **Name Rule:** The application name is strictly **SpeakFlow** (CamelCase, single word). Never use the legacy working-name "KhentWhispr".
+> **Name Rule:** The application name is strictly **SpeakFlow** (CamelCase, single word). Use this name consistently across the app and repository.
 
 ---
 
@@ -80,4 +80,4 @@ The SpeakFlow visual identity is rooted in the product's core interaction model:
    - Use `speakflow-logo-horizontal.svg` / `.png` on white and light neutral surfaces (`#FFFFFF`, `#F5F6F7`, `#EFF1F3`).
    - Use `speakflow-logo-horizontal-dark.svg` / `.png` on obsidian and dark neutral surfaces (`#1A1917`, `#232220`, `#111111`).
 3. **No Distortion:** Do not stretch, skew, rotate, or alter the proportional relationship between the mark and the logotype.
-4. **Name Integrity:** Always spell as **SpeakFlow** (never "Speak Flow", "speakflow", or "KhentWhispr").
+4. **Name Integrity:** Always spell as **SpeakFlow** (never "Speak Flow" or "speakflow").

@@ -8,16 +8,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/khentmoba/KhentWhispr/releases/latest"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/khentmoba/SpeakFlow/releases/latest"><strong>Download for Windows</strong></a>
   &nbsp; · &nbsp; <a href="#get-started">Get started</a>
-  &nbsp; · &nbsp; <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 ---
 
 ## Get started
 
-1. **Install.** Download the lightweight Windows 10/11 x64 installer `*_x64-setup.exe` (~20 MB) from [Releases](https://github.com/khentmoba/KhentWhispr/releases/latest). App updates are equally compact (~20 MB). When using local ASR, the recognition engine runtime downloads automatically inside the app on first setup (or offline `engine.tar.xz` can be placed in `resources/`); no separate Python or build tools are needed.
+1. **Install.** Download the lightweight Windows 10/11 x64 installer `*_x64-setup.exe` (~20 MB) from [Releases](https://github.com/khentmoba/SpeakFlow/releases/latest). App updates are equally compact (~20 MB). When using local ASR, the recognition engine runtime downloads automatically inside the app on first setup (or offline `engine.tar.xz` can be placed in `resources/`); no separate Python or build tools are needed.
 2. **Choose an engine.** Open Settings, select your microphone, then download a local model or configure a cloud API key and region.
 3. **Speak.** Focus the app you want to type into, hold <kbd>F2</kbd>, speak, then release. You can change the hotkey or switch to toggle recording in Settings.
 
@@ -96,7 +95,7 @@ was submitted on October 7, 2026; review is pending. Approval and a verified
 hosted build are required before signed downloads can be published.
 See the [Code signing policy](docs/code-signing.md).
 
-[Download releases](https://github.com/khentmoba/KhentWhispr/releases/latest).
+[Download releases](https://github.com/khentmoba/SpeakFlow/releases/latest).
 
 ## For developers
 

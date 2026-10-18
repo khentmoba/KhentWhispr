@@ -339,7 +339,7 @@ main() {
     candidate_sha="$(git rev-parse HEAD)"
     wait_for_ci "$candidate_sha"
     publish_release "$candidate_sha"
-    echo "=== 发布完成: https://github.com/khentmoba/KhentWhispr/releases/tag/${TAG} ==="
+    echo "=== 发布完成: https://github.com/khentmoba/SpeakFlow/releases/tag/${TAG} ==="
 }
 
 main "$@"

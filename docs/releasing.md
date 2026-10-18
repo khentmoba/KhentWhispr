@@ -1,7 +1,7 @@
 # Releases
 
 Build installers locally. GitHub Actions checks source code; it does not build or upload installers.
-Write documentation and release notes in concise English. Keep only `README.zh-CN.md` as a Chinese companion.
+Write the README, documentation and release notes in concise English.
 
 ## Prepare
 

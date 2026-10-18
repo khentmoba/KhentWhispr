@@ -24,14 +24,14 @@ describe("license metadata contract", () => {
     expect(tauriConfig.bundle.licenseFile).toBe("../LICENSE");
   });
 
-  it("keeps the README positioning and license badge consistent", () => {
-    for (const path of ["README.md", "README.zh-CN.md"]) {
-      const contents = read(path);
-      expect(contents).toContain("GPL-3.0-only");
-      expect(contents).toMatch(/open-source|开源/);
-      expect(contents).not.toContain("PolyForm");
-      expect(contents).not.toContain("CC BY-NC");
-    }
+  it("keeps the English README positioning and license consistent", () => {
+    const contents = read("README.md");
+    expect(contents).toContain("GPL-3.0-only");
+    expect(contents).toContain("open-source");
+    expect(contents).not.toContain("PolyForm");
+    expect(contents).not.toContain("CC BY-NC");
+    expect(contents).not.toMatch(/\p{Script=Han}/u);
+    expect(contents).not.toContain("README.zh-CN.md");
   });
 
   it("preserves project and third-party notices in source and bundles", () => {
