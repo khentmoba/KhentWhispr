@@ -22,7 +22,11 @@ pub fn capture() -> Option<Snapshot> {
 fn capture_field(expected: Option<&Snapshot>) -> Option<Snapshot> {
     #[cfg(target_os = "windows")]
     {
-        use uiautomation::{patterns::UITextPattern, UIAutomation};
+        use uiautomation::{
+            patterns::{UITextPattern, UIValuePattern},
+            types::ControlType,
+            UIAutomation,
+        };
         use windows_sys::Win32::{
             System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
             UI::WindowsAndMessaging::GetForegroundWindow,
@@ -46,18 +50,47 @@ fn capture_field(expected: Option<&Snapshot>) -> Option<Snapshot> {
         if focused.is_password().ok()? || focused.get_process_id().ok()? == std::process::id() {
             return None;
         }
-        let field = focused.get_runtime_id().ok()?;
+        let walker = automation.get_control_view_walker().ok()?;
+        let mut candidate = focused.clone();
+        let mut input = focused.clone();
+        // Editors may focus a child of the input; track the input, not that child.
+        for _ in 0..6 {
+            if candidate.get_process_id().ok()? != focused.get_process_id().ok()? {
+                break;
+            }
+            if candidate.is_password().ok()? {
+                return None;
+            }
+            if candidate.get_control_type().ok()? == ControlType::Edit {
+                input = candidate;
+                break;
+            }
+            let Ok(parent) = walker.get_parent(&candidate) else {
+                break;
+            };
+            candidate = parent;
+        }
+        let field = input.get_runtime_id().ok()?;
         if field.is_empty() || expected.is_some_and(|s| s.field != field) {
             return None;
         }
-        // ValuePattern has no bounded read; skip fields that expose only that pattern.
-        let text = focused
+        let text = input
             .get_pattern::<UITextPattern>()
-            .ok()?
-            .get_document_range()
-            .ok()?
-            .get_text(MAX_TEXT as i32 + 1)
-            .ok()?;
+            .ok()
+            .and_then(|pattern| pattern.get_document_range().ok())
+            .and_then(|range| range.get_text(MAX_TEXT as i32 + 1).ok())
+            .or_else(|| {
+                // Never fall back to reading an ancestor document or a read-only value.
+                if input.get_control_type().ok()? != ControlType::Edit {
+                    return None;
+                }
+                let value = input.get_pattern::<UIValuePattern>().ok()?;
+                if value.is_readonly().ok()? {
+                    return None;
+                }
+                // shortcut: ValuePattern has no bounded read; reject oversized values below.
+                value.get_value().ok()
+            })?;
         if text.encode_utf16().count() > MAX_TEXT
             || unsafe { GetForegroundWindow() } as isize != window
             || !automation
@@ -69,7 +102,7 @@ fn capture_field(expected: Option<&Snapshot>) -> Option<Snapshot> {
         Some(Snapshot {
             window,
             field,
-            text,
+            text: normalize_line_endings(&text),
         })
     }
     #[cfg(not(target_os = "windows"))]
@@ -77,6 +110,11 @@ fn capture_field(expected: Option<&Snapshot>) -> Option<Snapshot> {
         let _ = expected;
         None
     }
+}
+
+// UI Automation providers expose multiline inputs as CRLF, CR, or LF.
+fn normalize_line_endings(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 // Require a uniquely identifiable insertion; never guess which duplicate was pasted.
@@ -234,6 +272,7 @@ pub fn watch(app: tauri::AppHandle, before: Snapshot, pasted: String, generation
 
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
+        let pasted = normalize_line_endings(&pasted);
         let active = || {
             GENERATION.load(Ordering::SeqCst) == generation
                 && state.with_profile(|p| p.external_correction_learning)
@@ -318,19 +357,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn learning_is_opt_in_and_survives_profile_round_trip() {
+    fn learning_defaults_on_and_preserves_an_explicit_opt_out() {
         use crate::state::user_profile::UserProfile;
+        assert!(UserProfile::default().external_correction_learning);
         let mut legacy = serde_json::to_value(UserProfile::default()).unwrap();
         legacy
             .as_object_mut()
             .unwrap()
             .remove("external_correction_learning");
         let mut profile: UserProfile = serde_json::from_value(legacy).unwrap();
-        assert!(!profile.external_correction_learning);
-        profile.external_correction_learning = true;
+        assert!(profile.external_correction_learning);
+        profile.external_correction_learning = false;
         let loaded: UserProfile =
             serde_json::from_str(&serde_json::to_string(&profile).unwrap()).unwrap();
-        assert!(loaded.external_correction_learning);
+        assert!(!loaded.external_correction_learning);
     }
 
     #[test]
@@ -371,6 +411,23 @@ mod tests {
         assert_eq!(corrections("teh hello!", "the hello?"), None);
         assert_eq!(corrections("teh hello", "the goodbye"), None);
         assert_eq!(corrections("hello", "hello"), None);
+    }
+
+    #[test]
+    fn matches_multiline_pastes_across_windows_text_providers() {
+        let before = normalize_line_endings("Before\r\n\r\nafter");
+        let pasted = normalize_line_endings("teh\nrecieve");
+        for raw in [
+            "Before\r\nteh\r\nrecieve\r\nafter",
+            "Before\rteh\rrecieve\rafter",
+            "Before\nteh\nrecieve\nafter",
+        ] {
+            let baseline = normalize_line_endings(raw);
+            let (prefix, suffix) = insertion(&before, &baseline, &pasted).unwrap();
+            let edited = normalize_line_endings("Before\r\nthe\r\nreceive\r\nafter");
+            let edited = passage(&edited, prefix, suffix).unwrap();
+            assert_eq!(corrections(&pasted, edited).unwrap().len(), 2);
+        }
     }
 
     #[test]

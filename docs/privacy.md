@@ -30,13 +30,17 @@ sharing them. Data and log locations are documented in
 
 ## Learning corrections in other apps
 
-The optional **Learn corrections in other apps** setting is off by default.
+**Learn corrections in other apps** is enabled by default for new profiles and
+older profiles without a saved setting; an explicitly saved off setting is preserved.
+You can disable it in Settings under Correction Rules.
 On Windows, SpeakFlow briefly reads the accessible text of the field receiving
-an automatic paste (limited to 16,384 UTF-16 code units), identifies the inserted passage,
+an automatic paste, skips fields exceeding 16,384 UTF-16 code units, identifies the inserted passage,
 and watches that same focused field for up to 60 seconds. Password fields and
 SpeakFlow itself are excluded. Switching focus, starting another recording,
 disabling the setting or making another paste stops observation. Unsupported
 fields and ambiguous edits are skipped; no keys or screenshots are recorded.
+Text-pattern reads are bounded; value-only inputs require reading the full value
+before checking its size.
 
 Comparison is local and does not call an LLM. Temporary field text is not saved
 or logged; only the learned word correction is stored in your local profile.

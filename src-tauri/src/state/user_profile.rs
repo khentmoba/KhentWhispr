@@ -109,10 +109,10 @@ pub struct R2T2Config {
     pub language: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserProfile {
-    /// Opt-in local learning from edits in the field receiving automatic dictation.
-    #[serde(default)]
+    /// Local learning from edits in the field receiving automatic dictation; enabled by default.
+    #[serde(default = "default_external_correction_learning")]
     pub external_correction_learning: bool,
     /// 开机自启动时隐藏主窗口，仅保留系统托盘入口。
     #[serde(default)]
@@ -175,6 +175,42 @@ pub struct UserProfile {
     /// 按前台应用匹配的听写覆盖规则；顺序即优先级，首个匹配项生效
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub app_profile_rules: Vec<AppProfileRule>,
+}
+
+fn default_external_correction_learning() -> bool {
+    true
+}
+
+impl Default for UserProfile {
+    fn default() -> Self {
+        Self {
+            external_correction_learning: default_external_correction_learning(),
+            autostart_minimized: Default::default(),
+            r2t2: Default::default(),
+            hot_words: Default::default(),
+            correction_patterns: Default::default(),
+            vocab_frequency: Default::default(),
+            total_transcriptions: Default::default(),
+            last_updated: Default::default(),
+            llm_provider: Default::default(),
+            jev: Default::default(),
+            translation_target: Default::default(),
+            translation_hotkey: Default::default(),
+            custom_prompt: Default::default(),
+            polish_structure_level: Default::default(),
+            assistant_hotkey: Default::default(),
+            assistant_system_prompt: Default::default(),
+            assistant_screen_context_enabled: Default::default(),
+            ai_polish_screen_context_enabled: Default::default(),
+            selection_assistant: Default::default(),
+            blocked_hot_words: Default::default(),
+            web_search: Default::default(),
+            correction_validation_enabled: Default::default(),
+            last_correction_validation: Default::default(),
+            history_settings: Default::default(),
+            app_profile_rules: Default::default(),
+        }
+    }
 }
 
 fn default_history_enabled() -> bool {
