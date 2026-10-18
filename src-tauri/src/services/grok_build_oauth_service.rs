@@ -192,24 +192,24 @@ fn read_session_meta_at(
     match std::fs::read_to_string(path) {
         Ok(raw) => {
             let value: serde_json::Value = serde_json::from_str(&raw)
-                .map_err(|_| "读取 Grok Build OAuth 元数据失败".to_string())?;
+                .map_err(|_| "Failed to read Grok Build OAuth metadata".to_string())?;
             let object = value
                 .as_object()
-                .ok_or_else(|| "读取 Grok Build OAuth 元数据失败".to_string())?;
+                .ok_or_else(|| "Failed to read Grok Build OAuth metadata".to_string())?;
             if !object.keys().any(|key| {
                 matches!(
                     key.as_str(),
                     "logged_out" | "expires_at_ms" | "account_id" | "email" | "plan_type"
                 )
             }) {
-                return Err("读取 Grok Build OAuth 元数据失败".to_string());
+                return Err("Failed to read Grok Build OAuth metadata".to_string());
             }
             serde_json::from_value(value)
                 .map(Some)
-                .map_err(|_| "读取 Grok Build OAuth 元数据失败".to_string())
+                .map_err(|_| "Failed to read Grok Build OAuth metadata".to_string())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(_) => Err("读取 Grok Build OAuth 元数据失败".to_string()),
+        Err(_) => Err("Failed to read Grok Build OAuth metadata".to_string()),
     }
 }
 
@@ -222,8 +222,9 @@ fn write_metadata_at(
     metadata: &PersistedGrokBuildOauthSession,
 ) -> Result<(), String> {
     let raw = serde_json::to_vec(metadata)
-        .map_err(|_| "序列化 Grok Build OAuth 元数据失败".to_string())?;
-    paths::atomic_write(path, &raw).map_err(|_| "保存 Grok Build OAuth 元数据失败".to_string())
+        .map_err(|_| "Failed to serialize Grok Build OAuth metadata".to_string())?;
+    paths::atomic_write(path, &raw)
+        .map_err(|_| "Failed to save Grok Build OAuth metadata".to_string())
 }
 
 fn write_session_meta(session: &GrokBuildOauthSession) -> Result<(), String> {
@@ -249,7 +250,7 @@ fn load_session_from_storage(app_handle: &tauri::AppHandle) -> Option<GrokBuildO
     let meta = match read_session_meta() {
         Ok(meta) => meta,
         Err(_) => {
-            log::warn!("忽略不可读的 Grok Build OAuth 元数据");
+            log::warn!("Ignoring unreadable Grok Build OAuth metadata");
             return None;
         }
     };
@@ -298,11 +299,11 @@ fn save_session_to_storage(
             SESSION_REFRESH_TOKEN_KEYRING_USER,
             &session.refresh_token,
         )
-        .map_err(|_| "保存 Grok Build OAuth refresh token 失败".to_string())?;
+        .map_err(|_| "Failed to save Grok Build OAuth refresh token".to_string())?;
     delete_keyring_password(
         app_handle,
         SESSION_KEYRING_USER,
-        "删除 Grok Build OAuth legacy 会话",
+        "delete Grok Build OAuth legacy session",
     )?;
     // Commit valid metadata last; any earlier failure leaves the intent marker.
     write_session_meta(session)
@@ -315,7 +316,7 @@ fn delete_keyring_password(
 ) -> Result<(), String> {
     match app_handle.keyring().delete_password(KEYRING_SERVICE, user) {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(_) => Err(format!("{description} 失败")),
+        Err(_) => Err(format!("Failed to {description}")),
     }
 }
 
@@ -327,14 +328,14 @@ fn clear_session_from_storage(app_handle: &tauri::AppHandle) -> Result<(), Strin
     if let Err(error) = delete_keyring_password(
         app_handle,
         SESSION_KEYRING_USER,
-        "删除 Grok Build OAuth legacy 会话",
+        "delete Grok Build OAuth legacy session",
     ) {
         errors.push(error);
     }
     if let Err(error) = delete_keyring_password(
         app_handle,
         SESSION_REFRESH_TOKEN_KEYRING_USER,
-        "删除 Grok Build OAuth refresh token",
+        "delete Grok Build OAuth refresh token",
     ) {
         errors.push(error);
     }
@@ -342,7 +343,7 @@ fn clear_session_from_storage(app_handle: &tauri::AppHandle) -> Result<(), Strin
         match std::fs::remove_file(session_meta_path()) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => errors.push("删除 Grok Build OAuth 元数据失败".to_string()),
+            Err(_) => errors.push("Failed to delete Grok Build OAuth metadata".to_string()),
         }
     }
     if errors.is_empty() {
@@ -452,7 +453,7 @@ fn generate_state() -> String {
 
 fn form_encode(pairs: &[(&str, &str)]) -> Result<String, String> {
     Ok(reqwest::Url::parse_with_params("http://localhost", pairs)
-        .map_err(|err| format!("构造 OAuth 表单失败: {err}"))?
+        .map_err(|err| format!("Failed to construct OAuth form: {err}"))?
         .query()
         .unwrap_or_default()
         .to_string())
@@ -482,7 +483,7 @@ fn callback_html(title: &str, message: &str, auto_close: bool) -> String {
     let title = html_escape(title);
     let message = html_escape(message);
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title}</title><style>body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#111827;color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Helvetica Neue','Segoe UI','Microsoft YaHei UI',system-ui,sans-serif;font-weight:400;letter-spacing:-.008em;text-align:center}}h1{{margin:0;font-size:34px;line-height:1.2;font-weight:700;letter-spacing:-.02em}}p{{margin:0;font-size:21px;line-height:1.65;white-space:pre-wrap}}</style></head><body><div style=\"max-width:680px;padding:48px 32px;display:flex;flex-direction:column;align-items:center;gap:18px;\"><h1>{title}</h1><p>{message}</p></div>{script}</body></html>"
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title}</title><style>body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#111827;color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Segoe UI',system-ui,sans-serif;font-weight:400;letter-spacing:-.008em;text-align:center}}h1{{margin:0;font-size:34px;line-height:1.2;font-weight:700;letter-spacing:-.02em}}p{{margin:0;font-size:21px;line-height:1.65;white-space:pre-wrap}}</style></head><body><div style=\"max-width:680px;padding:48px 32px;display:flex;flex-direction:column;align-items:center;gap:18px;\"><h1>{title}</h1><p>{message}</p></div>{script}</body></html>"
     )
 }
 
@@ -499,15 +500,15 @@ async fn respond_with_html(
     stream
         .write_all(response.as_bytes())
         .await
-        .map_err(|err| format!("写入 OAuth 回调响应失败: {err}"))?;
+        .map_err(|err| format!("Failed to write OAuth callback response: {err}"))?;
     stream
         .write_all(body)
         .await
-        .map_err(|err| format!("写入 OAuth 回调响应体失败: {err}"))?;
+        .map_err(|err| format!("Failed to write OAuth callback response body: {err}"))?;
     stream
         .flush()
         .await
-        .map_err(|err| format!("刷新 OAuth 回调响应失败: {err}"))
+        .map_err(|err| format!("Failed to flush OAuth callback response: {err}"))
 }
 
 async fn bind_callback_listener() -> Result<TcpListener, String> {
@@ -515,7 +516,7 @@ async fn bind_callback_listener() -> Result<TcpListener, String> {
         .await
         .map_err(|err| {
             format!(
-                "无法占用 Grok Build OAuth 回调端口 {CALLBACK_PORT}，请关闭占用该端口的程序或改用设备码登录: {err}"
+                "Unable to bind Grok Build OAuth callback port {CALLBACK_PORT}. Please close the application using this port or switch to device code sign-in: {err}"
             )
         })
 }
@@ -542,7 +543,7 @@ async fn wait_for_callback_with_timeout(
             let (mut stream, _) = listener
                 .accept()
                 .await
-                .map_err(|err| format!("接受 Grok Build OAuth 回调失败: {err}"))?;
+                .map_err(|err| format!("Failed to accept Grok Build OAuth callback: {err}"))?;
             let Some(url) = super::oauth_callback::read_callback_url(&mut stream).await else {
                 continue;
             };
@@ -574,8 +575,8 @@ async fn wait_for_callback_with_timeout(
                     .map(String::as_str)
                     .filter(|value| !value.trim().is_empty());
                 let message = match description {
-                    Some(description) => format!("Grok Build OAuth 登录失败: {description}"),
-                    None => format!("Grok Build OAuth 登录失败: {error_code}"),
+                    Some(description) => format!("Grok Build OAuth sign-in failed: {description}"),
+                    None => format!("Grok Build OAuth sign-in failed: {error_code}"),
                 };
                 let html = callback_html("Authorization Failed", &message, false);
                 let _ = respond_with_html(&mut stream, "200 OK", &html).await;
@@ -600,7 +601,7 @@ async fn wait_for_callback_with_timeout(
         }
     })
     .await
-    .map_err(|_| "等待 Grok Build OAuth 回调超时，请重试。".to_string())?
+    .map_err(|_| "Grok Build OAuth callback timed out. Please try again.".to_string())?
 }
 
 fn build_authorize_url(code_challenge: &str, state: &str) -> Result<String, String> {
@@ -616,7 +617,7 @@ fn build_authorize_url(code_challenge: &str, state: &str) -> Result<String, Stri
             ("state", state),
         ],
     )
-    .map_err(|err| format!("构造 Grok Build OAuth 地址失败: {err}"))?;
+    .map_err(|err| format!("Failed to construct Grok Build OAuth URL: {err}"))?;
     Ok(url.to_string())
 }
 
@@ -668,18 +669,22 @@ async fn exchange_code_for_tokens(
         ])?)
         .send()
         .await
-        .map_err(|err| format!("OAuth 授权码换 token 失败: {err}"))?;
+        .map_err(|err| format!("Failed to exchange OAuth authorization code for token: {err}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(oauth_http_error("OAuth 授权码换 token 失败", status, &body));
+        return Err(oauth_http_error(
+            "Failed to exchange OAuth authorization code for token",
+            status,
+            &body,
+        ));
     }
 
     response
         .json::<TokenResponse>()
         .await
-        .map_err(|err| format!("解析 OAuth token 响应失败: {err}"))
+        .map_err(|err| format!("Failed to parse OAuth token response: {err}"))
 }
 
 async fn request_device_code(
@@ -692,13 +697,13 @@ async fn request_device_code(
         .body(form_encode(&[("client_id", CLIENT_ID), ("scope", SCOPE)])?)
         .send()
         .await
-        .map_err(|err| format!("请求 Grok Build 设备码失败: {err}"))?;
+        .map_err(|err| format!("Failed to request Grok Build device code: {err}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(oauth_http_error(
-            "请求 Grok Build 设备码失败",
+            "Failed to request Grok Build device code",
             status,
             &body,
         ));
@@ -707,13 +712,13 @@ async fn request_device_code(
     let payload = response
         .json::<DeviceCodeResponse>()
         .await
-        .map_err(|err| format!("解析 Grok Build 设备码响应失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse Grok Build device code response: {err}"))?;
     let verification_url = payload
         .verification_uri
         .filter(|value| !value.trim().is_empty())
         .or(payload.verification_uri_complete.clone())
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Grok Build 设备码响应缺少验证地址".to_string())?;
+        .ok_or_else(|| "Grok Build device code response is missing verification URL".to_string())?;
 
     Ok(GrokBuildOauthDeviceCodeChallenge {
         verification_url,
@@ -743,13 +748,14 @@ async fn poll_device_code_token(
             ])?)
             .send()
             .await
-            .map_err(|err| format!("轮询 Grok Build 设备码授权失败: {err}"))?;
+            .map_err(|err| format!("Failed to poll Grok Build device code authorization: {err}"))?;
 
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         if status.is_success() {
-            return serde_json::from_str::<TokenResponse>(&body)
-                .map_err(|err| format!("解析 Grok Build 设备码 token 响应失败: {err}"));
+            return serde_json::from_str::<TokenResponse>(&body).map_err(|err| {
+                format!("Failed to parse Grok Build device code token response: {err}")
+            });
         }
 
         let error = serde_json::from_str::<OAuthErrorBody>(&body)
@@ -762,12 +768,18 @@ async fn poll_device_code_token(
                 interval = interval.saturating_add(Duration::from_secs(5));
             }
             _ => {
-                return Err(oauth_http_error("Grok Build 设备码授权失败", status, &body));
+                return Err(oauth_http_error(
+                    "Grok Build device code authorization failed",
+                    status,
+                    &body,
+                ));
             }
         }
 
         if start.elapsed() >= max_wait {
-            return Err("Grok Build 设备码登录超时，请重新开始登录。".to_string());
+            return Err(
+                "Grok Build device code sign-in timed out. Please start sign-in again.".to_string(),
+            );
         }
         let remaining = max_wait.saturating_sub(start.elapsed());
         tokio::time::sleep(interval.min(remaining)).await;
@@ -809,7 +821,7 @@ async fn refresh_tokens_at(
         .send()
         .await
         .map_err(|err| RefreshFailure {
-            message: format!("刷新 Grok Build OAuth token 失败: {err}"),
+            message: format!("Failed to refresh Grok Build OAuth token: {err}"),
             invalidate_session: false,
         })?;
 
@@ -817,7 +829,7 @@ async fn refresh_tokens_at(
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(RefreshFailure {
-            message: oauth_http_error("刷新 Grok Build OAuth token 失败", status, &body),
+            message: oauth_http_error("Failed to refresh Grok Build OAuth token", status, &body),
             invalidate_session: should_invalidate_refresh(status, &body),
         });
     }
@@ -826,7 +838,7 @@ async fn refresh_tokens_at(
         .json::<TokenResponse>()
         .await
         .map_err(|err| RefreshFailure {
-            message: format!("解析刷新 token 响应失败: {err}"),
+            message: format!("Failed to parse refresh token response: {err}"),
             invalidate_session: false,
         })
 }
@@ -848,14 +860,14 @@ fn session_from_token_response(
 ) -> Result<GrokBuildOauthSession, String> {
     let access_token = token_response.access_token.trim().to_string();
     if access_token.is_empty() {
-        return Err("OAuth 响应缺少 access_token，无法继续。".to_string());
+        return Err("OAuth response is missing access_token. Cannot continue.".to_string());
     }
     let refresh_token = token_response
         .refresh_token
         .filter(|value| !value.trim().is_empty())
         .or_else(|| previous.map(|session| session.refresh_token.clone()))
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "OAuth 响应缺少 refresh_token，无法继续。".to_string())?;
+        .ok_or_else(|| "OAuth response is missing refresh_token. Cannot continue.".to_string())?;
 
     let mut session = GrokBuildOauthSession {
         id_token: token_response
@@ -890,7 +902,10 @@ fn persist_login_session(
             save_session_to_storage(app_handle, session)
         })?;
     if !committed {
-        return Err("Grok Build OAuth 登录已被更新的操作取代，请重试。".to_string());
+        return Err(
+            "Grok Build OAuth sign-in superseded by a newer operation. Please try again."
+                .to_string(),
+        );
     }
     Ok(status)
 }
@@ -932,7 +947,7 @@ async fn refresh_session(
         if session_has_runtime_auth_material(&session) && session.access_token != old {
             let old_identity = decode_jwt_claims(old).and_then(|c| c.sub);
             if old_identity.is_none() || old_identity != session.account_id {
-                return Err("Grok 账户已切换，请重试当前操作。".into());
+                return Err("Grok account switched. Please retry the current operation.".into());
             }
             return Ok(Some(session));
         }
@@ -944,7 +959,10 @@ async fn refresh_session(
         return Ok(Some(session));
     }
     if session.refresh_token.trim().is_empty() {
-        return Err("Grok Build OAuth 会话缺少 refresh token，请重新登录。".to_string());
+        return Err(
+            "Grok Build OAuth session is missing a refresh token. Please sign in again."
+                .to_string(),
+        );
     }
 
     let token_response = match refresh_tokens(&state.http_client, &session.refresh_token).await {
@@ -963,7 +981,7 @@ async fn refresh_session(
                         return Err(format!("{}; {clear_error}", err.message));
                     }
                 }
-                return Err("Grok Build 登录已失效，请重新登录。".to_string());
+                return Err("Grok Build sign-in expired. Please sign in again.".to_string());
             }
             return Err(err.message);
         }
@@ -977,7 +995,10 @@ async fn refresh_session(
                 save_session_to_storage(app_handle, session)
             })?;
     if !committed {
-        return Err("Grok Build OAuth 会话已被更新的操作取代，请重试。".to_string());
+        return Err(
+            "Grok Build OAuth session superseded by a newer operation. Please try again."
+                .to_string(),
+        );
     }
     Ok(Some(refreshed))
 }
@@ -987,12 +1008,13 @@ pub async fn recover_rejected_auth(
     state: &AppState,
     rejected: &str,
 ) -> Result<String, String> {
-    let token = decode_grok_build_oauth_access_token(rejected).ok_or("Grok 登录信息无效")?;
+    let token =
+        decode_grok_build_oauth_access_token(rejected).ok_or("Invalid Grok sign-in credentials")?;
     let session = refresh_session(app, state, Some(&token))
         .await?
-        .ok_or("Grok 登录正在更新，请重试。")?;
+        .ok_or("Grok sign-in is updating. Please try again.")?;
     encode_grok_build_oauth_access_token(&session.access_token)
-        .ok_or("Grok 登录缺少 token，请重新登录。".into())
+        .ok_or("Grok sign-in is missing a token. Please sign in again.".into())
 }
 
 pub fn sync_runtime_session(
@@ -1010,7 +1032,7 @@ pub fn sync_runtime_session(
     };
     drop(login);
     if let Err(error) = result {
-        log::warn!("恢复 Grok Build OAuth 会话失败: {error}");
+        log::warn!("Failed to restore Grok Build OAuth session: {error}");
     }
     state.read_grok_build_oauth_session()
 }
@@ -1047,7 +1069,7 @@ pub async fn login(
     let state_token = generate_state();
     let auth_url = build_authorize_url(&code_challenge, &state_token)?;
 
-    webbrowser::open(&auth_url).map_err(|err| format!("打开浏览器失败: {err}"))?;
+    webbrowser::open(&auth_url).map_err(|err| format!("Failed to open browser: {err}"))?;
 
     let OAuthCallback { code, mut stream } = wait_for_callback(listener, state_token).await?;
     let token_response =
@@ -1080,7 +1102,7 @@ pub async fn login(
     drop(login);
     let html = callback_html(
         "Authorization Successful",
-        "可以关闭这个页面并返回轻语。",
+        "You can close this page and return to SpeakFlow.",
         true,
     );
     let _ = respond_with_html(&mut stream, "200 OK", &html).await;
@@ -1097,17 +1119,23 @@ pub async fn start_device_code_login(
     let operation = login.token();
     let challenge = request_device_code(&state.http_client).await?;
     if challenge.device_code.trim().is_empty() || challenge.user_code.trim().is_empty() {
-        return Err("Grok Build 设备码响应无效，请重试。".to_string());
+        return Err("Invalid Grok Build device code response. Please try again.".to_string());
     }
     let published = state
         .grok_build_oauth_state()
         .publish_challenge(operation, device_challenge_binding(&challenge))?;
     if !published {
-        return Err("Grok Build 设备码登录已被更新的操作取代，请重试。".to_string());
+        return Err(
+            "Grok Build device code sign-in superseded by a newer operation. Please try again."
+                .to_string(),
+        );
     }
     drop(login);
     if let Err(err) = webbrowser::open(&challenge.verification_url) {
-        log::warn!("打开 Grok Build 设备码验证页失败，前端将展示 URL: {}", err);
+        log::warn!(
+            "Failed to open Grok Build device code verification page; UI will display URL: {}",
+            err
+        );
     }
     Ok(challenge)
 }
@@ -1118,13 +1146,13 @@ pub async fn complete_device_code_login(
     challenge: GrokBuildOauthDeviceCodeChallenge,
 ) -> Result<GrokBuildOauthStatus, String> {
     if challenge.device_code.trim().is_empty() || challenge.user_code.trim().is_empty() {
-        return Err("Grok Build 设备码已失效，请重新开始登录。".to_string());
+        return Err("Grok Build device code expired. Please start sign-in again.".to_string());
     }
     let binding = device_challenge_binding(&challenge);
     let login = state
         .grok_build_oauth_state()
         .claim_challenge(&binding)
-        .ok_or_else(|| "Grok Build 设备码已失效，请重新开始登录。".to_string())?;
+        .ok_or_else(|| "Grok Build device code expired. Please start sign-in again.".to_string())?;
     let operation = login.token();
     let token_response = poll_device_code_token(&state.http_client, &challenge).await?;
     let session = session_from_token_response(token_response, None)?;
@@ -1149,7 +1177,7 @@ pub fn grok_cli_request_headers(access_token: &str) -> Result<reqwest::header::H
     headers.insert(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("Bearer {access_token}"))
-            .map_err(|err| format!("Grok Build token 包含非法字符: {err}"))?,
+            .map_err(|err| format!("Grok Build token contains invalid characters: {err}"))?,
     );
     headers.insert(USER_AGENT, HeaderValue::from_static(GROK_CLI_USER_AGENT));
     headers.insert(
@@ -1252,7 +1280,7 @@ mod storage_tests {
         else {
             panic!("partial line must not authorize login");
         };
-        assert!(error.contains("回调超时"), "{error}");
+        assert!(error.contains("timed out"), "{error}");
     }
 
     #[tokio::test]

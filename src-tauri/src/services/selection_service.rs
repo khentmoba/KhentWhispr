@@ -156,7 +156,7 @@ pub fn create_selection_window(app_handle: &tauri::AppHandle) -> Result<(), Stri
         OVERLAY_LABEL,
         tauri::WebviewUrl::App("/?window=selection".into()),
     )
-    .title("划词助手")
+    .title("Selection Assistant")
     .inner_size(TOOLBAR_WIDTH, TOOLBAR_HEIGHT)
     .transparent(true)
     .decorations(false)
@@ -167,7 +167,7 @@ pub fn create_selection_window(app_handle: &tauri::AppHandle) -> Result<(), Stri
     .shadow(false)
     .visible(false)
     .build()
-    .map_err(|error| tauri_error("创建划词助手窗口失败", error))?;
+    .map_err(|error| tauri_error("Failed to create selection assistant window", error))?;
 
     apply_no_activate_style(&window);
     Ok(())
@@ -190,14 +190,14 @@ pub fn hide_selection_window(app_handle: &tauri::AppHandle) -> Result<(), String
 
         let hwnd = window
             .hwnd()
-            .map_err(|error| format!("获取划词助手 HWND 失败: {error}"))?;
+            .map_err(|error| format!("Failed to get selection assistant HWND: {error}"))?;
         unsafe {
             ShowWindow(hwnd.0, SW_HIDE);
         }
         if unsafe { IsWindowVisible(hwnd.0) } != 0 {
             let detail = tauri_error
-                .map(|error| format!("Tauri={error}; Win32 SW_HIDE 后窗口仍可见"))
-                .unwrap_or_else(|| "Win32 SW_HIDE 后窗口仍可见".to_string());
+                .map(|error| format!("Tauri={error}; window remains visible after Win32 SW_HIDE"))
+                .unwrap_or_else(|| "Window remains visible after Win32 SW_HIDE".to_string());
             log::error!("{detail}");
             return Err(detail);
         }
@@ -207,7 +207,11 @@ pub fn hide_selection_window(app_handle: &tauri::AppHandle) -> Result<(), String
     #[cfg(not(target_os = "windows"))]
     {
         tauri_error
-            .map(|error| Err(format!("隐藏划词助手窗口失败: {error}")))
+            .map(|error| {
+                Err(format!(
+                    "Failed to hide selection assistant window: {error}"
+                ))
+            })
             .unwrap_or(Ok(()))
     }
 }
@@ -215,7 +219,7 @@ pub fn hide_selection_window(app_handle: &tauri::AppHandle) -> Result<(), String
 pub fn start_selection_window_drag(app_handle: &tauri::AppHandle) -> Result<(), String> {
     let window = app_handle
         .get_webview_window(OVERLAY_LABEL)
-        .ok_or_else(|| "划词助手窗口不存在".to_string())?;
+        .ok_or_else(|| "Selection assistant window does not exist".to_string())?;
 
     #[cfg(target_os = "windows")]
     {
@@ -227,13 +231,13 @@ pub fn start_selection_window_drag(app_handle: &tauri::AppHandle) -> Result<(), 
 
         let hwnd = window
             .hwnd()
-            .map_err(|error| format!("获取划词助手 HWND 失败: {error}"))?;
+            .map_err(|error| format!("Failed to get selection assistant HWND: {error}"))?;
         let mut cursor = POINT { x: 0, y: 0 };
         unsafe {
             if GetCursorPos(&mut cursor) == 0 {
                 return window
                     .start_dragging()
-                    .map_err(|error| tauri_error("启动划词窗口拖动失败", error));
+                    .map_err(|error| tauri_error("Failed to start selection window drag", error));
             }
             ReleaseCapture();
             // WM_NCLBUTTONDOWN expects screen coordinates packed into LPARAM.
@@ -250,7 +254,7 @@ pub fn start_selection_window_drag(app_handle: &tauri::AppHandle) -> Result<(), 
     {
         window
             .start_dragging()
-            .map_err(|error| tauri_error("启动划词窗口拖动失败", error))
+            .map_err(|error| tauri_error("Failed to start selection window drag", error))
     }
 }
 
@@ -260,14 +264,14 @@ pub fn set_selection_window_expanded(
 ) -> Result<(), String> {
     let window = app_handle
         .get_webview_window(OVERLAY_LABEL)
-        .ok_or_else(|| "划词助手窗口不存在".to_string())?;
+        .ok_or_else(|| "Selection assistant window does not exist".to_string())?;
     let current_position = window
         .outer_position()
-        .map_err(|error| tauri_error("读取划词助手当前位置失败", error))?;
+        .map_err(|error| tauri_error("Failed to read selection assistant position", error))?;
     let (logical_width, logical_height) = selection_window_size(expanded);
     let (x, y) = if let Some(monitor) = window
         .current_monitor()
-        .map_err(|error| tauri_error("读取划词助手所在显示器失败", error))?
+        .map_err(|error| tauri_error("Failed to read selection assistant monitor", error))?
     {
         let monitor_position = monitor.position();
         let monitor_size = monitor.size();
@@ -291,27 +295,34 @@ pub fn set_selection_window_expanded(
             .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
                 420.0, 260.0,
             ))))
-            .map_err(|error| tauri_error("设置划词助手最小尺寸失败", error))?;
+            .map_err(|error| {
+                tauri_error("Failed to set selection assistant minimum size", error)
+            })?;
     } else {
-        window
-            .set_min_size(None::<tauri::Size>)
-            .map_err(|error| tauri_error("清除划词助手最小尺寸失败", error))?;
+        window.set_min_size(None::<tauri::Size>).map_err(|error| {
+            tauri_error("Failed to clear selection assistant minimum size", error)
+        })?;
     }
     window
         .set_resizable(expanded)
-        .map_err(|error| tauri_error("切换划词助手缩放状态失败", error))?;
+        .map_err(|error| tauri_error("Failed to toggle selection assistant scaling", error))?;
 
     window
         .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
             logical_width,
             logical_height,
         )))
-        .map_err(|error| tauri_error("调整划词助手窗口尺寸失败", error))?;
+        .map_err(|error| tauri_error("Failed to resize selection assistant window", error))?;
     window
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
             x, y,
         )))
-        .map_err(|error| tauri_error("保持划词助手窗口位置失败", error))?;
+        .map_err(|error| {
+            tauri_error(
+                "Failed to preserve selection assistant window position",
+                error,
+            )
+        })?;
     show_without_activation(&window);
     Ok(())
 }
@@ -326,7 +337,7 @@ fn show_selection(
     create_selection_window(app_handle)?;
     let window = app_handle
         .get_webview_window(OVERLAY_LABEL)
-        .ok_or_else(|| "划词助手窗口创建后不存在".to_string())?;
+        .ok_or_else(|| "Selection assistant window is missing after creation".to_string())?;
     position_window(app_handle, &window, gesture, false)?;
     let version = SELECTION_VERSION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
     *CURRENT_SELECTION
@@ -356,7 +367,7 @@ fn position_window(
     let (logical_width, logical_height) = selection_window_size(expanded);
     let monitors = app_handle
         .available_monitors()
-        .map_err(|error| tauri_error("读取显示器布局失败", error))?;
+        .map_err(|error| tauri_error("Failed to read monitor layout", error))?;
     let monitor = monitors
         .iter()
         .find(|monitor| {
@@ -396,12 +407,12 @@ fn position_window(
             logical_width,
             logical_height,
         )))
-        .map_err(|error| tauri_error("调整划词助手窗口尺寸失败", error))?;
+        .map_err(|error| tauri_error("Failed to resize selection assistant window", error))?;
     window
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
             x, y,
         )))
-        .map_err(|error| tauri_error("定位划词助手窗口失败", error))?;
+        .map_err(|error| tauri_error("Failed to position selection assistant window", error))?;
     Ok(())
 }
 
@@ -1417,7 +1428,7 @@ pub fn start_selection_listener(app_handle: tauri::AppHandle) -> Result<(), Stri
     {
         *hook_sender().lock() = None;
         HOOK_ENABLED.store(false, Ordering::Release);
-        return Err(format!("启动划词处理线程失败: {error}"));
+        return Err(format!("Failed to start selection worker thread: {error}"));
     }
 
     if let Err(error) = std::thread::Builder::new()
@@ -1426,7 +1437,7 @@ pub fn start_selection_listener(app_handle: tauri::AppHandle) -> Result<(), Stri
     {
         *hook_sender().lock() = None;
         HOOK_ENABLED.store(false, Ordering::Release);
-        return Err(format!("启动划词输入监听失败: {error}"));
+        return Err(format!("Failed to start selection input listener: {error}"));
     }
     Ok(())
 }

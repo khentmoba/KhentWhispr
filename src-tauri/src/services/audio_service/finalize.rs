@@ -130,7 +130,7 @@ impl HistorySessionContext {
         )
         .await
         {
-            log::warn!("保存转写历史失败: {error}");
+            log::warn!("Failed to save transcription history: {error}");
         }
     }
 }
@@ -142,11 +142,11 @@ async fn resolve_history_audio(
         Some(task) => match task.await {
             Ok(Ok(file_name)) => Some(file_name),
             Ok(Err(error)) => {
-                log::warn!("保存历史音频失败，继续仅保存文本: {error}");
+                log::warn!("Failed to save history audio; continuing with text only: {error}");
                 None
             }
             Err(error) => {
-                log::warn!("保存历史音频任务异常，继续仅保存文本: {error}");
+                log::warn!("History audio save task panicked; continuing with text only: {error}");
                 None
             }
         },
@@ -214,7 +214,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
             .await
             .is_err()
         {
-            log::warn!("interim 任务超时 (5s)，强制中止");
+            log::warn!("Interim task timed out (5s), aborting forcibly");
             abort_handle.abort();
         }
     }
@@ -241,16 +241,16 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
             {
                 Ok(Ok(Some(selected))) => (Some(selected), EditGrabStatus::Ok),
                 Ok(Ok(None)) => {
-                    log::debug!("选中文本抓取完成：当前没有选中文本");
+                    log::debug!("Selected text capture complete: no text currently selected");
                     (None, EditGrabStatus::Empty)
                 }
                 Ok(Err(join_err)) => {
-                    log::debug!("选中文本抓取任务 join 失败: {}", join_err);
+                    log::debug!("Selected text capture task join failed: {}", join_err);
                     (None, EditGrabStatus::Unsupported)
                 }
                 Err(_) => {
                     log::warn!(
-                        "选中文本抓取超过 {}ms，按普通听写处理 (session {})",
+                        "Selected text capture exceeded {}ms; falling back to ordinary dictation (session {})",
                         EDIT_GRAB_WAIT_MS,
                         session_id
                     );
@@ -260,7 +260,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
             }
         }
         None => {
-            log::debug!("当前会话没有选中文本抓取任务");
+            log::debug!("Current session has no selected text capture task");
             (None, EditGrabStatus::Unsupported)
         }
     };
@@ -272,7 +272,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
         .as_ref()
         .is_none_or(|app| app.process_name.trim().is_empty())
     {
-        log::warn!("无法确认录音目标进程，已禁用本次屏幕上下文和历史保存");
+        log::warn!("Unable to verify target recording process; disabled screen context and history saving for this run");
     }
     let history_settings = state.with_profile(|profile| profile.history_settings.clone());
     let history_enabled = app_profile
@@ -289,7 +289,10 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
     let mode = trigger.mode();
 
     if duration_sec < MIN_AUDIO_DURATION_SEC && native_result.is_none() {
-        log::info!("录音时间过短 ({:.2}s)，跳过转写", duration_sec);
+        log::info!(
+            "Recording too short ({:.2}s), skipping transcription",
+            duration_sec
+        );
         emit_terminal_outcome(
             &app_handle,
             session_id,
@@ -306,7 +309,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
         match encode_wav(&samples.lock(), sample_rate) {
             Ok(wav) => Some(tokio::spawn(history_service::save_audio(session_id, wav))),
             Err(error) => {
-                log::warn!("编码历史音频失败，继续仅保存文本: {error}");
+                log::warn!("Failed to encode history audio; continuing with text only: {error}");
                 None
             }
         }
@@ -355,7 +358,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
             match cached {
                 Some(ref c) if can_reuse_interim(c, final_count, sample_rate) => {
                     log::info!(
-                        "复用 interim 缓存 (尾部间隙 {:.0}ms)",
+                        "Reusing interim cache (tail gap {:.0}ms)",
                         (final_count - c.sample_count) as f64 * 1000.0 / sample_rate as f64
                     );
                     (Ok(c.text.clone()), c.language.clone())
@@ -422,7 +425,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
                     polish_ms: None,
                     total_ms: Some(elapsed_ms(finalize_start)),
                 }),
-                Some("未检测到语音"),
+                Some("No speech detected"),
             )
             .await;
         emit_terminal_outcome(
@@ -443,7 +446,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
         let edit_started = Instant::now();
         // 编辑模式：ASR 结果是语音指令，用它改写选中文本
         log::info!(
-            "编辑模式：指令{}字符，选中文本{}字符",
+            "Edit mode: instruction {} chars, selected text {} chars",
             text.chars().count(),
             selected_text.chars().count()
         );
@@ -503,7 +506,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
                 }
             }
             Err(e) => {
-                log::warn!("编辑选中文本失败，不替换原文: {}", e);
+                log::warn!("Failed to edit selected text; keeping original text: {}", e);
                 let edit_elapsed_ms = elapsed_ms(edit_started);
                 let history =
                     build_history_context(resolve_history_audio(history_audio_task).await);
@@ -531,7 +534,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
                     subtitle_show_gen,
                     mode,
                     RecordingOutcomeKind::ProcessingError,
-                    &format!("编辑失败: {}", e),
+                    &format!("Edit failed: {}", e),
                 );
                 flush_pending_paste(&app_handle);
             }
@@ -584,7 +587,10 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
             let (assistant_request, screen_context_description) = match polish_outcome {
                 Ok(outcome) => (outcome.text, outcome.screen_context_description),
                 Err(err) => {
-                    log::warn!("助手请求预润色失败，使用原始转写: {}", err);
+                    log::warn!(
+                        "Assistant request pre-polish failed; using raw transcription: {}",
+                        err
+                    );
                     (original_request.clone(), None)
                 }
             };
@@ -602,7 +608,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
             .await
         };
         let timeout_message = format!(
-            "助手请求超时（{}秒），请重试",
+            "Assistant request timed out after {} seconds; please try again",
             ASSISTANT_PIPELINE_TIMEOUT_SECS
         );
         let assistant_result = crate::commands::assistant::run_cancellable_assistant_task(
@@ -610,7 +616,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
             cancel_rx,
             Duration::from_secs(ASSISTANT_PIPELINE_TIMEOUT_SECS),
             &timeout_message,
-            "助手请求已取消",
+            "Assistant request was canceled",
         )
         .await;
         crate::commands::assistant::clear_assistant_chat_task(state.inner(), assistant_generation);
@@ -661,9 +667,9 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
                 {
                     Ok(true) => {}
                     Ok(false) => {
-                        log::info!("跳过过期助手会话的字幕交互切换 (session {})", session_id)
+                        log::info!("Skipping subtitle window interactive toggle for expired assistant session (session {})", session_id)
                     }
-                    Err(err) => log::warn!("助手结果显示时切换字幕窗口交互态失败: {}", err),
+                    Err(err) => log::warn!("Failed to toggle subtitle window interactive state when displaying assistant result: {}", err),
                 }
             }
             Err(err) => {
@@ -746,7 +752,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
         );
         if requested_screen_context && !allow_screen_context {
             log::warn!(
-                "AI 润色截图已跳过：前台窗口已离开录音开始时的目标应用 (session {})",
+                "AI polish screenshot skipped: foreground window left target application from start of recording (session {})",
                 session_id
             );
         }
@@ -776,7 +782,10 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
                 (outcome.text, outcome.provider, outcome.model, timing)
             }
             Err(error) => {
-                log::warn!("AI 润色失败，保留本地纠错结果: {}", error);
+                log::warn!(
+                    "AI polish failed; retaining local correction result: {}",
+                    error
+                );
                 (text.clone(), None, None, None)
             }
         };
@@ -862,10 +871,13 @@ pub async fn discard_recording(session: RecordingSession) {
     }
     if let Some(recording) = session.native_recording {
         if let Err(error) = recording.cancel().await {
-            log::warn!("R2T2 录音取消失败: {error}");
+            log::warn!("Failed to cancel R2T2 recording: {error}");
         }
     }
-    log::info!("已丢弃录音会话 (session {})", session.session_id);
+    log::info!(
+        "Discarded recording session (session {})",
+        session.session_id
+    );
 }
 
 async fn do_final_asr(
@@ -895,7 +907,7 @@ async fn do_final_asr(
                 }
                 Err(err) => {
                     log::warn!(
-                        "最终音频重采样失败，保留原始采样率 {}Hz: {}",
+                        "Final audio resampling failed; keeping raw sample rate {}Hz: {}",
                         sample_rate,
                         err
                     );
@@ -905,7 +917,7 @@ async fn do_final_asr(
         }
         Err(err) => {
             log::warn!(
-                "最终音频重采样失败，保留原始采样率 {}Hz: {}",
+                "Final audio resampling failed; keeping raw sample rate {}Hz: {}",
                 sample_rate,
                 err
             );
@@ -915,8 +927,8 @@ async fn do_final_asr(
 
     let engine = paths::read_engine_config();
     let result = if paths::is_online_engine(&engine) {
-        let wav =
-            encode_wav(&asr_audio, asr_sample_rate).map_err(|e| format!("WAV 编码失败: {}", e))?;
+        let wav = encode_wav(&asr_audio, asr_sample_rate)
+            .map_err(|e| format!("WAV encoding failed: {}", e))?;
         match engine.as_str() {
             "alibaba-asr" => alibaba_asr_service::transcribe(state, wav).await,
             _ => glm_asr_service::transcribe(state, wav).await,
@@ -927,8 +939,10 @@ async fn do_final_asr(
 
     match result {
         Ok(r) if r.success => Ok(r),
-        Ok(r) => Err(r.error.unwrap_or_else(|| "语音识别失败".into())),
-        Err(e) => Err(format!("语音识别失败: {}", e)),
+        Ok(r) => Err(r
+            .error
+            .unwrap_or_else(|| "Speech recognition failed".into())),
+        Err(e) => Err(format!("Speech recognition failed: {}", e)),
     }
 }
 
@@ -1150,7 +1164,10 @@ async fn do_paste(app: &tauri::AppHandle, text: &str) {
     let state = app.state::<AppState>();
     if state.recording.recording.lock().is_some() {
         state.recording.pending_paste.lock().push(text.to_string());
-        log::info!("录音进行中，文本已加入待粘贴队列（{} 个字符）", text.len());
+        log::info!(
+            "Recording in progress; text queued for pasting ({} characters)",
+            text.len()
+        );
         return;
     }
 
@@ -1181,7 +1198,7 @@ async fn do_paste(app: &tauri::AppHandle, text: &str) {
                 );
             }
         }
-        Err(e) => log::error!("自动粘贴失败: {}", e),
+        Err(e) => log::error!("Automatic paste failed: {}", e),
     }
 }
 

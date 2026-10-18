@@ -6,10 +6,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RecordingProvider } from "./contexts/RecordingContext";
 import { prefersReducedMotion } from "./lib/motion";
 import MainPage from "./pages/MainPage";
+import AppNavigation from "./components/AppNavigation";
 import { useTheme } from "./hooks/useTheme";
 import i18n from "./i18n";
 import "./styles/theme.css";
 import "./styles/pages.css";
+import "./styles/workspace.css";
 
 type View = "main" | "settings" | "history";
 const loadSettingsPage = () => import("./pages/SettingsPage");
@@ -73,6 +75,8 @@ export function App() {
   // Page navigation with directional slide while only mounting the active page
   const navigateTo = useCallback((target: View) => {
     if (isTransitioning.current || target === view) return;
+    // Commit an active transcript edit before any navigation source unmounts it.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     isTransitioning.current = true;
 
     const startTransition = () => {
@@ -112,9 +116,10 @@ export function App() {
 
   return (
     <RecordingProvider>
-      <div style={{ height: "100%", width: "100%" }}>
-        <div style={{ height: "100%", width: "100%" }}>
-          <Suspense fallback={<div style={{ height: "100%", width: "100%" }} />}>
+      <div className="app-shell">
+        <AppNavigation view={view} onNavigate={navigateTo} />
+        <div className="app-workspace">
+          <Suspense fallback={<div className="workspace-loading" role="status">Loading workspace…</div>}>
             {view === "main" ? (
               <MainPage onNavigate={navigateTo} animClass={animClass} />
             ) : view === "settings" ? (

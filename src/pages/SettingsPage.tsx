@@ -222,7 +222,7 @@ export default function SettingsPage({
   }, [activeNavSection, active, t, settingsReady]);
 
   // --- Picker group (mutually exclusive dropdowns) ---
-  type PickerId = "recordingMode" | "microphone" | "language" | "alibabaModel" | "engine";
+  type PickerId = "recordingMode" | "microphone" | "alibabaModel" | "engine";
   const picker = useExclusivePicker<PickerId>();
 
   // --- Hotkey capture ---
@@ -473,16 +473,7 @@ export default function SettingsPage({
         <div className="settings-content" ref={settingsContentRef} style={{ padding: `16px ${PADDING}px 16px` }}>
           <div className="settings-sections">
 
-          <AppearanceSettingsSection
-            picker={{
-              isOpen: picker.isOpen("language"),
-              isExpanded: picker.isExpanded("language"),
-              toggle: () => picker.toggle("language"),
-              close: picker.close,
-              setRef: picker.setRef("language"),
-              popoverClass: picker.popoverClass("language"),
-            }}
-          />
+          <AppearanceSettingsSection />
 
           {/* Engine */}
           <section

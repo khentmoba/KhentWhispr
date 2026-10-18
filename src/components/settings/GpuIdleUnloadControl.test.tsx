@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import zh from "@/i18n/zh";
+import en from "@/i18n/en";
 
 const api = vi.hoisted(() => ({
   getGpuIdleSeconds: vi.fn(),
@@ -14,7 +14,7 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => {
       const [, name] = key.split(".");
-      return zh.settings[name as keyof typeof zh.settings] as string;
+      return en.settings[name as keyof typeof en.settings] as string;
     },
   }),
 }));
@@ -31,26 +31,26 @@ describe("GpuIdleUnloadControl", () => {
 
   it("starts off with the shared settings switch and no reload estimates", async () => {
     render(<GpuIdleUnloadControl />);
-    const toggle = await screen.findByRole("switch", { name: zh.settings.gpuIdleTitle });
+    const toggle = await screen.findByRole("switch", { name: en.settings.gpuIdleTitle });
     expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(toggle).toHaveClass("toggle-switch");
-    expect(screen.getByText(zh.settings.gpuIdleDesc)).toBeInTheDocument();
+    expect(screen.getByText(en.settings.gpuIdleDesc)).toBeInTheDocument();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(zh.settings.gpuIdleSeconds)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(en.settings.gpuIdleSeconds)).not.toBeInTheDocument();
     expect(screen.queryByText(/冷启动|预热|4\.8|5\.5|RTX 4070/)).not.toBeInTheDocument();
   });
 
   it("turns on at the suggested 180 seconds with a plain text field and can be switched back off", async () => {
     render(<GpuIdleUnloadControl />);
-    fireEvent.click(await screen.findByRole("switch", { name: zh.settings.gpuIdleTitle }));
+    fireEvent.click(await screen.findByRole("switch", { name: en.settings.gpuIdleTitle }));
     await waitFor(() => expect(api.setGpuIdleSeconds).toHaveBeenCalledWith(180));
-    const input = await screen.findByLabelText(zh.settings.gpuIdleSeconds);
+    const input = await screen.findByLabelText(en.settings.gpuIdleSeconds);
     expect(input).toHaveAttribute("type", "text");
     expect(input).toHaveValue("180");
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("switch", { name: zh.settings.gpuIdleTitle }));
+    fireEvent.click(screen.getByRole("switch", { name: en.settings.gpuIdleTitle }));
     await waitFor(() => expect(api.setGpuIdleSeconds).toHaveBeenLastCalledWith(0, 180));
-    await waitFor(() => expect(screen.queryByRole("textbox", { name: zh.settings.gpuIdleSeconds })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: en.settings.gpuIdleSeconds })).not.toBeInTheDocument());
     // Keep the field in the document while its containing row collapses.
     expect(input).toBeInTheDocument();
     expect(input.closest("[aria-hidden]")).toHaveAttribute("aria-hidden", "true");
@@ -62,7 +62,7 @@ describe("GpuIdleUnloadControl", () => {
     api.getGpuIdleSeconds.mockResolvedValue(180);
     const user = userEvent.setup();
     render(<GpuIdleUnloadControl />);
-    const input = await screen.findByLabelText(zh.settings.gpuIdleSeconds);
+    const input = await screen.findByLabelText(en.settings.gpuIdleSeconds);
     await user.clear(input);
     await user.type(input, "60");
     await user.click(screen.getByRole("switch"));
@@ -74,14 +74,14 @@ describe("GpuIdleUnloadControl", () => {
     api.getGpuIdleSeconds.mockResolvedValue(180);
     const user = userEvent.setup();
     render(<GpuIdleUnloadControl />);
-    const input = await screen.findByLabelText(zh.settings.gpuIdleSeconds);
+    const input = await screen.findByLabelText(en.settings.gpuIdleSeconds);
     await user.clear(input);
     await user.type(input, "60");
     await user.click(screen.getByRole("switch"));
     await waitFor(() => expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false"));
     await user.click(screen.getByRole("switch"));
     await waitFor(() => expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true"));
-    expect(screen.getByLabelText(zh.settings.gpuIdleSeconds)).toHaveValue("60");
+    expect(screen.getByLabelText(en.settings.gpuIdleSeconds)).toHaveValue("60");
     expect(api.setGpuIdleSeconds).toHaveBeenLastCalledWith(60);
   });
 
@@ -92,7 +92,7 @@ describe("GpuIdleUnloadControl", () => {
     await waitFor(() => expect(api.getGpuIdleSeconds).toHaveBeenCalled());
     await user.click(screen.getByRole("switch"));
     await waitFor(() => expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true"));
-    expect(screen.getByLabelText(zh.settings.gpuIdleSeconds)).toHaveValue("75");
+    expect(screen.getByLabelText(en.settings.gpuIdleSeconds)).toHaveValue("75");
     expect(api.setGpuIdleSeconds).toHaveBeenLastCalledWith(75);
   });
 
@@ -100,7 +100,7 @@ describe("GpuIdleUnloadControl", () => {
     api.getGpuIdleSeconds.mockResolvedValue(180);
     const user = userEvent.setup();
     render(<GpuIdleUnloadControl />);
-    const input = await screen.findByLabelText(zh.settings.gpuIdleSeconds);
+    const input = await screen.findByLabelText(en.settings.gpuIdleSeconds);
     await user.clear(input);
     await user.type(input, "45");
     await waitFor(() => expect(api.setGpuIdleSeconds).toHaveBeenLastCalledWith(45));
@@ -111,7 +111,7 @@ describe("GpuIdleUnloadControl", () => {
     api.getGpuIdleSeconds.mockResolvedValue(60);
     const user = userEvent.setup();
     render(<GpuIdleUnloadControl />);
-    const input = await screen.findByLabelText(zh.settings.gpuIdleSeconds);
+    const input = await screen.findByLabelText(en.settings.gpuIdleSeconds);
     await user.clear(input);
     await user.type(input, "0{Enter}");
     await waitFor(() => expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false"));
@@ -135,7 +135,7 @@ describe("GpuIdleUnloadControl", () => {
     api.getGpuIdleSeconds.mockResolvedValue(180);
     const user = userEvent.setup();
     render(<><GpuIdleUnloadControl /><button>Outside</button></>);
-    const input = await screen.findByLabelText(zh.settings.gpuIdleSeconds);
+    const input = await screen.findByLabelText(en.settings.gpuIdleSeconds);
     await user.clear(input);
     await user.type(input, "60{Enter}");
     await waitFor(() => expect(api.setGpuIdleSeconds).toHaveBeenLastCalledWith(60));
@@ -149,7 +149,7 @@ describe("GpuIdleUnloadControl", () => {
     api.getGpuIdleSeconds.mockResolvedValue(180);
     const user = userEvent.setup();
     render(<GpuIdleUnloadControl />);
-    const input = await screen.findByLabelText(zh.settings.gpuIdleSeconds);
+    const input = await screen.findByLabelText(en.settings.gpuIdleSeconds);
     await user.clear(input);
     await user.type(input, "60");
     await user.tab({ shift: true });

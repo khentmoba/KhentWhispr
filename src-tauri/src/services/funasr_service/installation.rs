@@ -60,7 +60,7 @@ pub async fn find_engine(
     };
     let _install_guard = state.engine.engine_install_op.lock().await;
     if !progress_gate.is_current() {
-        return Err(AppError::Asr("引擎查找已被取消".to_string()));
+        return Err(AppError::Asr("Engine lookup was cancelled".to_string()));
     }
     let expected_fingerprint = expected_engine_install_fingerprint(app_handle);
 
@@ -71,12 +71,12 @@ pub async fn find_engine(
 
         if engine_install_fingerprint_matches(&installed_version, &expected_fingerprint) {
             let path_str = paths::strip_win_prefix(&engine_path);
-            log::info!("找到引擎: {} ({})", path_str, expected_fingerprint);
+            log::info!("Found engine: {} ({})", path_str, expected_fingerprint);
             return Ok(EngineRuntime::Bundled { exe_path: path_str });
         }
 
         log::info!(
-            "引擎指纹不匹配 (已安装: {:?}, 当前: {}), 需要重新解压",
+            "Engine fingerprint mismatch (installed: {:?}, current: {}), re-extracting",
             installed_version.trim(),
             expected_fingerprint
         );
@@ -84,17 +84,20 @@ pub async fn find_engine(
 
     // 策略2：存在引擎归档，需要解压（首次启动或版本升级）
     if let Some(archive_path) = paths::get_engine_archive_path(app_handle) {
-        log::info!("找到引擎压缩包，准备解压: {}", archive_path.display());
+        log::info!(
+            "Found engine archive, preparing to extract: {}",
+            archive_path.display()
+        );
         let engine_exe = extract_engine_archive(&archive_path, app_handle, &progress_gate).await?;
         let path_str = paths::strip_win_prefix(&engine_exe);
-        log::info!("引擎解压完成: {}", path_str);
+        log::info!("Engine extraction complete: {}", path_str);
         return Ok(EngineRuntime::Bundled { exe_path: path_str });
     }
 
     // 策略3：资源目录中的 engine.exe（开发时直接 PyInstaller 输出）
     if let Some(engine_path) = paths::get_resource_engine_exe_path(app_handle) {
         let path_str = paths::strip_win_prefix(&engine_path);
-        log::info!("找到资源目录引擎: {}", path_str);
+        log::info!("Found engine in resources directory: {}", path_str);
         return Ok(EngineRuntime::Bundled { exe_path: path_str });
     }
 
@@ -104,10 +107,10 @@ pub async fn find_engine(
     }
 
     // 策略5：在线下载引擎归档（轻量化安装包首次运行或引擎升级）
-    log::info!("本地未找到可用语音引擎，尝试在线下载...");
+    log::info!("No local speech engine found; attempting online download...");
     let engine_exe = download_and_extract_engine(app_handle, &progress_gate).await?;
     let path_str = paths::strip_win_prefix(&engine_exe);
-    log::info!("引擎下载解压完成: {}", path_str);
+    log::info!("Engine download and extraction complete: {}", path_str);
     Ok(EngineRuntime::Bundled { exe_path: path_str })
 }
 
@@ -122,7 +125,7 @@ async fn extract_engine_archive(
             "funasr-status",
             serde_json::json!({
                 "status": "loading",
-                "message": "首次启动，正在解压引擎文件..."
+                "message": "First startup: extracting engine files..."
             }),
         );
     });
@@ -134,11 +137,12 @@ async fn extract_engine_archive(
 
     // 解压是 CPU 密集型 + IO 密集型，放到阻塞线程
     tokio::task::spawn_blocking(move || {
-        let parent = engine_dir
-            .parent()
-            .ok_or_else(|| AppError::Asr("引擎目录缺少父目录".to_string()))?;
-        std::fs::create_dir_all(parent)
-            .map_err(|e| AppError::Asr(format!("创建引擎父目录失败: {}", e)))?;
+        let parent = engine_dir.parent().ok_or_else(|| {
+            AppError::Asr("Engine directory missing parent directory".to_string())
+        })?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            AppError::Asr(format!("Failed to create engine parent directory: {}", e))
+        })?;
 
         let stamp = now_unix_ms();
         let staging_dir = parent.join(format!("engine.staging.{}", stamp));
@@ -148,7 +152,7 @@ async fn extract_engine_archive(
             let _ = std::fs::remove_dir_all(&staging_dir);
         }
         std::fs::create_dir_all(&staging_dir)
-            .map_err(|e| AppError::Asr(format!("创建引擎目录失败: {}", e)))?;
+            .map_err(|e| AppError::Asr(format!("Failed to create engine directory: {}", e)))?;
 
         let extract_result = (|| -> Result<usize, AppError> {
             let archive_name = archive
@@ -164,11 +168,13 @@ async fn extract_engine_archive(
             };
 
             if total == 0 {
-                return Err(AppError::Asr("引擎归档为空".to_string()));
+                return Err(AppError::Asr("Engine archive is empty".to_string()));
             }
             let staged_exe = staging_dir.join("engine.exe");
             if !staged_exe.is_file() {
-                return Err(AppError::Asr("引擎归档缺少 engine.exe".to_string()));
+                return Err(AppError::Asr(
+                    "Engine archive is missing engine.exe".to_string(),
+                ));
             }
 
             // 写入版本标记，用于后续升级检测；只写 staging，验证成功后整体替换。
@@ -177,7 +183,7 @@ async fn extract_engine_archive(
                 staging_dir.join(".version").as_path(),
                 fingerprint.as_bytes(),
             )
-            .map_err(|e| AppError::Asr(format!("写入引擎版本标记失败: {}", e)))?;
+            .map_err(|e| AppError::Asr(format!("Failed to write engine version tag: {}", e)))?;
 
             Ok(total)
         })();
@@ -193,11 +199,11 @@ async fn extract_engine_archive(
         replace_engine_dir(&engine_dir, &staging_dir, &backup_dir)?;
         let _ = std::fs::remove_dir_all(&backup_dir);
 
-        log::info!("引擎解压完成: {} 个条目", total);
+        log::info!("Engine extraction complete: {} entries", total);
         Ok(engine_dir.join("engine.exe"))
     })
     .await
-    .map_err(|e| AppError::Asr(format!("解压任务异常: {}", e)))?
+    .map_err(|e| AppError::Asr(format!("Extraction task panicked: {}", e)))?
 }
 
 pub(super) fn replace_engine_dir(
@@ -212,7 +218,7 @@ pub(super) fn replace_engine_dir(
     let had_previous = engine_dir.exists();
     if had_previous {
         std::fs::rename(engine_dir, backup_dir)
-            .map_err(|e| AppError::Asr(format!("备份旧引擎失败: {}", e)))?;
+            .map_err(|e| AppError::Asr(format!("Failed to backup old engine: {}", e)))?;
     }
 
     match std::fs::rename(staging_dir, engine_dir) {
@@ -221,14 +227,17 @@ pub(super) fn replace_engine_dir(
             if had_previous {
                 if let Err(restore_err) = std::fs::rename(backup_dir, engine_dir) {
                     return Err(AppError::Asr(format!(
-                        "替换引擎目录失败: {}; 恢复旧引擎也失败: {}（备份保留在 {}）",
+                        "Failed to replace engine directory: {}; failed to restore old engine: {} (backup kept at {})",
                         err,
                         restore_err,
                         backup_dir.display()
                     )));
                 }
             }
-            Err(AppError::Asr(format!("替换引擎目录失败: {}", err)))
+            Err(AppError::Asr(format!(
+                "Failed to replace engine directory: {}",
+                err
+            )))
         }
     }
 }
@@ -240,36 +249,37 @@ fn extract_zip_archive(
     progress_gate: &EngineProgressGate,
 ) -> Result<usize, AppError> {
     let file = std::fs::File::open(archive)
-        .map_err(|e| AppError::Asr(format!("打开引擎压缩包失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to open engine archive: {}", e)))?;
     let mut zip = zip::ZipArchive::new(file)
-        .map_err(|e| AppError::Asr(format!("读取引擎压缩包失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to read engine archive: {}", e)))?;
 
     let total = zip.len();
-    log::info!("开始解压 ZIP 引擎归档: {} 个文件", total);
+    log::info!("Starting ZIP engine archive extraction: {} files", total);
 
     for i in 0..total {
         let mut entry = zip
             .by_index(i)
-            .map_err(|e| AppError::Asr(format!("读取压缩条目失败: {}", e)))?;
+            .map_err(|e| AppError::Asr(format!("Failed to read archive entry: {}", e)))?;
 
         let entry_path = engine_dir.join(
             entry
                 .enclosed_name()
-                .ok_or_else(|| AppError::Asr("压缩包含不安全路径".to_string()))?,
+                .ok_or_else(|| AppError::Asr("Archive contains unsafe path".to_string()))?,
         );
 
         if entry.is_dir() {
             std::fs::create_dir_all(&entry_path)
-                .map_err(|e| AppError::Asr(format!("创建目录失败: {}", e)))?;
+                .map_err(|e| AppError::Asr(format!("Failed to create directory: {}", e)))?;
         } else {
             if let Some(parent) = entry_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| AppError::Asr(format!("创建父目录失败: {}", e)))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AppError::Asr(format!("Failed to create parent directory: {}", e))
+                })?;
             }
             let mut outfile = std::fs::File::create(&entry_path)
-                .map_err(|e| AppError::Asr(format!("创建文件失败: {}", e)))?;
+                .map_err(|e| AppError::Asr(format!("Failed to create file: {}", e)))?;
             std::io::copy(&mut entry, &mut outfile)
-                .map_err(|e| AppError::Asr(format!("写入文件失败: {}", e)))?;
+                .map_err(|e| AppError::Asr(format!("Failed to write file: {}", e)))?;
         }
 
         report_extract_progress(handle, progress_gate, i + 1, Some(total), false);
@@ -284,23 +294,23 @@ fn extract_tar_xz_archive(
     handle: &tauri::AppHandle,
     progress_gate: &EngineProgressGate,
 ) -> Result<usize, AppError> {
-    log::info!("开始解压 TAR.XZ 引擎归档");
+    log::info!("Starting TAR.XZ engine archive extraction");
 
     let file = std::fs::File::open(archive)
-        .map_err(|e| AppError::Asr(format!("打开引擎压缩包失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to open engine archive: {}", e)))?;
     let decoder = xz2::read::XzDecoder::new(file);
     let mut tar = tar::Archive::new(decoder);
     let mut extracted = 0usize;
 
     for entry_result in tar
         .entries()
-        .map_err(|e| AppError::Asr(format!("读取引擎压缩包失败: {}", e)))?
+        .map_err(|e| AppError::Asr(format!("Failed to read engine archive: {}", e)))?
     {
-        let mut entry =
-            entry_result.map_err(|e| AppError::Asr(format!("读取压缩条目失败: {}", e)))?;
+        let mut entry = entry_result
+            .map_err(|e| AppError::Asr(format!("Failed to read archive entry: {}", e)))?;
         entry
             .unpack_in(engine_dir)
-            .map_err(|e| AppError::Asr(format!("写入文件失败: {}", e)))?;
+            .map_err(|e| AppError::Asr(format!("Failed to write file: {}", e)))?;
         extracted += 1;
 
         report_extract_progress(handle, progress_gate, extracted, None, false);
@@ -335,7 +345,7 @@ fn report_extract_progress(
                 "funasr-status",
                 serde_json::json!({
                     "status": "loading",
-                    "message": format!("正在解压引擎文件... {}%", pct)
+                    "message": format!("Extracting engine files... {}%", pct)
                 }),
             );
         } else {
@@ -343,7 +353,7 @@ fn report_extract_progress(
                 "funasr-status",
                 serde_json::json!({
                     "status": "loading",
-                    "message": format!("正在解压引擎文件... 已处理 {} 项", current)
+                    "message": format!("Extracting engine files... {} items processed", current)
                 }),
             );
         }
@@ -401,11 +411,11 @@ async fn download_to_file(
         .get(url)
         .send()
         .await
-        .map_err(|e| AppError::Download(format!("请求失败: {e}")))?;
+        .map_err(|e| AppError::Download(format!("Request failed: {e}")))?;
 
     if !response.status().is_success() {
         return Err(AppError::Download(format!(
-            "HTTP 错误: {}",
+            "HTTP error: {}",
             response.status()
         )));
     }
@@ -414,7 +424,7 @@ async fn download_to_file(
     let mut stream = response.bytes_stream();
     let mut file = tokio::fs::File::create(target_path)
         .await
-        .map_err(|e| AppError::Download(format!("创建临时文件失败: {e}")))?;
+        .map_err(|e| AppError::Download(format!("Failed to create temporary file: {e}")))?;
 
     let mut downloaded = 0_u64;
     let mut last_percent = None;
@@ -422,13 +432,14 @@ async fn download_to_file(
     while let Some(chunk_res) = tokio_stream::StreamExt::next(&mut stream).await {
         if !progress_gate.is_current() {
             let _ = tokio::fs::remove_file(target_path).await;
-            return Err(AppError::Asr("引擎下载已被取消".to_string()));
+            return Err(AppError::Asr("Engine download was cancelled".to_string()));
         }
 
-        let chunk = chunk_res.map_err(|e| AppError::Download(format!("读取数据流失败: {e}")))?;
+        let chunk = chunk_res
+            .map_err(|e| AppError::Download(format!("Failed to read stream data: {e}")))?;
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
-            .map_err(|e| AppError::Download(format!("写入临时文件失败: {e}")))?;
+            .map_err(|e| AppError::Download(format!("Failed to write temporary file: {e}")))?;
 
         downloaded += chunk.len() as u64;
         let percent = total_size.map(|total| {
@@ -446,11 +457,14 @@ async fn download_to_file(
             let message = if let Some(total) = total_size {
                 let mb_total = (total as f64) / (1024.0 * 1024.0);
                 format!(
-                    "首次启动，正在下载语音引擎 ({:.1}MB / {:.1}MB, {}%)...",
+                    "First startup: downloading speech engine ({:.1}MB / {:.1}MB, {}%)...",
                     mb_downloaded, mb_total, pct
                 )
             } else {
-                format!("首次启动，正在下载语音引擎 ({:.1}MB)...", mb_downloaded)
+                format!(
+                    "First startup: downloading speech engine ({:.1}MB)...",
+                    mb_downloaded
+                )
             };
 
             progress_gate.commit_if_current(|| {
@@ -477,11 +491,13 @@ async fn download_to_file(
 
     tokio::io::AsyncWriteExt::flush(&mut file)
         .await
-        .map_err(|e| AppError::Download(format!("刷新临时文件失败: {e}")))?;
+        .map_err(|e| AppError::Download(format!("Failed to flush temporary file: {e}")))?;
 
     if downloaded == 0 {
         let _ = tokio::fs::remove_file(target_path).await;
-        return Err(AppError::Download("下载的引擎归档为空".into()));
+        return Err(AppError::Download(
+            "Downloaded engine archive is empty".into(),
+        ));
     }
 
     Ok(())
@@ -496,7 +512,7 @@ async fn download_and_extract_engine(
             "funasr-status",
             serde_json::json!({
                 "status": "loading",
-                "message": "首次启动，正在连接服务器下载语音引擎组件..."
+                "message": "First startup: connecting to server to download speech engine components..."
             }),
         );
         let _ = app_handle.emit(
@@ -506,7 +522,7 @@ async fn download_and_extract_engine(
                 "model": "engine",
                 "progress": 0,
                 "overall_progress": 0,
-                "message": "首次启动，正在连接服务器下载语音引擎组件..."
+                "message": "First startup: connecting to server to download speech engine components..."
             }),
         );
     });
@@ -514,7 +530,7 @@ async fn download_and_extract_engine(
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(15))
         .build()
-        .map_err(|e| AppError::Download(format!("创建 HTTP 客户端失败: {e}")))?;
+        .map_err(|e| AppError::Download(format!("Failed to create HTTP client: {e}")))?;
 
     let urls = candidate_engine_download_urls();
     let temp_archive_path =
@@ -526,17 +542,17 @@ async fn download_and_extract_engine(
 
     for url in &urls {
         if !progress_gate.is_current() {
-            return Err(AppError::Asr("引擎下载已被取消".to_string()));
+            return Err(AppError::Asr("Engine download was cancelled".to_string()));
         }
 
-        log::info!("尝试从下载语音引擎: {}", url);
+        log::info!("Attempting to download speech engine from: {}", url);
         match download_to_file(&client, url, &temp_archive_path, app_handle, progress_gate).await {
             Ok(()) => {
                 downloaded = true;
                 break;
             }
             Err(err) => {
-                log::warn!("从 {} 下载语音引擎失败: {}", url, err);
+                log::warn!("Failed to download speech engine from {}: {}", url, err);
                 last_err = Some(err);
                 if temp_archive_path.exists() {
                     let _ = std::fs::remove_file(&temp_archive_path);
@@ -546,8 +562,11 @@ async fn download_and_extract_engine(
     }
 
     if !downloaded {
-        return Err(last_err
-            .unwrap_or_else(|| AppError::Download("下载语音引擎失败，所有下载源均不可用".into())));
+        return Err(last_err.unwrap_or_else(|| {
+            AppError::Download(
+                "Failed to download speech engine: all download sources unavailable".into(),
+            )
+        }));
     }
 
     // 下载成功，执行解压
@@ -577,7 +596,7 @@ pub(super) async fn find_python() -> Result<String, AppError> {
 
         if tokio::fs::try_exists(&venv_python).await.unwrap_or(false) {
             let path_str = to_normalized_path(&venv_python);
-            log::info!("找到虚拟环境 Python: {}", path_str);
+            log::info!("Found virtual environment Python: {}", path_str);
             return Ok(path_str);
         }
     }
@@ -604,7 +623,7 @@ pub(super) async fn find_python() -> Result<String, AppError> {
                     if let Ok(ver_output) = version_check {
                         if ver_output.status.success() {
                             let version = String::from_utf8_lossy(&ver_output.stdout);
-                            log::info!("找到系统 Python: {} ({})", path, version.trim());
+                            log::info!("Found system Python: {} ({})", path, version.trim());
                             return Ok(path);
                         }
                     }
@@ -615,7 +634,7 @@ pub(super) async fn find_python() -> Result<String, AppError> {
 
     // 所有策略都失败了
     Err(AppError::Asr(
-        "未找到可用的 Python 解释器。请安装 Python 3.8+ 或在项目目录创建 .venv 虚拟环境（推荐使用 uv）。"
+        "No available Python interpreter found. Please install Python 3.8+ or create a .venv virtual environment in the project directory (uv recommended)."
             .to_string(),
     ))
 }

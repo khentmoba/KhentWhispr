@@ -39,7 +39,7 @@ where
         Ok(line) => std::borrow::Cow::Borrowed(line),
         Err(err) => {
             log::warn!(
-                "{}收到非 UTF-8 输出，已按损坏文本容错处理: {}",
+                "{} received non-UTF-8 output; tolerated as corrupted text: {}",
                 context,
                 err
             );
@@ -59,14 +59,14 @@ where
     if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
         if start < end {
             if let Ok(payload) = serde_json::from_str::<T>(&trimmed[start..=end]) {
-                log::warn!("{}从混合输出中恢复了 JSON 响应", context);
+                log::warn!("{} recovered JSON response from mixed output", context);
                 return Some(payload);
             }
         }
     }
 
     log::warn!(
-        "{}收到非 JSON 输出（{}字符）",
+        "{} received non-JSON output ({} characters)",
         context,
         trimmed.chars().count()
     );
@@ -107,7 +107,8 @@ pub async fn run_download(
         let mut guard = state.engine.download_task.lock().await;
         if guard.is_some() {
             return Err(AppError::Download(
-                "已有下载任务正在进行，请先取消或等待完成".to_string(),
+                "A download task is already in progress; please cancel it or wait for completion"
+                    .to_string(),
             ));
         }
         *guard = Some(crate::state::DownloadTask {
@@ -125,10 +126,10 @@ pub async fn run_download(
                 app_handle,
                 serde_json::json!({
                     "status": "cancelled",
-                    "message": "引擎下载已取消"
+                    "message": "Engine download was cancelled"
                 }),
             );
-            return Ok("引擎下载已取消".to_string());
+            return Ok("Engine download was cancelled".to_string());
         }
         res = funasr_service::find_engine(app_handle, state, generation) => {
             match res {
@@ -147,7 +148,7 @@ pub async fn run_download(
     {
         clear_download_task(state, task_id).await;
         return Err(AppError::Download(format!(
-            "模型下载脚本不存在: {}",
+            "Model download script does not exist: {}",
             download_script_str
         )));
     }
@@ -157,7 +158,7 @@ pub async fn run_download(
         app_handle,
         serde_json::json!({
             "status": "downloading",
-            "message": "开始下载模型文件..."
+            "message": "Starting model file download..."
         }),
     );
 
@@ -212,7 +213,10 @@ pub async fn run_download(
         Ok(child) => child,
         Err(e) => {
             clear_download_task(state, task_id).await;
-            return Err(AppError::Download(format!("启动模型下载脚本失败: {}", e)));
+            return Err(AppError::Download(format!(
+                "Failed to start model download script: {}",
+                e
+            )));
         }
     };
 
@@ -220,7 +224,9 @@ pub async fn run_download(
         Some(stdout) => stdout,
         None => {
             clear_download_task(state, task_id).await;
-            return Err(AppError::Download("无法读取模型下载脚本输出".to_string()));
+            return Err(AppError::Download(
+                "Failed to read model download script output".to_string(),
+            ));
         }
     };
 
@@ -236,7 +242,7 @@ pub async fn run_download(
                 let _ = child.kill().await;
                 emit_download_status(app_handle, serde_json::json!({
                     "status": "cancelled",
-                    "message": "下载已取消"
+                    "message": "Download cancelled"
                 }));
                 break;
             }
@@ -244,7 +250,7 @@ pub async fn run_download(
                 let bytes = match bytes {
                     Ok(bytes) => bytes,
                     Err(e) => {
-                        log::warn!("读取下载输出失败（跳过）: {}", e);
+                        log::warn!("Failed to read download output (skipping): {}", e);
                         continue;
                     }
                 };
@@ -252,7 +258,7 @@ pub async fn run_download(
                     break;
                 }
 
-                let Some(payload) = parse_json_line_with_recovery::<DownloadLine>(&line_bytes, "模型下载输出") else {
+                let Some(payload) = parse_json_line_with_recovery::<DownloadLine>(&line_bytes, "Model download output") else {
                     continue;
                 };
 
@@ -267,7 +273,7 @@ pub async fn run_download(
                     .unwrap_or(0.0);
 
                 let message = payload.message.clone().or_else(|| {
-                    payload.model.clone().map(|m| format!("{} 下载中", m))
+                    payload.model.clone().map(|m| format!("Downloading {}", m))
                 });
 
                 let status = match payload.stage.as_deref() {
@@ -278,7 +284,7 @@ pub async fn run_download(
                 emit_download_status(app_handle, serde_json::json!({
                     "status": status,
                     "progress": progress,
-                    "message": message.unwrap_or_else(|| "模型下载中...".to_string()),
+                    "message": message.unwrap_or_else(|| "Downloading models...".to_string()),
                     "error": payload.error
                 }));
             }
@@ -289,7 +295,10 @@ pub async fn run_download(
         Ok(status) => status,
         Err(e) => {
             clear_download_task(state, task_id).await;
-            return Err(AppError::Download(format!("模型下载进程异常退出: {}", e)));
+            return Err(AppError::Download(format!(
+                "Model download process exited abnormally: {}",
+                e
+            )));
         }
     };
 
@@ -302,7 +311,7 @@ pub async fn run_download(
     clear_download_task(state, task_id).await;
 
     if cancelled {
-        return Ok("模型下载已取消".to_string());
+        return Ok("Model download cancelled".to_string());
     }
 
     if final_success {
@@ -311,14 +320,14 @@ pub async fn run_download(
             serde_json::json!({
                 "status": "completed",
                 "progress": 100,
-                "message": "模型下载完成"
+                "message": "Model download complete"
             }),
         );
-        Ok("模型下载完成".to_string())
+        Ok("Model download complete".to_string())
     } else {
         let error_msg = final_result
             .and_then(|r| r.error.or(r.message))
-            .unwrap_or_else(|| "模型下载失败".to_string());
+            .unwrap_or_else(|| "Model download failed".to_string());
 
         emit_download_status(
             app_handle,

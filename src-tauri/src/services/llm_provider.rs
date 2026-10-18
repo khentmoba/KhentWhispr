@@ -901,31 +901,31 @@ impl ReasoningControlKind {
     fn summary(self) -> &'static str {
         match self {
             Self::OpenaiEffort => {
-                "当前模型支持 reasoning effort；关闭/轻量/标准/深度会映射为对应的推理强度。"
+                "This model supports reasoning effort; Off, Light, Balanced, and Deep map to the corresponding reasoning level."
             }
             Self::XaiReasoningEffort => {
-                "当前 Grok 模型支持 reasoning.effort；关闭/轻量会映射为 low（Grok 4.5/4.6 无法关闭思考，省略参数会默认 high）。"
+                "This Grok model supports reasoning.effort; Off and Light map to low (Grok 4.5/4.6 cannot disable thinking and defaults to high when omitted)."
             }
             Self::AnthropicThinking => {
-                "当前模型支持 extended thinking；会映射为 thinking + budget_tokens。"
+                "This model supports extended thinking and maps levels to thinking + budget_tokens."
             }
             Self::DeepSeekThinkingToggle => {
-                "当前模型支持 thinking.type；关闭会下发 disabled，其余档位会启用 thinking。"
+                "This model supports thinking.type; Off sends disabled and other levels enable thinking."
             }
             Self::SiliconFlowThinkingBudget => {
-                "当前模型支持 thinking_budget；不同档位会映射为不同预算。"
+                "This model supports thinking_budget and maps each level to a token budget."
             }
             Self::CerebrasReasoningEffort => {
-                "当前模型支持 reasoning_effort；不同档位会映射为不同强度。"
+                "This model supports reasoning_effort and maps each level to the corresponding effort."
             }
             Self::CerebrasGlmToggle => {
-                "当前模型支持 disable_reasoning；关闭会禁用推理，其余档位会启用推理。"
+                "This model supports disable_reasoning; Off disables reasoning and other levels enable it."
             }
             Self::VolcengineThinkingType => {
-                "当前模型支持 thinking.type；关闭=disabled，轻量/标准=auto，深度=enabled。"
+                "This model supports thinking.type; Off=disabled, Light/Balanced=auto, Deep=enabled."
             }
             Self::AutoOpenaiCompat => {
-                "当前是 OpenAI-compatible 后端；会自动探测可用的思考控制参数并缓存成功策略。"
+                "OpenAI-compatible backend; automatically probes supported reasoning parameters and caches the working strategy."
             }
         }
     }
@@ -1002,19 +1002,19 @@ pub fn reasoning_support(endpoint: &LlmEndpoint, uses_responses_api: bool) -> Ll
     }
 
     let summary = if endpoint.api_format == ApiFormat::Anthropic {
-        "当前 Anthropic 模型不在官方支持 extended thinking 的型号内，思考模式不可用。"
+        "This Anthropic model does not support official extended thinking; thinking mode is unavailable."
     } else if is_volcengine_like_endpoint(endpoint) {
-        "当前火山方舟模型不在官方支持 thinking.type 的型号内，思考模式不可用。"
+        "This Volcengine Ark model does not support official thinking.type controls; thinking mode is unavailable."
     } else if is_deepseek_like_endpoint(endpoint) {
-        "当前 DeepSeek 模型未识别到官方 thinking 控制能力，思考模式不可用。"
+        "No official thinking controls were detected for this DeepSeek model; thinking mode is unavailable."
     } else if is_siliconflow_like_endpoint(endpoint) {
-        "当前 SiliconFlow 模型不在官方支持 thinking_budget 的推理模型范围内，思考模式不可用。"
+        "This SiliconFlow model does not support official thinking_budget controls; thinking mode is unavailable."
     } else if is_cerebras_like_endpoint(endpoint) {
-        "当前 Cerebras 模型未识别到官方 reasoning_effort 支持，思考模式不可用。"
+        "No official reasoning_effort support was detected for this Cerebras model; thinking mode is unavailable."
     } else if openai_reasoning_efforts(&endpoint.model).is_some() {
-        "当前模型名看起来属于 OpenAI GPT 系列，但当前接口路径不支持对应的思考控制参数。"
+        "This model name looks like an OpenAI GPT model, but the current endpoint path does not support those reasoning controls."
     } else {
-        "当前模型未识别到官方思考控制参数，思考模式不可用。"
+        "No official thinking controls were detected for this model; thinking mode is unavailable."
     };
 
     LlmReasoningSupport {
@@ -1045,7 +1045,7 @@ pub fn reasoning_support_for_mode(
                     .strategy_name()
                     .to_string(),
             ),
-            summary: "当前后端已拒绝该档位的思考控制参数，应用会按模型默认行为发送。".to_string(),
+            summary: "The backend rejected thinking controls for this level; requests will use the model default behavior.".to_string(),
         };
     }
 
@@ -1437,8 +1437,9 @@ pub fn build_auth_headers(
     let api_key = api_key.trim();
     let mut headers = reqwest::header::HeaderMap::new();
     let parse = |v: &str| {
-        v.parse::<reqwest::header::HeaderValue>()
-            .map_err(|_| "API Key 包含非法字符，无法作为 HTTP header 使用".to_string())
+        v.parse::<reqwest::header::HeaderValue>().map_err(|_| {
+            "API Key contains invalid characters and cannot be used as an HTTP header".to_string()
+        })
     };
     match api_format {
         ApiFormat::Anthropic => {
@@ -1503,13 +1504,13 @@ pub fn save_or_delete_api_key(
 }
 
 fn keyring_write_result(result: keyring::Result<()>) -> Result<(), String> {
-    result.map_err(|_| "无法保存 API Key 到密钥环".to_string())
+    result.map_err(|_| "Failed to save API Key to system keyring".to_string())
 }
 
 pub(crate) fn keyring_delete_result(result: keyring::Result<()>) -> Result<(), String> {
     match result {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(_) => Err("无法从密钥环删除 API Key".to_string()),
+        Err(_) => Err("Failed to delete API Key from system keyring".to_string()),
     }
 }
 
@@ -2015,7 +2016,7 @@ mod tests {
         let support = reasoning_support(&endpoint, false);
 
         assert!(!support.supported);
-        assert!(support.summary.contains("不可用"));
+        assert!(support.summary.contains("unavailable"));
     }
 
     #[test]

@@ -17,7 +17,7 @@ impl FeatureMode {
             "off" => Ok(Self::Off),
             "on" => Ok(Self::On),
             "auto" => Ok(Self::Auto),
-            _ => Err("模式必须为 off、on 或 auto".to_string()),
+            _ => Err("Mode must be off, on, or auto".to_string()),
         }
     }
 

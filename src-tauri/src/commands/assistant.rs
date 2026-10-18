@@ -75,16 +75,17 @@ pub async fn continue_assistant_conversation(
     history: Vec<assistant_service::AssistantConversationTurn>,
     message: String,
 ) -> Result<String, AppError> {
-    let initial_request = validate_chat_text("初始请求", initial_request, MAX_CHAT_MESSAGE_CHARS)?;
+    let initial_request =
+        validate_chat_text("Initial request", initial_request, MAX_CHAT_MESSAGE_CHARS)?;
     let initial_response = validate_chat_text(
-        "初始回答",
+        "Initial response",
         initial_response,
         MAX_CHAT_INITIAL_RESPONSE_CHARS,
     )?;
-    let message = validate_chat_text("消息", message, MAX_CHAT_MESSAGE_CHARS)?;
+    let message = validate_chat_text("Message", message, MAX_CHAT_MESSAGE_CHARS)?;
     let history = validate_chat_history(history)?;
     if session_id == 0 {
-        return Err(AppError::Other("助手会话 ID 无效".to_string()));
+        return Err(AppError::Other("Invalid assistant session ID".to_string()));
     }
 
     let (generation, cancel_rx) = begin_assistant_chat_task(state.inner());
@@ -98,7 +99,7 @@ pub async fn continue_assistant_conversation(
         &app_handle,
         session_id,
         ) => result,
-        _ = cancel_rx => Err(AppError::Other("助手对话已取消".to_string())),
+        _ = cancel_rx => Err(AppError::Other("Assistant conversation was canceled".to_string())),
     };
     clear_assistant_chat_task(state.inner(), generation);
     result
@@ -117,17 +118,20 @@ pub async fn retry_assistant_request(
     request: String,
 ) -> Result<String, AppError> {
     if session_id == 0 {
-        return Err(AppError::Other("助手会话 ID 无效".to_string()));
+        return Err(AppError::Other("Invalid assistant session ID".to_string()));
     }
-    let request = validate_chat_text("助手请求", request, MAX_CHAT_MESSAGE_CHARS)?;
+    let request = validate_chat_text("Assistant request", request, MAX_CHAT_MESSAGE_CHARS)?;
     let (generation, cancel_rx) = begin_assistant_chat_task(state.inner());
-    let timeout_message = format!("助手重试超时（{}秒）", ASSISTANT_RETRY_TIMEOUT_SECS);
+    let timeout_message = format!(
+        "Assistant retry timed out after {} seconds",
+        ASSISTANT_RETRY_TIMEOUT_SECS
+    );
     let result = run_cancellable_assistant_task(
         assistant_service::generate_content(state.inner(), &request, None, &app_handle, session_id),
         cancel_rx,
         Duration::from_secs(ASSISTANT_RETRY_TIMEOUT_SECS),
         &timeout_message,
-        "助手请求已取消",
+        "Assistant request was canceled",
     )
     .await;
     clear_assistant_chat_task(state.inner(), generation);
@@ -155,18 +159,18 @@ where
 pub async fn open_assistant_source(url: String) -> Result<String, AppError> {
     let target = validate_assistant_source_url(&url)?;
     webbrowser::open(target.as_str())
-        .map_err(|err| AppError::Other(format!("打开来源失败: {err}")))?;
-    Ok("已在浏览器中打开来源".to_string())
+        .map_err(|err| AppError::Other(format!("Failed to open source: {err}")))?;
+    Ok("Opened source in the browser".to_string())
 }
 
 fn validate_chat_text(label: &str, value: String, max_chars: usize) -> Result<String, AppError> {
     let value = value.trim().to_string();
     if value.is_empty() {
-        return Err(AppError::Other(format!("{label}不能为空")));
+        return Err(AppError::Other(format!("{label} cannot be empty")));
     }
     if value.chars().count() > max_chars {
         return Err(AppError::Other(format!(
-            "{label}过长，最多 {max_chars} 个字符"
+            "{label} is too long (maximum {max_chars} characters)"
         )));
     }
     Ok(value)
@@ -177,7 +181,7 @@ fn validate_chat_history(
 ) -> Result<Vec<assistant_service::AssistantConversationTurn>, AppError> {
     if history.len() > MAX_CHAT_TURNS {
         return Err(AppError::Other(format!(
-            "对话历史过长，最多保留 {MAX_CHAT_TURNS} 轮"
+            "Conversation history is too long (maximum {MAX_CHAT_TURNS} turns)"
         )));
     }
     let mut total_chars = 0;
@@ -185,10 +189,10 @@ fn validate_chat_history(
     for mut turn in history {
         if !matches!(turn.role.as_str(), "user" | "assistant") {
             return Err(AppError::Other(
-                "对话角色只能是 user 或 assistant".to_string(),
+                "Conversation roles must be either user or assistant".to_string(),
             ));
         }
-        turn.content = validate_chat_text("历史消息", turn.content, MAX_CHAT_MESSAGE_CHARS)?;
+        turn.content = validate_chat_text("History message", turn.content, MAX_CHAT_MESSAGE_CHARS)?;
         total_chars += turn.content.chars().count();
         validated.push(turn);
     }
@@ -240,12 +244,14 @@ fn cancel_assistant_chat_task(state: &AppState) -> bool {
 
 fn validate_assistant_source_url(value: &str) -> Result<reqwest::Url, AppError> {
     let parsed = reqwest::Url::parse(value.trim())
-        .map_err(|err| AppError::Other(format!("来源 URL 无效: {err}")))?;
+        .map_err(|err| AppError::Other(format!("Invalid source URL: {err}")))?;
     if parsed.scheme() != "https" {
-        return Err(AppError::Other("来源 URL 仅支持 https".to_string()));
+        return Err(AppError::Other("Source URLs must use HTTPS".to_string()));
     }
     let Some(host) = parsed.host_str() else {
-        return Err(AppError::Other("来源 URL 缺少主机名".to_string()));
+        return Err(AppError::Other(
+            "Source URL is missing a hostname".to_string(),
+        ));
     };
     let host_lower = host.to_ascii_lowercase();
     let ip_host = host
@@ -275,7 +281,9 @@ fn validate_assistant_source_url(value: &str) -> Result<reqwest::Url, AppError> 
                 }
             });
     if is_private {
-        return Err(AppError::Other("来源 URL 指向本地或私有地址".to_string()));
+        return Err(AppError::Other(
+            "Source URL points to a local or private address".to_string(),
+        ));
     }
     Ok(parsed)
 }
@@ -317,7 +325,7 @@ pub async fn set_web_search_config(
             profile.web_search.max_results = n.clamp(1, 10);
         }
     });
-    log::info!("联网搜索配置已更新: enabled={enabled}");
+    log::info!("Web search configuration updated: enabled={enabled}");
     Ok(())
 }
 
@@ -329,7 +337,7 @@ pub async fn set_web_search_api_key(
     api_key: String,
 ) -> Result<(), String> {
     let keyring_user = web_search_keyring_user(&provider)
-        .ok_or_else(|| "当前搜索方式不使用独立 API Key".to_string())?;
+        .ok_or_else(|| "The current search provider does not use a separate API key".to_string())?;
     state.with_web_search_key_operation(|| {
         llm_provider::save_or_delete_api_key(&app_handle, keyring_user, &api_key)?;
         state.set_web_search_api_key(web_search_provider_cache_key(&provider), api_key);
@@ -345,7 +353,7 @@ pub async fn get_web_search_api_key(
 ) -> Result<String, String> {
     let cache_key = web_search_provider_cache_key(&provider);
     let keyring_user = web_search_keyring_user(&provider)
-        .ok_or_else(|| "当前搜索方式不使用独立 API Key".to_string())?;
+        .ok_or_else(|| "The current search provider does not use a separate API key".to_string())?;
     state.with_web_search_key_operation(|| {
         let cached = state.read_web_search_api_key(cache_key);
         if !cached.is_empty() {
@@ -354,7 +362,7 @@ pub async fn get_web_search_api_key(
         let key = app_handle
             .keyring()
             .get_password(llm_provider::KEYRING_SERVICE, keyring_user)
-            .map_err(|error| format!("读取搜索 API Key 失败: {error}"))?
+            .map_err(|error| format!("Failed to read search API key: {error}"))?
             .unwrap_or_default();
         state.set_web_search_api_key(cache_key, key.clone());
         Ok(key)
@@ -544,15 +552,15 @@ mod tests {
     #[test]
     fn chat_text_trims_input_and_accepts_the_exact_character_limit() {
         assert_eq!(
-            validate_chat_text("消息", "  你好吗  ".to_string(), 3).unwrap(),
+            validate_chat_text("Message", "  你好吗  ".to_string(), 3).unwrap(),
             "你好吗"
         );
     }
 
     #[test]
     fn chat_text_rejects_empty_and_over_limit_input() {
-        assert!(validate_chat_text("消息", " \n\t ".to_string(), 3).is_err());
-        let error = validate_chat_text("消息", "你好吗啊".to_string(), 3).unwrap_err();
-        assert!(error.to_string().contains("最多 3 个字符"));
+        assert!(validate_chat_text("Message", " \n\t ".to_string(), 3).is_err());
+        let error = validate_chat_text("Message", "你好吗啊".to_string(), 3).unwrap_err();
+        assert!(error.to_string().contains("maximum 3 characters"));
     }
 }

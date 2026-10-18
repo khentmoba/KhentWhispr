@@ -35,23 +35,23 @@ fn format_prompt_context(app: &ForegroundApp) -> Option<String> {
 
     let mut lines = Vec::new();
     if !process_name.is_empty() {
-        lines.push(format!("程序：{}", process_name));
+        lines.push(format!("Process: {}", process_name));
     }
     if !window_title.is_empty() {
-        lines.push(format!("窗口主题：{}", window_title));
+        lines.push(format!("Window title: {}", window_title));
     }
 
     if lines.is_empty() {
         None
     } else {
         Some(format!(
-            "<app_context>\n{}\n<note>以上仅用于推断格式风格。不要仅因为程序名或窗口标题中出现某个词，就将 ASR 文本中的其他词纠正为它。</note>\n</app_context>",
+            "<app_context>\n{}\n<note>Use this only to infer formatting style. Do not correct words in the ASR text solely because a word appears in the process name or window title.</note>\n</app_context>",
             lines
                 .into_iter()
                 .map(|line| {
-                    if let Some(value) = line.strip_prefix("程序：") {
+                    if let Some(value) = line.strip_prefix("Process: ") {
                         wrap_xml_cdata("process_name", value)
-                    } else if let Some(value) = line.strip_prefix("窗口主题：") {
+                    } else if let Some(value) = line.strip_prefix("Window title: ") {
                         wrap_xml_cdata("window_title", value)
                     } else {
                         wrap_xml_cdata("context_line", &line)

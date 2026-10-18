@@ -34,11 +34,11 @@ pub async fn capture_full_screen_context_async() -> Result<Vec<CapturedScreen>, 
     .await
     .map_err(|_| {
         format!(
-            "截屏超过 {} 秒，已跳过屏幕上下文",
+            "Screen capture timed out after {} seconds; skipped screen context",
             SCREEN_CAPTURE_TIMEOUT_SECS
         )
     })?
-    .map_err(|e| format!("截屏任务异常: {e}"))?
+    .map_err(|e| format!("Screen capture task failed: {e}"))?
 }
 
 #[cfg(target_os = "windows")]
@@ -49,7 +49,7 @@ pub fn capture_full_screen_context() -> Result<Vec<CapturedScreen>, String> {
 #[cfg(target_os = "windows")]
 pub fn capture_screen_context_at_point(x: i32, y: i32) -> Result<Vec<CapturedScreen>, String> {
     let monitor = xcap::Monitor::from_point(x, y)
-        .map_err(|error| format!("读取划词所在屏幕失败: {error}"))?;
+        .map_err(|error| format!("Failed to locate display for selection: {error}"))?;
     capture_monitors_with_options(
         vec![monitor],
         ScreenCaptureOptions {
@@ -63,7 +63,7 @@ pub fn capture_screen_context_at_point(x: i32, y: i32) -> Result<Vec<CapturedScr
 fn capture_full_screen_context_with_options(
     options: ScreenCaptureOptions,
 ) -> Result<Vec<CapturedScreen>, String> {
-    let monitors = xcap::Monitor::all().map_err(|e| format!("读取屏幕列表失败: {e}"))?;
+    let monitors = xcap::Monitor::all().map_err(|e| format!("Failed to list displays: {e}"))?;
     capture_monitors_with_options(monitors, options)
 }
 
@@ -90,10 +90,10 @@ fn capture_monitors_with_options(
             .friendly_name()
             .ok()
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| format!("显示器 {}", index + 1));
+            .unwrap_or_else(|| format!("Display {}", index + 1));
         let image = monitor
             .capture_image()
-            .map_err(|e| format!("截取{friendly_name}失败: {e}"))?;
+            .map_err(|e| format!("Failed to capture {friendly_name}: {e}"))?;
 
         let dynamic = DynamicImage::ImageRgba8(image);
         let resized = if dynamic.width().max(dynamic.height()) > options.max_edge {
@@ -105,12 +105,12 @@ fn capture_monitors_with_options(
         let mut bytes = Vec::new();
         JpegEncoder::new_with_quality(Cursor::new(&mut bytes), options.jpeg_quality)
             .encode_image(&resized)
-            .map_err(|e| format!("编码{friendly_name}截图失败: {e}"))?;
+            .map_err(|e| format!("Failed to encode screenshot for {friendly_name}: {e}"))?;
 
         let data_base64 = base64::engine::general_purpose::STANDARD.encode(bytes);
         if captured.is_empty() && data_base64.len() > options.max_total_base64_bytes {
             return Err(format!(
-                "{}截图超过上下文预算：{} > {} bytes",
+                "{} screenshot exceeds context budget: {} > {} bytes",
                 friendly_name,
                 data_base64.len(),
                 options.max_total_base64_bytes

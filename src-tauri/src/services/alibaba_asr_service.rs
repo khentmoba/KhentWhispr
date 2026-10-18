@@ -26,7 +26,9 @@ pub async fn transcribe(
     let (api_key, base, model, region) = {
         let _configuration = state.engine.funasr_lifecycle_op.lock().await;
         if paths::read_engine_config() != "alibaba-asr" {
-            return Err(AppError::Asr("语音识别引擎已切换，请重试".into()));
+            return Err(AppError::Asr(
+                "Speech recognition engine changed; please try again".into(),
+            ));
         }
         (
             state.read_online_asr_api_key(),
@@ -36,11 +38,13 @@ pub async fn transcribe(
         )
     };
     if api_key.is_empty() {
-        return Err(AppError::Asr("Alibaba DashScope API Key 未配置".into()));
+        return Err(AppError::Asr(
+            "Alibaba DashScope API Key is not configured".into(),
+        ));
     }
     if exceeds_dashscope_limit(audio_wav.len()) {
         return Err(AppError::Asr(format!(
-            "音频过大：{} MB 经 base64 编码后超出 DashScope 10 MB 请求体上限",
+            "Audio is too large: {} MB exceeds the 10 MB DashScope request body limit after base64 encoding",
             audio_wav.len() / 1024 / 1024
         )));
     }
@@ -96,13 +100,13 @@ async fn transcribe_via_dashscope_asr(
         .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| AppError::Asr(format!("DashScope ASR 请求失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("DashScope ASR request failed: {}", e)))?;
 
     let status = resp.status();
     let text = resp
         .text()
         .await
-        .map_err(|e| AppError::Asr(format!("读取 DashScope ASR 响应失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to read DashScope ASR response: {}", e)))?;
 
     if !status.is_success() {
         return Err(AppError::Asr(format!(
@@ -112,7 +116,7 @@ async fn transcribe_via_dashscope_asr(
     }
 
     let parsed: DashScopeAsrResponse = serde_json::from_str(&text)
-        .map_err(|e| AppError::Asr(format!("解析 DashScope ASR 响应失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to parse DashScope ASR response: {}", e)))?;
 
     if let Some(code) = parsed.code.as_deref() {
         if !code.is_empty() && code != "Success" {
@@ -123,7 +127,7 @@ async fn transcribe_via_dashscope_asr(
                 error: Some(
                     parsed
                         .message
-                        .unwrap_or_else(|| format!("DashScope ASR 错误: {}", code)),
+                        .unwrap_or_else(|| format!("DashScope ASR error: {}", code)),
                 ),
                 language: None,
             });
@@ -198,7 +202,7 @@ async fn transcribe_via_omni_chat(
         .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| AppError::Asr(format!("DashScope Omni 请求失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("DashScope Omni request failed: {}", e)))?;
 
     let status = resp.status();
     if !status.is_success() {
@@ -215,8 +219,8 @@ async fn transcribe_via_omni_chat(
     let mut logged_parse_failure = false;
 
     while let Some(event) = stream.next().await {
-        let event =
-            event.map_err(|e| AppError::Asr(format!("DashScope Omni 流式读取失败: {}", e)))?;
+        let event = event
+            .map_err(|e| AppError::Asr(format!("DashScope Omni stream read failed: {}", e)))?;
         let data = event.data.trim();
         if data.is_empty() || data == "[DONE]" {
             continue;
@@ -241,7 +245,7 @@ async fn transcribe_via_omni_chat(
             stream_error = Some(
                 err_obj
                     .message
-                    .unwrap_or_else(|| "DashScope Omni 流中返回错误".into()),
+                    .unwrap_or_else(|| "DashScope Omni stream returned an error".into()),
             );
         }
         if let Some(choices) = parsed.choices {
@@ -256,7 +260,10 @@ async fn transcribe_via_omni_chat(
     }
 
     if let Some(err) = stream_error {
-        return Err(AppError::Asr(format!("DashScope Omni 返回错误: {}", err)));
+        return Err(AppError::Asr(format!(
+            "DashScope Omni returned an error: {}",
+            err
+        )));
     }
 
     let collected = collected.trim().to_string();
@@ -264,7 +271,7 @@ async fn transcribe_via_omni_chat(
         // 空流没有 [DONE] 以外的任何内容，通常意味着上游模型拒绝或配额耗尽，
         // 不要当成"用户啥也没说"默默返回空串——给一个可操作的错误。
         return Err(AppError::Asr(
-            "DashScope Omni 流式响应为空，请检查模型可用性、额度或控制台日志".into(),
+            "DashScope Omni stream response was empty; please check model availability, quota, or logs".into(),
         ));
     }
 

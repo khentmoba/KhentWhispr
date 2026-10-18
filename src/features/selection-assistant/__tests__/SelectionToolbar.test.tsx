@@ -24,10 +24,10 @@ describe("SelectionToolbar", () => {
   it("exposes an accessible toolbar", () => {
     renderToolbar();
 
-    expect(screen.getByRole("toolbar", { name: "划词助手" })).toBeInTheDocument();
+    expect(screen.getByRole("toolbar", { name: "Selection assistant" })).toBeInTheDocument();
   });
 
-  it.each(["翻译", "解释", "优化", "复制", "搜索"])(
+  it.each(["Translate", "Explain", "Improve", "Copy", "Search"])(
     "renders a visible %s action label",
     (name) => {
       renderToolbar();
@@ -42,17 +42,17 @@ describe("SelectionToolbar", () => {
     const onClose = vi.fn();
     renderToolbar({ onClose });
 
-    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it.each([
-    ["翻译", "translate"],
-    ["解释", "explain"],
-    ["优化", "optimize"],
-    ["复制", "copy"],
-    ["搜索", "search"],
+    ["Translate", "translate"],
+    ["Explain", "explain"],
+    ["Improve", "optimize"],
+    ["Copy", "copy"],
+    ["Search", "search"],
   ] as const)("dispatches %s as %s", async (label, action) => {
     const user = userEvent.setup();
     const { onAction } = renderToolbar();
@@ -64,7 +64,7 @@ describe("SelectionToolbar", () => {
 
   it("keeps actions out of the keyboard focus order", () => {
     renderToolbar();
-    const button = screen.getByRole("button", { name: "翻译" });
+    const button = screen.getByRole("button", { name: "Translate" });
 
     expect(button).toHaveAttribute("tabindex", "-1");
   });
@@ -81,7 +81,7 @@ describe("SelectionToolbar", () => {
       </div>,
     );
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "复制" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Copy" }));
 
     expect(container).toBeTruthy();
     expect(outsidePointerDown).not.toHaveBeenCalled();
@@ -90,7 +90,7 @@ describe("SelectionToolbar", () => {
   it("disables every toolbar action for a normalized empty selection", () => {
     renderToolbar({ selectionText: "  \r\n " });
 
-    for (const name of ["翻译", "解释", "优化", "复制", "搜索"]) {
+    for (const name of ["Translate", "Explain", "Improve", "Copy", "Search"]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
   });
@@ -98,6 +98,6 @@ describe("SelectionToolbar", () => {
   it("keeps screenshot capture out of the action toolbar", () => {
     renderToolbar();
 
-    expect(screen.queryByRole("button", { name: "截图辅助" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Screenshot assistance" })).not.toBeInTheDocument();
   });
 });

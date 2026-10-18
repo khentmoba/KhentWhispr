@@ -33,7 +33,7 @@ pub(super) struct ChunkedResampler {
 impl ChunkedResampler {
     pub(super) fn new(input_rate: u32) -> Result<Self, String> {
         if input_rate == 0 {
-            return Err("输入采样率为 0，无法重采样".to_string());
+            return Err("Input sample rate is 0; cannot resample".to_string());
         }
 
         let chunk_size = ((input_rate as usize) / 100).clamp(1, MAX_RESAMPLE_CHUNK_FRAMES);
@@ -49,7 +49,7 @@ impl ChunkedResampler {
                     chunk_size,
                     1,
                 )
-                .map_err(|e| format!("rubato 初始化失败: {}", e))?,
+                .map_err(|e| format!("rubato initialization failed: {}", e))?,
             )
         };
 
@@ -101,11 +101,11 @@ impl ChunkedResampler {
         let resampler = self
             .resampler
             .as_mut()
-            .ok_or_else(|| "rubato 状态缺失".to_string())?;
+            .ok_or_else(|| "rubato state missing".to_string())?;
         let chunk = std::mem::take(&mut self.pending);
         let out = resampler
             .process_partial(Some(&[&chunk]), None)
-            .map_err(|e| format!("rubato 重采样失败: {}", e))?;
+            .map_err(|e| format!("rubato resampling failed: {}", e))?;
         output.extend(out[0].iter().map(|&sample| f32_to_i16(sample)));
         Ok(())
     }
@@ -114,13 +114,13 @@ impl ChunkedResampler {
         let resampler = self
             .resampler
             .as_mut()
-            .ok_or_else(|| "rubato 状态缺失".to_string())?;
+            .ok_or_else(|| "rubato state missing".to_string())?;
 
         while self.pending.len() >= self.chunk_size {
             let chunk: Vec<f32> = self.pending.drain(..self.chunk_size).collect();
             let out = resampler
                 .process(&[&chunk], None)
-                .map_err(|e| format!("rubato 重采样失败: {}", e))?;
+                .map_err(|e| format!("rubato resampling failed: {}", e))?;
             output.extend(out[0].iter().map(|&sample| f32_to_i16(sample)));
         }
         Ok(())

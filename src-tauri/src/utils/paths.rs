@@ -243,7 +243,7 @@ fn write_engine_json(obj: &serde_json::Value) -> Result<(), std::io::Error> {
     let serialized = serde_json::to_string_pretty(obj).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("序列化配置失败: {}", e),
+            format!("Failed to serialize configuration: {}", e),
         )
     })?;
     atomic_write(&config_path, serialized.as_bytes())

@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import en from "@/i18n/en";
-import zh from "@/i18n/zh";
 
 function readRepo(relativePath: string): string {
   return readFileSync(resolve(process.cwd(), relativePath), "utf8");
@@ -83,14 +82,11 @@ describe("Grok Build TypeScript IPC types", () => {
 });
 
 describe("Grok Build i18n keys", () => {
-  it("defines every required settings key in English and Chinese", () => {
+  it("defines every required settings key in English", () => {
     for (const key of GROK_I18N_KEYS) {
       const enValue = (en.settings as Record<string, unknown>)[key];
-      const zhValue = (zh.settings as Record<string, unknown>)[key];
       expect(enValue, `en.settings.${key}`).toEqual(expect.any(String));
-      expect(zhValue, `zh.settings.${key}`).toEqual(expect.any(String));
       expect(String(enValue).trim().length, `en.settings.${key} should be non-empty`).toBeGreaterThan(0);
-      expect(String(zhValue).trim().length, `zh.settings.${key} should be non-empty`).toBeGreaterThan(0);
     }
   });
 });

@@ -312,7 +312,7 @@ describe("SelectionAssistantSettingsSection", () => {
     expect(trigger).toHaveClass("picker-trigger");
     fireEvent.click(trigger);
 
-    const simplifiedChinese = screen.getByRole("option", { name: "简体中文" });
+    const simplifiedChinese = screen.getByRole("option", { name: "Chinese (Simplified)" });
     expect(simplifiedChinese).toHaveClass("picker-option");
     fireEvent.click(simplifiedChinese);
 
@@ -320,7 +320,7 @@ describe("SelectionAssistantSettingsSection", () => {
       vi.advanceTimersByTime(350);
     });
     expect(api.setSelectionAssistantConfig).toHaveBeenLastCalledWith(
-      expect.objectContaining({ translationTarget: "简体中文" }),
+      expect.objectContaining({ translationTarget: "Chinese (Simplified)" }),
     );
   });
 });

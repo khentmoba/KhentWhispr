@@ -50,7 +50,7 @@ describe("settings CSS contracts", () => {
 
     expect(fontFaces).toHaveLength(0);
     expect(root).toMatch(
-      /--font-ui:\s*-apple-system,\s*BlinkMacSystemFont,.*"Segoe UI",\s*"Microsoft YaHei UI"/,
+      /--font-ui:\s*"Segoe UI Variable",\s*"Segoe UI",\s*system-ui,\s*sans-serif;/,
     );
     expect(root).toMatch(/--font-serif:\s*var\(--font-ui\);/);
     expect(root).toMatch(/--font-sans:\s*var\(--font-ui\);/);

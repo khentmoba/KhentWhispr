@@ -24,7 +24,7 @@ fn build_form(audio_data: Vec<u8>, state: &AppState) -> Result<reqwest::multipar
     let file_part = reqwest::multipart::Part::bytes(audio_data)
         .file_name("audio.wav")
         .mime_str("audio/wav")
-        .map_err(|e| AppError::Asr(format!("构建 multipart 失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to build multipart form: {}", e)))?;
 
     let mut form = reqwest::multipart::Form::new()
         .part("file", file_part)
@@ -34,7 +34,7 @@ fn build_form(audio_data: Vec<u8>, state: &AppState) -> Result<reqwest::multipar
     let words = state.with_profile(|p| p.get_hot_word_texts(100));
     if !words.is_empty() {
         let json = serde_json::to_string(&words)
-            .map_err(|e| AppError::Asr(format!("序列化热词失败: {}", e)))?;
+            .map_err(|e| AppError::Asr(format!("Failed to serialize hotwords: {}", e)))?;
         form = form.text("hotwords", json);
     }
 
@@ -44,7 +44,7 @@ fn build_form(audio_data: Vec<u8>, state: &AppState) -> Result<reqwest::multipar
 fn validate_audio_payload(audio_data: &[u8]) -> Result<(), AppError> {
     if audio_data.len() > MAX_AUDIO_BYTES {
         return Err(AppError::Asr(format!(
-            "GLM-ASR 音频过大：{:.1} MiB，超过 25 MiB 上传上限",
+            "GLM-ASR audio is too large: {:.1} MiB exceeds the 25 MiB upload limit",
             audio_data.len() as f64 / 1024.0 / 1024.0
         )));
     }
@@ -56,7 +56,7 @@ fn validate_audio_payload(audio_data: &[u8]) -> Result<(), AppError> {
                 let duration_sec = reader.duration() as f64 / spec.sample_rate as f64;
                 if duration_sec > MAX_AUDIO_DURATION_SECS {
                     return Err(AppError::Asr(format!(
-                        "GLM-ASR 音频时长过长：{:.1} 秒，超过 30 秒上限",
+                        "GLM-ASR audio duration is too long: {:.1} seconds exceeds the 30 second limit",
                         duration_sec
                     )));
                 }
@@ -80,7 +80,9 @@ pub async fn transcribe(
     let (api_key, url) = {
         let _configuration = state.engine.funasr_lifecycle_op.lock().await;
         if paths::read_engine_config() != "glm-asr" {
-            return Err(AppError::Asr("语音识别引擎已切换，请重试".into()));
+            return Err(AppError::Asr(
+                "Speech recognition engine changed; please try again".into(),
+            ));
         }
         (
             state.read_online_asr_api_key(),
@@ -88,7 +90,7 @@ pub async fn transcribe(
         )
     };
     if api_key.is_empty() {
-        return Err(AppError::Asr("GLM-ASR API Key 未配置".into()));
+        return Err(AppError::Asr("GLM-ASR API Key is not configured".into()));
     }
 
     let form = build_form(audio_data, state)?;
@@ -101,20 +103,20 @@ pub async fn transcribe(
         .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| AppError::Asr(format!("GLM-ASR 请求失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("GLM-ASR request failed: {}", e)))?;
 
     let status = resp.status();
     let body = resp
         .text()
         .await
-        .map_err(|e| AppError::Asr(format!("读取 GLM-ASR 响应失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to read GLM-ASR response: {}", e)))?;
 
     if !status.is_success() {
         return Err(AppError::Asr(format!("GLM-ASR HTTP {}: {}", status, body)));
     }
 
     let parsed: GlmResponse = serde_json::from_str(&body)
-        .map_err(|e| AppError::Asr(format!("解析 GLM-ASR 响应失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to parse GLM-ASR response: {}", e)))?;
 
     if let Some(code) = parsed.code {
         if code != 0 {
@@ -122,7 +124,9 @@ pub async fn transcribe(
                 text: String::new(),
                 duration: None,
                 success: false,
-                error: parsed.message.or(Some(format!("GLM-ASR 错误码: {}", code))),
+                error: parsed
+                    .message
+                    .or(Some(format!("GLM-ASR error code: {}", code))),
                 language: None,
             });
         }

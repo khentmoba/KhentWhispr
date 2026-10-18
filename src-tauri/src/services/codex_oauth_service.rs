@@ -233,24 +233,24 @@ fn read_session_meta_at(
     match std::fs::read_to_string(path) {
         Ok(raw) => {
             let value: serde_json::Value = serde_json::from_str(&raw)
-                .map_err(|_| "读取 Codex OAuth 元数据失败".to_string())?;
+                .map_err(|_| "Failed to read Codex OAuth metadata".to_string())?;
             let object = value
                 .as_object()
-                .ok_or_else(|| "读取 Codex OAuth 元数据失败".to_string())?;
+                .ok_or_else(|| "Failed to read Codex OAuth metadata".to_string())?;
             if !object.keys().any(|key| {
                 matches!(
                     key.as_str(),
                     "logged_out" | "expires_at_ms" | "account_id" | "email" | "plan_type"
                 )
             }) {
-                return Err("读取 Codex OAuth 元数据失败".to_string());
+                return Err("Failed to read Codex OAuth metadata".to_string());
             }
             serde_json::from_value(value)
                 .map(Some)
-                .map_err(|_| "读取 Codex OAuth 元数据失败".to_string())
+                .map_err(|_| "Failed to read Codex OAuth metadata".to_string())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(_) => Err("读取 Codex OAuth 元数据失败".to_string()),
+        Err(_) => Err("Failed to read Codex OAuth metadata".to_string()),
     }
 }
 
@@ -262,9 +262,9 @@ fn write_metadata_at(
     path: &std::path::Path,
     metadata: &PersistedOpenaiCodexOauthSession,
 ) -> Result<(), String> {
-    let raw =
-        serde_json::to_vec(metadata).map_err(|_| "序列化 Codex OAuth 元数据失败".to_string())?;
-    paths::atomic_write(path, &raw).map_err(|_| "保存 Codex OAuth 元数据失败".to_string())
+    let raw = serde_json::to_vec(metadata)
+        .map_err(|_| "Failed to serialize Codex OAuth metadata".to_string())?;
+    paths::atomic_write(path, &raw).map_err(|_| "Failed to save Codex OAuth metadata".to_string())
 }
 
 fn write_session_meta(session: &OpenaiCodexOauthSession) -> Result<(), String> {
@@ -291,7 +291,7 @@ fn load_session_from_storage(app_handle: &tauri::AppHandle) -> Option<OpenaiCode
     let meta = match read_session_meta() {
         Ok(meta) => meta,
         Err(_) => {
-            log::warn!("忽略不可读的 Codex OAuth 元数据");
+            log::warn!("Ignoring unreadable Codex OAuth metadata");
             return None;
         }
     };
@@ -344,11 +344,11 @@ fn save_session_to_storage(
             SESSION_REFRESH_TOKEN_KEYRING_USER,
             &session.refresh_token,
         )
-        .map_err(|_| "保存 Codex OAuth refresh token 失败".to_string())?;
+        .map_err(|_| "Failed to save Codex OAuth refresh token".to_string())?;
     delete_keyring_password(
         app_handle,
         SESSION_KEYRING_USER,
-        "删除 Codex OAuth legacy 会话",
+        "delete Codex OAuth legacy session",
     )?;
     if let Some(registration) = &session.registration {
         chatgpt_sign_in::remember_account(registration)?;
@@ -364,7 +364,7 @@ fn delete_keyring_password(
 ) -> Result<(), String> {
     match app_handle.keyring().delete_password(KEYRING_SERVICE, user) {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(_) => Err(format!("{description} 失败")),
+        Err(_) => Err(format!("Failed to {description}")),
     }
 }
 
@@ -376,14 +376,14 @@ fn clear_session_from_storage(app_handle: &tauri::AppHandle) -> Result<(), Strin
     if let Err(error) = delete_keyring_password(
         app_handle,
         SESSION_KEYRING_USER,
-        "删除 Codex OAuth legacy 会话",
+        "delete Codex OAuth legacy session",
     ) {
         errors.push(error);
     }
     if let Err(error) = delete_keyring_password(
         app_handle,
         SESSION_REFRESH_TOKEN_KEYRING_USER,
-        "删除 Codex OAuth refresh token",
+        "delete Codex OAuth refresh token",
     ) {
         errors.push(error);
     }
@@ -391,7 +391,7 @@ fn clear_session_from_storage(app_handle: &tauri::AppHandle) -> Result<(), Strin
         match std::fs::remove_file(session_meta_path()) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => errors.push("删除 Codex OAuth 元数据失败".to_string()),
+            Err(_) => errors.push("Failed to delete Codex OAuth metadata".to_string()),
         }
     }
     if errors.is_empty() {
@@ -521,19 +521,20 @@ fn auth_from_openai_session(
     });
     let api_key = if let Some(registration) = &session.registration {
         if !registration.plan_usage_enabled() {
-            return Err("ChatGPT 套餐使用未获授权，请重新登录并允许轻语使用套餐额度。".into());
+            return Err("ChatGPT plan usage is not authorized. Please sign in again and allow SpeakFlow to use plan quota.".into());
         }
         let token = chatgpt_token
             .as_ref()
-            .ok_or("ChatGPT 登录缺少 access token，请重新登录。")?;
-        let encoded = encode_chatgpt_bearer_token(token).ok_or("编码 ChatGPT 会话失败")?;
+            .ok_or("ChatGPT sign-in is missing an access token. Please sign in again.")?;
+        let encoded =
+            encode_chatgpt_bearer_token(token).ok_or("Failed to encode ChatGPT session")?;
         encoded.replacen(CHATGPT_BEARER_PREFIX, CHATGPT_PLAN_PREFIX, 1)
     } else if !session.api_key.trim().is_empty() {
         encode_oauth_api_key(&session.api_key)
-            .ok_or_else(|| "包装 OpenAI OAuth API Key 失败".to_string())?
+            .ok_or_else(|| "Failed to wrap OpenAI OAuth API Key".to_string())?
     } else if let Some(token) = &chatgpt_token {
         encode_chatgpt_bearer_token(token)
-            .ok_or_else(|| "编码 OpenAI Codex bearer 会话失败".to_string())?
+            .ok_or_else(|| "Failed to encode OpenAI Codex bearer session".to_string())?
     } else {
         String::new()
     };
@@ -566,14 +567,14 @@ fn oauth_error_message(error_code: &str, error_description: Option<&str>) -> Str
             .to_ascii_lowercase()
             .contains("missing_codex_entitlement")
     {
-        return "当前 ChatGPT 工作区没有 Codex 权限，请联系管理员开通。".to_string();
+        return "The current ChatGPT workspace does not have Codex permissions. Please contact your administrator.".to_string();
     }
 
     if let Some(description) = error_description.filter(|value| !value.trim().is_empty()) {
-        return format!("OpenAI Codex OAuth 登录失败: {description}");
+        return format!("OpenAI Codex OAuth sign-in failed: {description}");
     }
 
-    format!("OpenAI Codex OAuth 登录失败: {error_code}")
+    format!("OpenAI Codex OAuth sign-in failed: {error_code}")
 }
 
 fn html_escape(input: &str) -> String {
@@ -600,7 +601,7 @@ fn callback_html(title: &str, message: &str, auto_close: bool) -> String {
     let title = html_escape(title);
     let message = html_escape(message);
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title}</title><style>body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#111827;color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Helvetica Neue','Segoe UI','Microsoft YaHei UI',system-ui,sans-serif;font-weight:400;letter-spacing:-.008em;text-align:center}}h1{{margin:0;font-size:34px;line-height:1.2;font-weight:700;letter-spacing:-.02em}}p{{margin:0;font-size:21px;line-height:1.65;white-space:pre-wrap}}</style></head><body><div style=\"max-width:680px;padding:48px 32px;display:flex;flex-direction:column;align-items:center;gap:18px;\"><h1>{title}</h1><p>{message}</p></div>{script}</body></html>"
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title}</title><style>body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#111827;color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Segoe UI',system-ui,sans-serif;font-weight:400;letter-spacing:-.008em;text-align:center}}h1{{margin:0;font-size:34px;line-height:1.2;font-weight:700;letter-spacing:-.02em}}p{{margin:0;font-size:21px;line-height:1.65;white-space:pre-wrap}}</style></head><body><div style=\"max-width:680px;padding:48px 32px;display:flex;flex-direction:column;align-items:center;gap:18px;\"><h1>{title}</h1><p>{message}</p></div>{script}</body></html>"
     )
 }
 
@@ -617,15 +618,15 @@ async fn respond_with_html(
     stream
         .write_all(response.as_bytes())
         .await
-        .map_err(|err| format!("写入 OAuth 回调响应失败: {err}"))?;
+        .map_err(|err| format!("Failed to write OAuth callback response: {err}"))?;
     stream
         .write_all(body)
         .await
-        .map_err(|err| format!("写入 OAuth 回调响应体失败: {err}"))?;
+        .map_err(|err| format!("Failed to write OAuth callback response body: {err}"))?;
     stream
         .flush()
         .await
-        .map_err(|err| format!("刷新 OAuth 回调响应失败: {err}"))
+        .map_err(|err| format!("Failed to flush OAuth callback response: {err}"))
 }
 
 fn is_ipv6_loopback_unavailable(err: &std::io::Error) -> bool {
@@ -645,11 +646,15 @@ async fn bind_callback_listeners() -> Result<CallbackListeners, String> {
                 {
                     break
                 }
-                Err(err) => return Err(format!("启动 OAuth IPv4 回调服务失败: {err}")),
+                Err(err) => {
+                    return Err(format!(
+                        "Failed to start OAuth IPv4 callback listener: {err}"
+                    ))
+                }
             };
             let actual_port = ipv4
                 .local_addr()
-                .map_err(|err| format!("读取 OAuth 回调端口失败: {err}"))?
+                .map_err(|err| format!("Failed to read OAuth callback port: {err}"))?
                 .port();
 
             match TcpListener::bind(("::1", actual_port)).await {
@@ -672,13 +677,15 @@ async fn bind_callback_listeners() -> Result<CallbackListeners, String> {
                     });
                 }
                 Err(err) => {
-                    return Err(format!("启动 OAuth IPv6 回调服务失败: {err}"));
+                    return Err(format!(
+                        "Failed to start OAuth IPv6 callback listener: {err}"
+                    ));
                 }
             }
         }
     }
 
-    Err("启动 OAuth 回调服务失败：无法同时占用本地回调端口。".to_string())
+    Err("Failed to start OAuth callback listener: unable to bind local callback port on IPv4 and IPv6 simultaneously.".to_string())
 }
 
 async fn accept_callback_connection(
@@ -687,13 +694,13 @@ async fn accept_callback_connection(
     let CallbackListeners { ipv4, ipv6, .. } = listeners;
     if let Some(ipv6) = ipv6 {
         tokio::select! {
-            result = ipv4.accept() => result.map_err(|err| format!("接受 OpenAI OAuth IPv4 回调失败: {err}")),
-            result = ipv6.accept() => result.map_err(|err| format!("接受 OpenAI OAuth IPv6 回调失败: {err}")),
+            result = ipv4.accept() => result.map_err(|err| format!("Failed to accept OpenAI OAuth IPv4 callback: {err}")),
+            result = ipv6.accept() => result.map_err(|err| format!("Failed to accept OpenAI OAuth IPv6 callback: {err}")),
         }
     } else {
         ipv4.accept()
             .await
-            .map_err(|err| format!("接受 OpenAI OAuth 回调失败: {err}"))
+            .map_err(|err| format!("Failed to accept OpenAI OAuth callback: {err}"))
     }
 }
 
@@ -774,7 +781,7 @@ async fn wait_for_callback_with_timeout(
         }
     })
     .await
-    .map_err(|_| "等待 OpenAI OAuth 回调超时，请重试。".to_string())?
+    .map_err(|_| "OpenAI OAuth callback timed out. Please try again.".to_string())?
 }
 
 async fn exchange_code_for_tokens(
@@ -798,25 +805,27 @@ async fn exchange_code_for_tokens(
                     ("code_verifier", code_verifier),
                 ],
             )
-            .map_err(|err| format!("构造 OAuth 授权码交换参数失败: {err}"))?
+            .map_err(|err| format!("Failed to construct OAuth code exchange parameters: {err}"))?
             .query()
             .unwrap_or_default()
             .to_string(),
         )
         .send()
         .await
-        .map_err(|err| format!("OAuth 授权码换 token 失败: {err}"))?;
+        .map_err(|err| format!("Failed to exchange OAuth authorization code for token: {err}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("OAuth 授权码换 token 失败 {status}: {body}"));
+        return Err(format!(
+            "OAuth authorization code exchange failed ({status}): {body}"
+        ));
     }
 
     response
         .json::<TokenResponse>()
         .await
-        .map_err(|err| format!("解析 OAuth token 响应失败: {err}"))
+        .map_err(|err| format!("Failed to parse OAuth token response: {err}"))
 }
 
 async fn request_device_code(
@@ -830,23 +839,25 @@ async fn request_device_code(
         })
         .send()
         .await
-        .map_err(|err| format!("请求 OpenAI Codex 设备码失败: {err}"))?;
+        .map_err(|err| format!("Failed to request OpenAI Codex device code: {err}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(
-                "当前 OpenAI Codex 登录服务未启用设备码登录，请使用浏览器登录。".to_string(),
+                "Device code sign-in is not enabled for the OpenAI Codex service. Please use browser sign-in.".to_string(),
             );
         }
-        return Err(format!("请求 OpenAI Codex 设备码失败 {status}: {body}"));
+        return Err(format!(
+            "Failed to request OpenAI Codex device code ({status}): {body}"
+        ));
     }
 
     let payload = response
         .json::<DeviceCodeResponse>()
         .await
-        .map_err(|err| format!("解析 OpenAI Codex 设备码响应失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse OpenAI Codex device code response: {err}"))?;
 
     Ok(OpenaiCodexOauthDeviceCodeChallenge {
         verification_url: format!("{ISSUER}/codex/device"),
@@ -875,25 +886,34 @@ async fn poll_device_code_authorization(
             })
             .send()
             .await
-            .map_err(|err| format!("轮询 OpenAI Codex 设备码授权失败: {err}"))?;
+            .map_err(|err| {
+                format!("Failed to poll OpenAI Codex device code authorization: {err}")
+            })?;
 
         let status = response.status();
         if status.is_success() {
             let payload = response
                 .json::<DeviceCodeAuthorizationResponse>()
                 .await
-                .map_err(|err| format!("解析 OpenAI Codex 设备码授权响应失败: {err}"))?;
+                .map_err(|err| {
+                    format!(
+                        "Failed to parse OpenAI Codex device code authorization response: {err}"
+                    )
+                })?;
             if payload.authorization_code.trim().is_empty()
                 || payload.code_verifier.trim().is_empty()
             {
-                return Err("OpenAI Codex 设备码授权响应缺少授权码，请重试。".to_string());
+                return Err("OpenAI Codex device code authorization response is missing an authorization code. Please try again.".to_string());
             }
             return Ok(payload);
         }
 
         if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND {
             if start.elapsed() >= max_wait {
-                return Err("OpenAI Codex 设备码登录超时，请重新开始登录。".to_string());
+                return Err(
+                    "OpenAI Codex device code sign-in timed out. Please start sign-in again."
+                        .to_string(),
+                );
             }
             let remaining = max_wait.saturating_sub(start.elapsed());
             tokio::time::sleep(interval.min(remaining)).await;
@@ -901,7 +921,9 @@ async fn poll_device_code_authorization(
         }
 
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("OpenAI Codex 设备码授权失败 {status}: {body}"));
+        return Err(format!(
+            "OpenAI Codex device code authorization failed ({status}): {body}"
+        ));
     }
 }
 
@@ -937,14 +959,14 @@ async fn refresh_tokens_at(
                     ("client_id", CLIENT_ID),
                 ],
             )
-            .map_err(|err| format!("构造 OAuth 刷新参数失败: {err}"))?
+            .map_err(|err| format!("Failed to construct OAuth refresh parameters: {err}"))?
             .query()
             .unwrap_or_default()
             .to_string(),
         )
         .send()
         .await
-        .map_err(|err| format!("刷新 Codex OAuth token 失败: {err}"))?;
+        .map_err(|err| format!("Failed to refresh Codex OAuth token: {err}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -970,17 +992,19 @@ async fn refresh_tokens_at(
                 )
             })
         {
-            return Err("CODEX_REAUTH_REQUIRED: Codex 登录已失效，请重新登录。".into());
+            return Err(
+                "CODEX_REAUTH_REQUIRED: Codex sign-in expired. Please sign in again.".into(),
+            );
         }
         return Err(format!(
-            "刷新 Codex OAuth token 失败 ({status})，请稍后重试。"
+            "Failed to refresh Codex OAuth token ({status}). Please try again later."
         ));
     }
 
     response
         .json::<TokenResponse>()
         .await
-        .map_err(|err| format!("解析刷新 token 响应失败: {err}"))
+        .map_err(|err| format!("Failed to parse refresh token response: {err}"))
 }
 
 fn session_needs_refresh(session: &OpenaiCodexOauthSession) -> bool {
@@ -999,7 +1023,7 @@ async fn session_from_token_response(
 ) -> Result<OpenaiCodexOauthSession, String> {
     let id_token = match token_response.id_token.clone() {
         Some(id_token) if !id_token.trim().is_empty() => id_token,
-        _ => return Err("OAuth 响应缺少 id_token，无法继续。".to_string()),
+        _ => return Err("OAuth response is missing id_token. Cannot continue.".to_string()),
     };
     let refresh_token = match token_response
         .refresh_token
@@ -1007,7 +1031,7 @@ async fn session_from_token_response(
         .filter(|value| !value.trim().is_empty())
     {
         Some(refresh_token) => refresh_token,
-        None => return Err("OAuth 响应缺少 refresh_token，无法继续。".to_string()),
+        None => return Err("OAuth response is missing refresh_token. Cannot continue.".to_string()),
     };
     let mut session = OpenaiCodexOauthSession {
         registration: None,
@@ -1039,7 +1063,10 @@ fn persist_login_session(
             save_session_to_storage(app_handle, session)
         })?;
     if !committed {
-        return Err("OpenAI Codex OAuth 登录已被更新的操作取代，请重试。".to_string());
+        return Err(
+            "OpenAI Codex OAuth sign-in superseded by a newer operation. Please try again."
+                .to_string(),
+        );
     }
     status.saved_accounts = chatgpt_sign_in::saved_accounts();
     Ok(status)
@@ -1091,10 +1118,12 @@ async fn refresh_session(
             if old.account_id != new.account_id
                 || is_chatgpt_plan_auth(rejected) != session.registration.is_some()
             {
-                return Err("ChatGPT 账户已切换，请重试当前操作。".into());
+                return Err("ChatGPT account switched. Please retry the current operation.".into());
             }
         } else if current.api_key != rejected {
-            return Err("ChatGPT 认证已更新，请重试当前操作。".into());
+            return Err(
+                "ChatGPT authentication was updated. Please retry the current operation.".into(),
+            );
         }
         if session_has_runtime_auth_material(&session)
             && auth_from_openai_session(session.clone())?.api_key != rejected
@@ -1107,7 +1136,7 @@ async fn refresh_session(
         && session_has_runtime_auth_material(&session)
     {
         log::info!(
-            "OpenAI Codex OAuth 认证材料已就绪 ({}ms): api_key={}, bearer={}",
+            "OpenAI Codex OAuth credentials ready ({}ms): api_key={}, bearer={}",
             refresh_start.elapsed().as_millis(),
             !session.api_key.trim().is_empty(),
             !session.access_token.trim().is_empty()
@@ -1136,7 +1165,9 @@ async fn refresh_session(
                 save_session_to_storage(app_handle, s)
             })?
         {
-            return Err("ChatGPT 会话已被更新的操作取代，请重试。".into());
+            return Err(
+                "ChatGPT session superseded by a newer operation. Please try again.".into(),
+            );
         }
         return Ok(Some(refreshed));
     }
@@ -1146,7 +1177,10 @@ async fn refresh_session(
         || rejected_auth.is_some()
     {
         if session.refresh_token.trim().is_empty() {
-            return Err("OpenAI Codex OAuth 会话缺少 refresh token，请重新登录。".to_string());
+            return Err(
+                "OpenAI Codex OAuth session is missing a refresh token. Please sign in again."
+                    .to_string(),
+            );
         }
         let token_refresh_start = std::time::Instant::now();
         let token_response = match refresh_tokens(&state.http_client, &session.refresh_token).await
@@ -1162,7 +1196,7 @@ async fn refresh_session(
             }
         };
         log::info!(
-            "OpenAI Codex OAuth refresh 完成 ({}ms): rehydration={}, expired={}",
+            "OpenAI Codex OAuth refresh completed ({}ms): rehydration={}, expired={}",
             token_refresh_start.elapsed().as_millis(),
             needs_rehydration,
             session_needs_refresh(&session)
@@ -1202,10 +1236,13 @@ async fn refresh_session(
                 save_session_to_storage(app_handle, session)
             })?;
     if !committed {
-        return Err("OpenAI Codex OAuth 会话已被更新的操作取代，请重试。".to_string());
+        return Err(
+            "OpenAI Codex OAuth session superseded by a newer operation. Please try again."
+                .to_string(),
+        );
     }
     log::info!(
-        "OpenAI Codex OAuth 认证材料重水化完成 ({}ms): api_key={}, bearer={}",
+        "OpenAI Codex OAuth credentials rehydration completed ({}ms): api_key={}, bearer={}",
         refresh_start.elapsed().as_millis(),
         !refreshed.api_key.trim().is_empty(),
         !refreshed.access_token.trim().is_empty()
@@ -1228,7 +1265,7 @@ pub fn sync_runtime_session(
     };
     drop(login);
     if let Err(error) = result {
-        log::warn!("恢复 OpenAI Codex OAuth 会话失败: {error}");
+        log::warn!("Failed to restore OpenAI Codex OAuth session: {error}");
     }
     state.read_openai_codex_oauth_session()
 }
@@ -1246,7 +1283,7 @@ pub async fn prewarm_runtime_session(
     let session = state.read_openai_codex_oauth_session();
     if !should_prewarm_runtime_session(&provider, &config, session.as_ref()) {
         log::info!(
-            "OpenAI Codex OAuth 启动预热跳过: provider={}, auth_mode={:?}, has_session={}",
+            "OpenAI Codex OAuth startup prewarm skipped: provider={}, auth_mode={:?}, has_session={}",
             provider,
             config.openai_auth_mode,
             session.is_some()
@@ -1256,14 +1293,14 @@ pub async fn prewarm_runtime_session(
     let session = session.expect("prewarm decision requires a session");
     let start = std::time::Instant::now();
     log::info!(
-        "OpenAI Codex OAuth 启动预热开始: cached_api_key={}, cached_bearer={}, expires_at_ms={:?}",
+        "OpenAI Codex OAuth startup prewarm started: cached_api_key={}, cached_bearer={}, expires_at_ms={:?}",
         !session.api_key.trim().is_empty(),
         !session.access_token.trim().is_empty(),
         session.expires_at_ms
     );
     refresh_session_if_needed(app_handle, state).await?;
     log::info!(
-        "OpenAI Codex OAuth 启动预热完成 ({}ms)",
+        "OpenAI Codex OAuth startup prewarm completed ({}ms)",
         start.elapsed().as_millis()
     );
     Ok(())
@@ -1288,18 +1325,21 @@ pub async fn start_device_code_login(
     let operation = login.token();
     let challenge = request_device_code(&state.http_client).await?;
     if challenge.device_auth_id.trim().is_empty() || challenge.user_code.trim().is_empty() {
-        return Err("OpenAI Codex 设备码响应无效，请重试。".to_string());
+        return Err("Invalid OpenAI Codex device code response. Please try again.".to_string());
     }
     let published = state
         .openai_codex_oauth_state()
         .publish_challenge(operation, device_challenge_binding(&challenge))?;
     if !published {
-        return Err("OpenAI Codex 设备码登录已被更新的操作取代，请重试。".to_string());
+        return Err(
+            "OpenAI Codex device code sign-in superseded by a newer operation. Please try again."
+                .to_string(),
+        );
     }
     drop(login);
     if let Err(err) = webbrowser::open(&challenge.verification_url) {
         log::warn!(
-            "打开 OpenAI Codex 设备码验证页失败，前端将展示 URL: {}",
+            "Failed to open OpenAI Codex device code verification page; UI will display URL: {}",
             err
         );
     }
@@ -1312,13 +1352,15 @@ pub async fn complete_device_code_login(
     challenge: OpenaiCodexOauthDeviceCodeChallenge,
 ) -> Result<OpenaiCodexOauthStatus, String> {
     if challenge.device_auth_id.trim().is_empty() || challenge.user_code.trim().is_empty() {
-        return Err("OpenAI Codex 设备码已失效，请重新开始登录。".to_string());
+        return Err("OpenAI Codex device code expired. Please start sign-in again.".to_string());
     }
     let binding = device_challenge_binding(&challenge);
     let login = state
         .openai_codex_oauth_state()
         .claim_challenge(&binding)
-        .ok_or_else(|| "OpenAI Codex 设备码已失效，请重新开始登录。".to_string())?;
+        .ok_or_else(|| {
+            "OpenAI Codex device code expired. Please start sign-in again.".to_string()
+        })?;
     let operation = login.token();
     let authorization = poll_device_code_authorization(&state.http_client, &challenge).await?;
     let redirect_uri = format!("{ISSUER}/deviceauth/callback");
@@ -1357,7 +1399,7 @@ pub async fn remove_account(
     client_id: &str,
 ) -> Result<OpenaiCodexOauthStatus, String> {
     if client_id.trim().is_empty() {
-        return Err("请选择要移除的 ChatGPT 账户。".into());
+        return Err("Please select a ChatGPT account to remove.".into());
     }
     let _refresh_guard = state.openai_codex_oauth_state().lock_refresh().await;
     let removed = state.openai_codex_oauth_state().invalidate_matching(
@@ -1399,22 +1441,24 @@ pub async fn recover_rejected_auth(
     }
     let snapshot = state
         .read_openai_codex_oauth_session()
-        .ok_or("ChatGPT 已退出登录，请重新登录。")?;
+        .ok_or("ChatGPT has been signed out. Please sign in again.")?;
     let rejected_token = decode_chatgpt_bearer_token(rejected);
     let current = auth_from_openai_session(snapshot.clone())?;
     if let (Some(old), Some(new)) = (rejected_token, current.chatgpt_token) {
         if old.account_id != new.account_id
             || is_chatgpt_plan_auth(rejected) != snapshot.registration.is_some()
         {
-            return Err("ChatGPT 账户已切换，请重试当前操作。".into());
+            return Err("ChatGPT account switched. Please retry the current operation.".into());
         }
     }
     let session = refresh_session(app, state, Some(rejected))
         .await?
-        .ok_or("ChatGPT 登录正在更新，请重试。")?;
+        .ok_or("ChatGPT sign-in is updating. Please try again.")?;
     let refreshed = auth_from_openai_session(session)?.api_key;
     if decode_oauth_api_key(rejected).is_some() != decode_oauth_api_key(&refreshed).is_some() {
-        return Err("ChatGPT 认证路线已更新，请重新执行当前操作。".into());
+        return Err(
+            "ChatGPT authentication route updated. Please retry the current operation.".into(),
+        );
     }
     Ok(Some(refreshed))
 }
@@ -1466,14 +1510,13 @@ pub async fn resolve_provider_auth_with_auth_mode(
         };
     }
 
-    // 非 OpenAI provider：直接返回用户填的 key（可能为空，由调用方决定报错）
+    // Non-OpenAI provider: return the manually entered key directly
     if provider != OPENAI_PROVIDER {
         return Ok(ResolvedProviderAuth::api_key(manual_api_key.to_string()));
     }
 
-    // OpenAI：按用户选的认证方式分支。存储的偏好可能是 None（用户还没点过开关），
-    // 那就按 OAuth 登录状态智能推断：登录过 → Oauth；没登录 → ApiKey。
-    // 这跟前端的默认计算保持一致，避免前后端对同一条 profile 给出不同决策。
+    // OpenAI: branch by user-selected authentication mode.
+    // If not explicitly set, infer from OAuth login status.
     let effective_mode = auth_mode.unwrap_or_else(|| {
         if state.read_openai_codex_oauth_session().is_some() {
             OpenaiAuthMode::Oauth
@@ -1484,11 +1527,11 @@ pub async fn resolve_provider_auth_with_auth_mode(
 
     match effective_mode {
         OpenaiAuthMode::ApiKey => {
-            // 明确走 API Key：只看手填的 key，即使 OAuth 已登录也不用
+            // Explicitly API Key: use manual key only
             Ok(ResolvedProviderAuth::api_key(manual_api_key.to_string()))
         }
         OpenaiAuthMode::Oauth => {
-            // 明确走 OAuth：读 session，忽略手填 key
+            // Explicitly OAuth: read session, ignore manual key
             if state.read_openai_codex_oauth_session().is_none() {
                 return Ok(ResolvedProviderAuth::api_key(String::new()));
             }
@@ -1591,7 +1634,7 @@ mod tests {
         else {
             panic!("partial line must not authorize login");
         };
-        assert!(error.contains("回调超时"), "{error}");
+        assert!(error.contains("timed out"), "{error}");
     }
 
     #[tokio::test]
@@ -1713,8 +1756,11 @@ mod tests {
     fn callback_page_uses_the_native_ui_font_stack() {
         let html = callback_html("<Title>", "Message & details", false);
 
-        assert!(html
-            .contains("font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC'"));
+        assert!(html.contains(
+            "font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue'"
+        ));
+        assert!(!html.contains("PingFang SC"));
+        assert!(!html.contains("Microsoft YaHei UI"));
         assert!(!html.contains("@font-face"));
         assert!(!html.contains("data:font/woff2;base64,"));
         assert!(html.contains("letter-spacing:-.008em"));

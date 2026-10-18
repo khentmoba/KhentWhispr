@@ -30,7 +30,7 @@ def cmd_serve(engine: str):
         from qwen3_asr_server import Qwen3ASRServer
         server = Qwen3ASRServer(engine=engine)
     else:
-        raise ValueError(f"不支持的本地 ASR 引擎: {engine}")
+        raise ValueError(f"Unsupported local ASR engine: {engine}")
     server.run()
 
 

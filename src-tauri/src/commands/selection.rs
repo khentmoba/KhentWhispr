@@ -49,7 +49,11 @@ fn begin_selection_replacement() -> Result<SelectionReplacementGuard, AppError> 
     SELECTION_REPLACEMENT_IN_PROGRESS
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map(|_| SelectionReplacementGuard)
-        .map_err(|_| AppError::Other("选区替换正在进行，请稍候".to_string()))
+        .map_err(|_| {
+            AppError::Other(
+                "Selection replacement is already in progress. Please wait.".to_string(),
+            )
+        })
 }
 
 #[tauri::command]
@@ -70,7 +74,10 @@ pub async fn set_selection_assistant_config(
 ) -> Result<(), String> {
     let translation_target = translation_target.trim().to_string();
     if translation_target.is_empty() || translation_target.chars().count() > 80 {
-        return Err("翻译目标语言不能为空且不得超过 80 个字符".to_string());
+        return Err(
+            "Translation target language must not be empty and cannot exceed 80 characters"
+                .to_string(),
+        );
     }
     let mut excluded_apps = excluded_apps
         .into_iter()
@@ -92,9 +99,9 @@ pub async fn set_selection_assistant_config(
     if use_separate_model {
         let selected_provider = provider
             .as_deref()
-            .ok_or_else(|| "独立划词模型缺少供应商".to_string())?;
+            .ok_or_else(|| "The separate selection model has no provider configured".to_string())?;
         if model.is_none() {
-            return Err("独立划词模型名称不能为空".to_string());
+            return Err("Separate selection model name cannot be empty".to_string());
         }
         validate_provider(state.inner(), selected_provider)?;
     }
@@ -138,7 +145,7 @@ fn validate_provider(state: &AppState, provider: &str) -> Result<String, String>
         });
     valid
         .then(|| provider.to_string())
-        .ok_or_else(|| "划词助手供应商不存在".to_string())
+        .ok_or_else(|| "Selection assistant provider does not exist".to_string())
 }
 
 #[tauri::command]
@@ -203,12 +210,15 @@ pub async fn replace_selection(
 ) -> Result<(), AppError> {
     let replacement_count = replacement_text.chars().count();
     if replacement_text.trim().is_empty() || replacement_count > 50_000 {
-        return Err(AppError::Other("替换文字为空或过长".to_string()));
+        return Err(AppError::Other(
+            "Replacement text is empty or too long".to_string(),
+        ));
     }
     let _replacement_guard = begin_selection_replacement()?;
     if !selection_service::current_selection_matches(version, &source_text) {
         return Err(AppError::Other(
-            "原选区或目标窗口已变化，请重新划词后再试".to_string(),
+            "The original selection or target window has changed. Select the text again and retry."
+                .to_string(),
         ));
     }
 
@@ -217,12 +227,13 @@ pub async fn replace_selection(
         crate::commands::clipboard::grab_selected_text_robust(&app_for_selection_check)
     })
     .await
-    .map_err(|error| AppError::Other(format!("检查当前选区失败: {error}")))?;
+    .map_err(|error| AppError::Other(format!("Failed to check the current selection: {error}")))?;
     if active_text.as_deref() != Some(source_text.as_str())
         || !selection_service::current_selection_matches(version, &source_text)
     {
         return Err(AppError::Other(
-            "原选区或目标窗口已变化，请重新划词后再试".to_string(),
+            "The original selection or target window has changed. Select the text again and retry."
+                .to_string(),
         ));
     }
 
@@ -235,12 +246,14 @@ pub async fn replace_selection(
 pub async fn search_selection(text: String) -> Result<(), AppError> {
     let text = text.trim();
     if text.is_empty() || text.chars().count() > 8_000 {
-        return Err(AppError::Other("搜索文字为空或过长".to_string()));
+        return Err(AppError::Other(
+            "Search text is empty or too long".to_string(),
+        ));
     }
     let url = reqwest::Url::parse_with_params("https://www.google.com/search", &[("q", text)])
-        .map_err(|error| AppError::Other(format!("生成搜索地址失败: {error}")))?;
+        .map_err(|error| AppError::Other(format!("Failed to create search URL: {error}")))?;
     webbrowser::open(url.as_str())
-        .map_err(|error| AppError::Other(format!("打开浏览器失败: {error}")))?;
+        .map_err(|error| AppError::Other(format!("Failed to open browser: {error}")))?;
     Ok(())
 }
 
@@ -255,16 +268,18 @@ pub async fn run_selection_action(
     let enabled = state.with_profile(|profile| profile.selection_assistant.enabled);
     let text = validated_selection_text(enabled, text)?;
     if !matches!(action.as_str(), "translate" | "explain" | "optimize") {
-        return Err(AppError::Other("不支持的划词操作".to_string()));
+        return Err(AppError::Other(
+            "Unsupported selection operation".to_string(),
+        ));
     }
     if request_id == 0 {
-        return Err(AppError::Other("划词请求标识无效".to_string()));
+        return Err(AppError::Other("Invalid selection request ID".to_string()));
     }
 
     let (generation, cancel) = begin_selection_task(state.inner());
     let task = run_llm_action(state.inner(), &app_handle, &action, &text, request_id);
     let result = tokio::select! {
-        _ = cancel => Err(AppError::Other("划词请求已取消".to_string())),
+        _ = cancel => Err(AppError::Other("Selection request was canceled".to_string())),
         result = task => result,
     };
     clear_selection_task(state.inner(), generation);
@@ -274,7 +289,9 @@ pub async fn run_selection_action(
 fn validated_selection_text(enabled: bool, text: String) -> Result<String, AppError> {
     let text = text.trim().to_string();
     if !enabled || text.is_empty() {
-        return Err(AppError::Other("划词内容已失效或为空".to_string()));
+        return Err(AppError::Other(
+            "Selection is no longer valid or is empty".to_string(),
+        ));
     }
     Ok(text)
 }
@@ -423,7 +440,7 @@ async fn send_selection_with_transport_fallback(
         Err(error) => error,
     };
 
-    log::warn!("划词助手流式请求失败，自动回退非流式: {stream_error}");
+    log::warn!("Selection assistant streaming request failed; falling back to non-streaming: {stream_error}");
     reset_selection_stream(app_handle, request_id);
     match send_selection_request(
         state,
@@ -445,7 +462,7 @@ async fn send_selection_with_transport_fallback(
             Err(error)
         }
         Err(error) => Err(format!(
-            "划词助手流式请求失败（{stream_error}），非流式回退也失败（{error}）"
+            "Selection assistant streaming request failed ({stream_error}); non-streaming fallback also failed ({error})"
         )),
     }
 }
@@ -472,7 +489,7 @@ async fn run_llm_action(
     .map_err(AppError::Other)?;
     if api_key.trim().is_empty() {
         return Err(AppError::Other(
-            "划词助手未配置 API Key，且未完成 OpenAI Codex 登录".to_string(),
+            "Selection assistant requires an API key or an OpenAI Codex sign-in".to_string(),
         ));
     }
 
@@ -557,7 +574,9 @@ async fn run_llm_action(
             if !input.images.is_empty()
                 && llm_provider::looks_like_image_input_unsupported_error(&error) =>
         {
-            log::info!("划词模型不支持图片，自动回退纯文本: {error}");
+            log::info!(
+                "Selection model does not support images; falling back to text-only: {error}"
+            );
             reset_selection_stream(app_handle, request_id);
             let fallback = LlmUserInput::from(user_text.as_str());
             send_selection_with_transport_fallback(
@@ -674,7 +693,7 @@ mod tests {
         for provider in ["", "removed-provider"] {
             assert_eq!(
                 validate_provider(&state, provider).unwrap_err(),
-                "划词助手供应商不存在"
+                "Selection assistant provider does not exist"
             );
         }
     }

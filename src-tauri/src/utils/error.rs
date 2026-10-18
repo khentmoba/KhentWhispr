@@ -2,17 +2,17 @@ use serde::Serialize;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    #[error("ASR错误: {0}")]
+    #[error("ASR error: {0}")]
     Asr(String),
-    #[error("音频错误: {0}")]
+    #[error("Audio error: {0}")]
     Audio(String),
-    #[error("下载错误: {0}")]
+    #[error("Download error: {0}")]
     Download(String),
-    #[error("IO错误: {0}")]
+    #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("序列化错误: {0}")]
+    #[error("Serialization error: {0}")]
     Serde(#[from] serde_json::Error),
-    #[error("Tauri错误: {0}")]
+    #[error("Tauri error: {0}")]
     Tauri(String),
     #[error("{0}")]
     Other(String),
@@ -162,7 +162,7 @@ mod tests {
         let value = serde_json::to_value(&err).expect("AppError must serialize");
         assert_eq!(
             value["message"],
-            serde_json::Value::String("ASR错误: err".to_string()),
+            serde_json::Value::String("ASR error: err".to_string()),
             "message field must equal AppError::to_string() output \
              (Display impl from #[error(...)] above)"
         );

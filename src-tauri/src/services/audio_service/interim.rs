@@ -44,7 +44,10 @@ pub fn spawn_interim_loop(
         let max_output_tail = (TARGET_SAMPLE_RATE as f64 * INTERIM_MAX_AUDIO_WINDOW_SEC) as usize;
 
         if sample_rate == 0 {
-            log::error!("中间转写启动失败：采样率为 0 (session {})", session_id);
+            log::error!(
+                "Interim transcription startup failed: sample rate is 0 (session {})",
+                session_id
+            );
             return;
         }
         if needs_resample {
@@ -55,7 +58,7 @@ pub fn spawn_interim_loop(
                 Err(err) => {
                     resample_failed = true;
                     log::warn!(
-                        "中间转写重采样初始化失败，保留原始采样率 {}Hz: {}",
+                        "Interim transcription resampler initialization failed; keeping raw sample rate {}Hz: {}",
                         sample_rate,
                         err
                     );
@@ -65,7 +68,10 @@ pub fn spawn_interim_loop(
 
         // 在线引擎不做中间转写（每次请求花钱且有网络延迟）
         if paths::is_online_engine(&engine) {
-            log::info!("在线引擎，跳过中间转写 (session {})", session_id);
+            log::info!(
+                "Online engine: skipping interim transcription (session {})",
+                session_id
+            );
             stop_notify.notified().await;
             return;
         }
@@ -108,7 +114,7 @@ pub fn spawn_interim_loop(
                                 resample_failed = true;
                                 resampled_cache.clear();
                                 log::warn!(
-                                    "中间转写重采样失败，后续保留原始采样率 {}Hz: {}",
+                                    "Interim transcription resampling failed; subsequent chunks will keep raw sample rate {}Hz: {}",
                                     sample_rate,
                                     err
                                 );
@@ -191,7 +197,7 @@ pub fn spawn_interim_loop(
             }
             interval_ms = adjust_interval(interval_ms, true, start.elapsed().as_millis() as u64);
         }
-        log::info!("中间转写循环结束 (session {})", session_id);
+        log::info!("Interim transcription loop ended (session {})", session_id);
     })
 }
 

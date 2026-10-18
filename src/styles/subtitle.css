@@ -1,6 +1,6 @@
 /* ============================================================
    Subtitle Overlay Window Styles
-   Transparent background, bottom-center capsule with glassmorphism.
+   Transparent desktop, bottom-center transcript and assistant surfaces.
    Only loaded in the subtitle window.
    ============================================================ */
 
@@ -35,19 +35,17 @@ body,
   pointer-events: auto;
 }
 
-/* Capsule container — glassmorphism pill, auto-expands for long content */
+/* A readable transcript surface that expands for longer content. */
 .subtitle-capsule {
   pointer-events: none;
   display: inline-flex;
   align-items: flex-start;
   gap: 8px;
   padding: 12px 16px;
-  border-radius: 16px;
-  background: rgba(11, 13, 16, 0.82);
-  backdrop-filter: blur(8px) saturate(1.1);
-  -webkit-backdrop-filter: blur(8px) saturate(1.1);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+  border-radius: 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
   max-width: 72vw;
   max-height: 60vh;
   overflow: hidden;
@@ -101,9 +99,9 @@ body,
 
 /* Light theme capsule */
 [data-theme="light"] .subtitle-capsule {
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+  box-shadow: 0 8px 28px rgba(32, 54, 46, 0.12);
 }
 
 /* subtitle-text and subtitle-hint now use CSS vars that auto-switch per theme */

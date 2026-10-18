@@ -40,7 +40,9 @@ where
         if allowed {
             handler(invoke)
         } else {
-            invoke.resolver.reject("此窗口无权调用该应用命令");
+            invoke
+                .resolver
+                .reject("This window is not authorized to invoke this application command");
             true
         }
     }
@@ -109,7 +111,7 @@ mod tests {
                     panic!("restricted command must be rejected");
                 };
                 assert!(
-                    error.as_str().unwrap().contains("无权调用"),
+                    error.as_str().unwrap().contains("not authorized"),
                     "{label}/{command}: {error}"
                 );
             }

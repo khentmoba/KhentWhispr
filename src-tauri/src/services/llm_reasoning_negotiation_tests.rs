@@ -56,7 +56,7 @@ async fn non_streaming_body_reads_share_the_request_deadline() {
         let error = result
             .expect("response body must finish within the original request budget")
             .unwrap_err();
-        assert!(error.contains("超时"), "{status}: {error}");
+        assert!(error.contains("timed out"), "{status}: {error}");
     }
 }
 
@@ -100,7 +100,7 @@ async fn non_streaming_retry_body_uses_the_remaining_request_budget() {
     assert!(result
         .expect("retry must not restart the request budget")
         .unwrap_err()
-        .contains("超时"));
+        .contains("timed out"));
 }
 
 #[tokio::test]
@@ -2050,7 +2050,7 @@ async fn chat_sse_loopback_surfaces_provider_error() {
 
     assert_eq!(
         result.expect_err("provider SSE errors must fail the request"),
-        "OpenAI 流式错误: chat provider failed"
+        "OpenAI streaming error: chat provider failed"
     );
 }
 
@@ -2097,7 +2097,7 @@ async fn responses_sse_loopback_surfaces_failed_response() {
 
     assert_eq!(
         result.expect_err("failed Responses events must fail the request"),
-        "Responses 流式错误: responses provider failed"
+        "Responses streaming error: responses provider failed"
     );
 }
 
@@ -2150,6 +2150,6 @@ async fn anthropic_sse_loopback_surfaces_error_event() {
 
     assert_eq!(
         result.expect_err("Anthropic error events must fail the request"),
-        "Anthropic 流式错误: anthropic provider failed"
+        "Anthropic streaming error: anthropic provider failed"
     );
 }

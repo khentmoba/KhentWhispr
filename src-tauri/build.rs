@@ -17,14 +17,18 @@ fn emit_rerun_hints() {
 
 fn compute_file_fingerprint(path: &Path) -> String {
     let file = fs::File::open(path)
-        .unwrap_or_else(|err| panic!("无法读取引擎归档 {}: {}", path.display(), err));
+        .unwrap_or_else(|err| panic!("Failed to read engine archive {}: {}", path.display(), err));
     let mut reader = BufReader::with_capacity(8 * 1024 * 1024, file);
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; 8 * 1024 * 1024];
     loop {
-        let read = reader
-            .read(&mut buffer)
-            .unwrap_or_else(|err| panic!("无法计算引擎归档摘要 {}: {}", path.display(), err));
+        let read = reader.read(&mut buffer).unwrap_or_else(|err| {
+            panic!(
+                "Failed to compute engine archive digest {}: {}",
+                path.display(),
+                err
+            )
+        });
         if read == 0 {
             break;
         }

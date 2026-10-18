@@ -111,28 +111,28 @@ async fn extract_corrections_via_llm(
 
     let prompt = if let Some(raw) = raw_original.filter(|value| !value.trim().is_empty()) {
         format!(
-            "对比以下三段文本，提取应该写入学习规则的词级纠错。\n\
-             ASR 原文（润色前）：{}\n\
-             当前显示文本：{}\n\
-             用户修改后：{}\n\n\
-             以 JSON 数组输出，每项 {{\"from\":\"原词\",\"to\":\"改后词\"}}。\n\
-             优先提取稳定、可复用的识别纠错或术语纠错。\n\
-             如果用户最终文本已经和 ASR 原文一致，说明是当前显示文本把内容改坏了，此时提取“当前显示文本 -> 用户修改后”。\n\
-             如果用户最终文本修正了 ASR 原文里的错误，也提取“ASR 原文 -> 用户修改后”。\n\
-             同一处只保留最直接的一条映射，不要输出整句。如无有效差异输出空数组 []。",
+            "Compare these three text versions and extract word-level corrections suitable for learning.\n\
+             ASR transcript before polishing: {}\n\
+             Currently displayed text: {}\n\
+             User-edited text: {}\n\n\
+             Return a JSON array of objects shaped like {{\"from\":\"source word\",\"to\":\"corrected word\"}}.\n\
+             Prefer stable, reusable recognition or terminology corrections.\n\
+             If the user's final text matches the ASR transcript, the displayed text introduced the error; extract the mapping from the displayed text to the user's edit.\n\
+             If the user's final text corrects an ASR error, extract the mapping from the ASR transcript to the user's edit.\n\
+             Keep only the most direct mapping for each change. Do not output whole sentences. Return an empty array [] if there are no valid differences.",
             raw, before, after
         )
     } else {
         format!(
-            "对比以下两句话，提取用户修改的词级别纠错。\n\
-             修改前：{}\n修改后：{}\n\n\
-             以 JSON 数组输出，每项 {{\"from\":\"原词\",\"to\":\"改后词\"}}。\n\
-             只输出被改动的词/短语，不要输出整句。如无差异输出空数组 []。",
+            "Compare these two text versions and extract word-level corrections made by the user.\n\
+             Before: {}\nAfter: {}\n\n\
+             Return a JSON array of objects shaped like {{\"from\":\"source word\",\"to\":\"corrected word\"}}.\n\
+             Output only changed words or phrases, not whole sentences. Return an empty array [] if there are no differences.",
             before, after
         )
     };
 
-    let system = "你是文本差异提取工具，只输出 JSON。";
+    let system = "You extract text differences. Return only JSON.";
     let opts = LlmRequestOptions {
         auth_context: Some((app_handle, state)),
         json_output: true,
@@ -241,7 +241,7 @@ pub async fn set_history_settings(
     retention_days: u32,
 ) -> Result<(), String> {
     if retention_days > 3650 {
-        return Err("历史保留天数不能超过 3650 天".into());
+        return Err("History retention cannot exceed 3,650 days".into());
     }
     // 清理是可能失败的 I/O；先完成它再提交内存/profile 状态，避免命令报错但
     // 设置实际上已经改变。
@@ -263,12 +263,12 @@ pub async fn set_app_profile_rules(
 ) -> Result<(), String> {
     if rules.len() > profile_service::MAX_APP_PROFILE_RULES {
         return Err(format!(
-            "按应用规则最多允许 {} 条",
+            "A maximum of {} app rules is allowed",
             profile_service::MAX_APP_PROFILE_RULES
         ));
     }
     if rules.iter().any(|rule| rule.process_name.trim().is_empty()) {
-        return Err("每条按应用规则都必须填写进程名".into());
+        return Err("Every app rule must have a process name".into());
     }
     profile_service::update_profile_and_schedule(state.inner(), |profile| {
         profile.app_profile_rules = rules;
@@ -407,7 +407,7 @@ pub async fn set_screen_vision_config(
             config.has_valid_screen_vision_model()
         });
         if !valid {
-            return Err("请选择有效的视觉模型供应商和模型".to_string());
+            return Err("Select a valid vision model provider and model".to_string());
         }
     }
 
@@ -430,7 +430,7 @@ pub async fn get_screen_vision_api_key(
 ) -> Result<String, String> {
     let provider = provider.trim();
     if provider.is_empty() {
-        return Err("视觉模型供应商不能为空".to_string());
+        return Err("Vision model provider cannot be empty".to_string());
     }
     Ok(llm_provider::load_api_key_for_provider(
         &app_handle,
@@ -446,7 +446,7 @@ pub async fn set_screen_vision_api_key(
 ) -> Result<(), String> {
     let provider = provider.trim();
     if provider.is_empty() {
-        return Err("视觉模型供应商不能为空".to_string());
+        return Err("Vision model provider cannot be empty".to_string());
     }
     let keyring_user = llm_provider::keyring_user_for_provider(provider);
     llm_provider::save_or_delete_api_key(&app_handle, &keyring_user, api_key.trim())
@@ -478,10 +478,10 @@ pub async fn get_llm_reasoning_support(
 fn validate_provider_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("provider 名称不能为空".into());
+        return Err("Provider name cannot be empty".into());
     }
     if name.chars().count() > 128 {
-        return Err("provider 名称过长（最多 128 字符）".into());
+        return Err("Provider name is too long (maximum 128 characters)".into());
     }
     Ok(name.to_string())
 }
@@ -491,14 +491,14 @@ fn validate_provider_name(name: &str) -> Result<String, String> {
 fn validate_provider_base_url(base_url: &str) -> Result<String, String> {
     let url = base_url.trim();
     if url.is_empty() {
-        return Err("base_url 不能为空".into());
+        return Err("base_url cannot be empty".into());
     }
-    let parsed = reqwest::Url::parse(url).map_err(|err| format!("非法 base_url: {}", err))?;
+    let parsed = reqwest::Url::parse(url).map_err(|err| format!("Invalid base_url: {}", err))?;
     match parsed.scheme() {
         "http" | "https" => {}
         other => {
             return Err(format!(
-                "base_url 仅支持 http/https，收到 scheme: {}",
+                "base_url must use HTTP or HTTPS; received scheme: {}",
                 other
             ))
         }
@@ -510,7 +510,7 @@ fn validate_provider_base_url(base_url: &str) -> Result<String, String> {
 fn validate_provider_model(model: &str) -> Result<String, String> {
     let model = model.trim();
     if model.is_empty() {
-        return Err("model 不能为空".into());
+        return Err("model cannot be empty".into());
     }
     Ok(model.to_string())
 }
@@ -662,7 +662,7 @@ pub async fn update_custom_provider(
         }
     });
     if !found {
-        return Err(format!("找不到自定义服务商: {}", id));
+        return Err(format!("Custom provider not found: {}", id));
     }
     Ok(())
 }
@@ -776,7 +776,7 @@ pub async fn export_user_profile(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<String>, String> {
     let data = serde_json::to_string_pretty(&state.snapshot_profile())
-        .map_err(|e| format!("序列化失败: {}", e))?;
+        .map_err(|e| format!("Serialization failed: {}", e))?;
     // rfd's async backend uses a dedicated STA thread on Windows. A reused
     // blocking worker may already be MTA, causing the sync dialog to return
     // None without showing UI. Parent the dialog to keep it above this window.
@@ -797,7 +797,7 @@ pub async fn export_user_profile(
 
     tokio::fs::write(&path, data)
         .await
-        .map_err(|e| format!("写入导出文件失败: {}", e))?;
+        .map_err(|e| format!("Failed to write export file: {}", e))?;
     Ok(Some(paths::strip_win_prefix(&path)))
 }
 
@@ -807,15 +807,15 @@ pub async fn import_user_profile(
     state: tauri::State<'_, AppState>,
     json_data: String,
 ) -> Result<(), String> {
-    let imported: UserProfile =
-        serde_json::from_str(&json_data).map_err(|e| format!("解析画像数据失败: {}", e))?;
+    let imported: UserProfile = serde_json::from_str(&json_data)
+        .map_err(|e| format!("Failed to parse profile data: {}", e))?;
     state.update_profile_mut(|profile| {
         *profile = imported;
         profile_service::normalize_profile(profile);
     });
     profile_service::save_profile_async(state.inner())
         .await
-        .map_err(|e| format!("保存用户画像失败: {}", e))?;
+        .map_err(|e| format!("Failed to save profile: {}", e))?;
     llm_provider::sync_runtime_api_key(&app_handle, state.inner());
     Ok(())
 }
@@ -878,7 +878,7 @@ pub async fn run_correction_validation(
     )
     .await?;
     if api_key.is_empty() {
-        return Err("未配置 API Key，无法审核纠错规则".into());
+        return Err("An API key is required to review correction rules".into());
     }
 
     let mut all_invalid: std::collections::HashSet<(String, String)> =
@@ -891,11 +891,11 @@ pub async fn run_correction_validation(
         }
 
         let prompt = format!(
-            "以下是语音识别自动纠错系统学到的 {} 条纠错规则。请逐条审核。\n\n\
-             合理的规则：同音字/近音字纠正、专有名词大小写、常见 ASR 误识别修复\n\
-             不合理的规则：语义无关的替换、对话碎片误学、过度泛化（如常见词映射到不相关的词）\n\n\
-             规则列表：\n{}\n\
-             以 JSON 数组输出不合理的编号，例如 [2,5,7]。如果全部合理输出 []。只输出 JSON。",
+            "The speech-recognition correction system learned {} rules. Review each one.\n\n\
+             Reasonable rules: homophone corrections, proper-name capitalization, and common ASR recognition fixes.\n\
+             Unreasonable rules: semantically unrelated replacements, learned fragments of conversation, and overgeneralization (for example, mapping a common word to an unrelated word).\n\n\
+             Rules:\n{}\n\
+             Return a JSON array of the indices of unreasonable rules, such as [2,5,7]. Return [] if all rules are reasonable. Output only JSON.",
             chunk.len(),
             rules_text
         );
@@ -909,7 +909,7 @@ pub async fn run_correction_validation(
 
         let body = llm_client::build_llm_body(
             &endpoint,
-            "你是纠错规则质量审核工具，只输出 JSON。",
+            "You review the quality of correction rules. Return only JSON.",
             &LlmUserInput::from(prompt.as_str()),
             opts,
         );
@@ -1064,14 +1064,14 @@ mod validator_tests {
     fn validate_provider_name_rejects_empty_string() {
         // 完全空串必须报"不能为空"——前端直接显示此错误。
         let err = validate_provider_name("").expect_err("空字符串必须 Err");
-        assert_eq!(err, "provider 名称不能为空");
+        assert_eq!(err, "Provider name cannot be empty");
     }
 
     #[test]
     fn validate_provider_name_rejects_whitespace_only() {
         // 全空白等价于空串：必须 trim 后再判，否则用户用空格"保存"也算通过。
         let err = validate_provider_name("   ").expect_err("纯空白必须 Err");
-        assert_eq!(err, "provider 名称不能为空");
+        assert_eq!(err, "Provider name cannot be empty");
     }
 
     #[test]
@@ -1091,7 +1091,7 @@ mod validator_tests {
         // 上限 +1 一定要 Err，且错误文案对应"过长"。
         let name: String = "a".repeat(129);
         let err = validate_provider_name(&name).expect_err("129 字符必须 Err");
-        assert_eq!(err, "provider 名称过长（最多 128 字符）");
+        assert_eq!(err, "Provider name is too long (maximum 128 characters)");
     }
 
     #[test]
@@ -1120,7 +1120,7 @@ mod validator_tests {
         assert_eq!(name.chars().count(), 130, "前置条件：130 个字符");
         let err = validate_provider_name(&name).expect_err("130 字符必须 Err");
         assert_eq!(
-            err, "provider 名称过长（最多 128 字符）",
+            err, "Provider name is too long (maximum 128 characters)",
             "字符计数必须基于 chars() 而非 bytes"
         );
     }
@@ -1134,14 +1134,14 @@ mod validator_tests {
     #[test]
     fn validate_provider_base_url_rejects_empty_string() {
         let err = validate_provider_base_url("").expect_err("空 base_url 必须 Err");
-        assert_eq!(err, "base_url 不能为空");
+        assert_eq!(err, "base_url cannot be empty");
     }
 
     #[test]
     fn validate_provider_base_url_rejects_whitespace_only() {
         // 同 name：必须先 trim 再判空，否则空格能"骗"过校验。
         let err = validate_provider_base_url("   ").expect_err("纯空白 base_url 必须 Err");
-        assert_eq!(err, "base_url 不能为空");
+        assert_eq!(err, "base_url cannot be empty");
     }
 
     #[test]
@@ -1150,8 +1150,8 @@ mod validator_tests {
         let err =
             validate_provider_base_url("not a url at all").expect_err("非 URL 字符串必须 Err");
         assert!(
-            err.starts_with("非法 base_url: "),
-            "错误必须以 \"非法 base_url: \" 开头；got {:?}",
+            err.starts_with("Invalid base_url: "),
+            "错误必须以 \"Invalid base_url: \" 开头；got {:?}",
             err
         );
     }
@@ -1162,8 +1162,8 @@ mod validator_tests {
         // 否则用户很难懂为什么"看起来像 URL"的字符串被拒了。
         let err = validate_provider_base_url("ftp://example.com").expect_err("ftp scheme 必须 Err");
         assert!(
-            err.contains("仅支持 http/https"),
-            "错误必须包含\"仅支持 http/https\"；got {:?}",
+            err.contains("must use HTTP or HTTPS"),
+            "error must contain \"must use HTTP or HTTPS\"; got {:?}",
             err
         );
         assert!(
@@ -1239,13 +1239,13 @@ mod validator_tests {
     #[test]
     fn validate_provider_model_rejects_empty_string() {
         let err = validate_provider_model("").expect_err("空 model 必须 Err");
-        assert_eq!(err, "model 不能为空");
+        assert_eq!(err, "model cannot be empty");
     }
 
     #[test]
     fn validate_provider_model_rejects_whitespace_only() {
         let err = validate_provider_model("   ").expect_err("纯空白 model 必须 Err");
-        assert_eq!(err, "model 不能为空");
+        assert_eq!(err, "model cannot be empty");
     }
 
     #[test]
@@ -1268,7 +1268,7 @@ mod validator_tests {
         .expect_err("自定义 endpoint 编辑必须复用 base_url 校验");
 
         assert!(
-            err.contains("仅支持 http/https"),
+            err.contains("must use HTTP or HTTPS"),
             "错误必须来自统一 base_url 校验；got {err:?}"
         );
     }

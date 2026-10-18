@@ -22,7 +22,7 @@ from server_common import (
 
 apply_hf_env_defaults()
 ensure_safe_cuda_env()
-logger = setup_rotating_logger(__name__, "qwen3_asr_server.log", "Qwen3-ASR服务器")
+logger = setup_rotating_logger(__name__, "qwen3_asr_server.log", "Qwen3-ASR server")
 
 from hf_cache_utils import QWEN3_ASR_MODELS, find_hf_snapshot_file
 
@@ -40,7 +40,7 @@ class Qwen3ASRServer(BaseASRServer):
     def __init__(self, engine=None):
         engine = engine or os.environ.get("SPEAK_FLOW_ASR_ENGINE", "qwen3-asr-0.6b")
         if engine not in QWEN3_ASR_MODELS:
-            raise ValueError(f"不支持的 Qwen3-ASR 引擎: {engine}")
+            raise ValueError(f"Unsupported Qwen3-ASR engine: {engine}")
         self.model_config = QWEN3_ASR_MODELS[engine]
         super().__init__(engine=engine, logger=logger)
         self.model = None
@@ -56,9 +56,9 @@ class Qwen3ASRServer(BaseASRServer):
     def _detect_device(self):
         """Avoid importing the 2 GB PyTorch runtime just to probe one CUDA driver."""
         if _has_nvidia_gpu():
-            logger.info("检测到 NVIDIA CUDA 驱动，Qwen3-ASR 优先使用 CUDA")
+            logger.info("Detected NVIDIA CUDA driver; preferring CUDA for Qwen3-ASR")
             return "cuda"
-        logger.info("未检测到 NVIDIA CUDA 驱动，Qwen3-ASR 自动选择 Vulkan/CPU")
+        logger.info("NVIDIA CUDA driver not detected; Qwen3-ASR will automatically select Vulkan/CPU")
         return "cpu"
 
     def _get_gpu_device_info(self):
@@ -110,7 +110,7 @@ class Qwen3ASRServer(BaseASRServer):
         self._close_runtime()
         self._gpu_suspended = True
         self.vad_model = vad
-        self.logger.info("Qwen3-ASR 空闲超时，已卸载 GPU 模型；FireRedVAD 仍留在 CPU")
+        self.logger.info("Qwen3-ASR idle timeout reached; unloaded the GPU model; FireRedVAD remains on CPU")
         return True
 
     def _close_runtime(self):
@@ -146,8 +146,8 @@ class Qwen3ASRServer(BaseASRServer):
             except Exception as exc:
                 errors.append(f"{backend}: {exc}")
                 self._close_runtime()
-                logger.warning("Qwen3-ASR %s 后端加载失败: %s", backend, exc)
-        raise RuntimeError("；".join(errors))
+                logger.warning("Qwen3-ASR %s backend failed to load: %s", backend, exc)
+        raise RuntimeError("; ".join(errors))
 
     def _warmup_inference(self):
         try:
@@ -160,11 +160,11 @@ class Qwen3ASRServer(BaseASRServer):
             with self.stdout_suppressor.suppress():
                 self.session.run(audio, timestamps="none")
             logger.info(
-                "Qwen3-ASR 与 FireRedVAD 预热完成，耗时 %.3f 秒",
+                "Qwen3-ASR and FireRedVAD warmup completed in %.3f seconds",
                 time.perf_counter() - started,
             )
         except Exception as exc:
-            logger.warning("Qwen3-ASR 预热失败（首次识别可能偏慢）: %s", exc)
+            logger.warning("Qwen3-ASR warmup failed (the first transcription may be slower): %s", exc)
 
     def _filter_speech(self, audio):
         import numpy as np
@@ -191,20 +191,20 @@ class Qwen3ASRServer(BaseASRServer):
 
     def initialize(self):
         if self.initialized:
-            return {"success": True, "message": "模型已初始化", "engine": self.engine}
+            return {"success": True, "message": "Model is initialized", "engine": self.engine}
 
         model_path = self._resolve_model_path()
         if not model_path:
             return {
                 "success": False,
-                "error": f"Qwen3-ASR Q8 模型未下载: {self.model_config['filename']}",
+                "error": f"Qwen3-ASR Q8 model not downloaded: {self.model_config['filename']}",
                 "type": "models_not_downloaded",
                 "engine": self.engine,
             }
 
         started = time.perf_counter()
         try:
-            logger.info("加载 Qwen3-ASR: %s", model_path)
+            logger.info("Loading Qwen3-ASR: %s", model_path)
             self._load_runtime(model_path)
             if self.vad_model is None:
                 self.vad_model = FireRedVad()
@@ -213,10 +213,10 @@ class Qwen3ASRServer(BaseASRServer):
             self._gpu_suspended = False
             self._last_load_error = None
             elapsed = time.perf_counter() - started
-            logger.info("Qwen3-ASR 初始化完成，后端: %s，耗时 %.3f 秒", self.backend, elapsed)
+            logger.info("Qwen3-ASR initialization completed; backend: %s; elapsed: %.3f seconds", self.backend, elapsed)
             return {
                 "success": True,
-                "message": f"Qwen3-ASR 初始化成功，耗时: {elapsed:.2f}秒",
+                "message": f"Qwen3-ASR initialized successfully in {elapsed:.2f} seconds",
                 "model_loaded": True,
                 "engine": self.engine,
                 "backend": self.backend,
@@ -226,11 +226,11 @@ class Qwen3ASRServer(BaseASRServer):
             self._close_runtime()
             self.vad_model = None
             self._last_load_error = str(exc)
-            logger.error("Qwen3-ASR 依赖加载失败: %s", exc)
+            logger.error("Failed to load Qwen3-ASR dependencies: %s", exc)
             logger.error(traceback.format_exc())
             return {
                 "success": False,
-                "error": f"Qwen3-ASR 依赖加载失败: {exc}",
+                "error": f"Failed to load Qwen3-ASR dependencies: {exc}",
                 "type": "import_error",
                 "engine": self.engine,
             }
@@ -238,11 +238,11 @@ class Qwen3ASRServer(BaseASRServer):
             self._close_runtime()
             self.vad_model = None
             self._last_load_error = str(exc)
-            logger.error("Qwen3-ASR 初始化失败: %s", exc)
+            logger.error("Qwen3-ASR initialization failed: %s", exc)
             logger.error(traceback.format_exc())
             return {
                 "success": False,
-                "error": f"Qwen3-ASR 初始化失败: {exc}",
+                "error": f"Qwen3-ASR initialization failed: {exc}",
                 "type": "init_error",
                 "engine": self.engine,
             }
@@ -268,13 +268,13 @@ class Qwen3ASRServer(BaseASRServer):
         if audio_base64:
             audio, duration = decode_inline_audio(audio_base64, audio_format, sample_rate)
             if not isinstance(audio, np.ndarray):
-                raise ValueError("Qwen3-ASR 内存输入仅支持 PCM")
+                raise ValueError("Qwen3-ASR in-memory input supports PCM only")
             source_rate = sample_rate or 16_000
             audio = self._resample(audio, source_rate)
             return np.ascontiguousarray(audio, dtype=np.float32), duration, "memory"
 
         if not audio_path or not os.path.exists(audio_path):
-            raise FileNotFoundError(f"音频文件不存在: {audio_path}")
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
         import soundfile as sf
 
         audio, source_rate = sf.read(
@@ -363,11 +363,11 @@ class Qwen3ASRServer(BaseASRServer):
                 "inference_ms": round(inference_ms, 3),
             }
         except Exception as exc:
-            logger.error("Qwen3-ASR 转录失败: %s", exc)
+            logger.error("Qwen3-ASR transcription failed: %s", exc)
             logger.error(traceback.format_exc())
             return {
                 "success": False,
-                "error": f"音频转录失败: {exc}",
+                "error": f"Audio transcription failed: {exc}",
                 "type": "transcription_error",
                 "input_mode": input_mode,
             }
@@ -417,7 +417,7 @@ class Qwen3ASRServer(BaseASRServer):
                 "success": False,
                 "installed": False,
                 "initialized": False,
-                "error": f"Qwen3-ASR 依赖加载失败: {exc}",
+                "error": f"Failed to load Qwen3-ASR dependencies: {exc}",
                 "engine": self.engine,
             }
 

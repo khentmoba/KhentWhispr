@@ -147,9 +147,9 @@ fn safe_audio_path(file_name: &str) -> Option<PathBuf> {
 
 fn open_connection() -> Result<Connection, String> {
     std::fs::create_dir_all(paths::get_data_dir())
-        .map_err(|error| format!("创建历史数据目录失败: {error}"))?;
+        .map_err(|error| format!("Failed to create history data directory: {error}"))?;
     let connection = Connection::open(history_db_path())
-        .map_err(|error| format!("打开历史数据库失败: {error}"))?;
+        .map_err(|error| format!("Failed to open history database: {error}"))?;
     configure_runtime_connection(&connection)?;
     Ok(connection)
 }
@@ -162,22 +162,23 @@ fn configure_connection(connection: &Connection) -> Result<(), String> {
 fn configure_runtime_connection(connection: &Connection) -> Result<(), String> {
     connection
         .busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|error| format!("设置历史数据库等待时间失败: {error}"))?;
+        .map_err(|error| format!("Failed to set history database busy timeout: {error}"))?;
     connection
         .execute_batch("PRAGMA synchronous = NORMAL;")
-        .map_err(|error| format!("配置历史数据库连接失败: {error}"))?;
+        .map_err(|error| format!("Failed to configure history database connection: {error}"))?;
     Ok(())
 }
 
 fn table_has_column(connection: &Connection, column_name: &str) -> Result<bool, String> {
     let mut statement = connection
         .prepare("PRAGMA table_info(transcription_history)")
-        .map_err(|error| format!("读取历史数据库结构失败: {error}"))?;
+        .map_err(|error| format!("Failed to read history database schema: {error}"))?;
     let columns = statement
         .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("查询历史数据库结构失败: {error}"))?;
+        .map_err(|error| format!("Failed to query history database schema: {error}"))?;
     for column in columns {
-        if column.map_err(|error| format!("解析历史数据库结构失败: {error}"))? == column_name
+        if column.map_err(|error| format!("Failed to parse history database schema: {error}"))?
+            == column_name
         {
             return Ok(true);
         }
@@ -188,13 +189,13 @@ fn table_has_column(connection: &Connection, column_name: &str) -> Result<bool, 
 fn migrate_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch("PRAGMA journal_mode = WAL;")
-        .map_err(|error| format!("启用历史数据库 WAL 失败: {error}"))?;
+        .map_err(|error| format!("Failed to enable history database WAL: {error}"))?;
     let current_version = connection
         .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-        .map_err(|error| format!("读取历史数据库版本失败: {error}"))?;
+        .map_err(|error| format!("Failed to read history database version: {error}"))?;
     if current_version > HISTORY_SCHEMA_VERSION {
         return Err(format!(
-            "历史数据库版本 {current_version} 高于当前支持的 {HISTORY_SCHEMA_VERSION}"
+            "History database version {current_version} is newer than supported version {HISTORY_SCHEMA_VERSION}"
         ));
     }
     if current_version == HISTORY_SCHEMA_VERSION {
@@ -203,7 +204,7 @@ fn migrate_schema(connection: &Connection) -> Result<(), String> {
 
     let transaction = connection
         .unchecked_transaction()
-        .map_err(|error| format!("开始历史数据库迁移失败: {error}"))?;
+        .map_err(|error| format!("Failed to begin history database migration: {error}"))?;
     transaction
         .execute_batch(
             r#"
@@ -248,7 +249,7 @@ fn migrate_schema(connection: &Connection) -> Result<(), String> {
             );
             "#,
         )
-        .map_err(|error| format!("初始化历史数据库失败: {error}"))?;
+        .map_err(|error| format!("Failed to initialize history database: {error}"))?;
 
     if !table_has_column(&transaction, "workflow")? {
         transaction
@@ -256,7 +257,7 @@ fn migrate_schema(connection: &Connection) -> Result<(), String> {
                 "ALTER TABLE transcription_history ADD COLUMN workflow TEXT NOT NULL DEFAULT 'dictation'",
                 [],
             )
-            .map_err(|error| format!("迁移历史处理类型失败: {error}"))?;
+            .map_err(|error| format!("Failed to migrate history workflow column: {error}"))?;
     }
     if !table_has_column(&transaction, "source_text")? {
         transaction
@@ -264,20 +265,20 @@ fn migrate_schema(connection: &Connection) -> Result<(), String> {
                 "ALTER TABLE transcription_history ADD COLUMN source_text TEXT",
                 [],
             )
-            .map_err(|error| format!("迁移历史编辑原文失败: {error}"))?;
+            .map_err(|error| format!("Failed to migrate history source text column: {error}"))?;
     }
     transaction
         .execute(
             "UPDATE transcription_history SET workflow = 'assistant' WHERE mode = 'assistant' AND workflow = 'dictation'",
             [],
         )
-        .map_err(|error| format!("迁移助手历史处理类型失败: {error}"))?;
+        .map_err(|error| format!("Failed to migrate assistant history workflow: {error}"))?;
     transaction
         .pragma_update(None, "user_version", HISTORY_SCHEMA_VERSION)
-        .map_err(|error| format!("更新历史数据库版本失败: {error}"))?;
+        .map_err(|error| format!("Failed to update history database version: {error}"))?;
     transaction
         .commit()
-        .map_err(|error| format!("提交历史数据库迁移失败: {error}"))
+        .map_err(|error| format!("Failed to commit history database migration: {error}"))
 }
 
 pub async fn initialize() -> Result<(), String> {
@@ -290,12 +291,16 @@ pub async fn initialize() -> Result<(), String> {
                 // 只能是上次进程崩溃遗留的租约和孤立音频。
                 connection
                     .execute("DELETE FROM history_audio_leases", [])
-                    .map_err(|error| format!("清理过期历史音频租约失败: {error}"))?;
+                    .map_err(|error| {
+                        format!("Failed to clean expired history audio leases: {error}")
+                    })?;
                 cleanup_orphan_audio_files_with_connection(&connection);
                 Ok(())
             })
             .await
-            .map_err(|error| format!("初始化历史数据库任务失败: {error}"))?
+            .map_err(|error| {
+                format!("Failed to execute history database initialization task: {error}")
+            })?
         })
         .await
         .map(|_| ())
@@ -306,22 +311,24 @@ pub async fn save_audio(session_id: u64, wav: Vec<u8>) -> Result<String, String>
     tokio::task::spawn_blocking(move || {
         let directory = history_audio_dir();
         std::fs::create_dir_all(&directory)
-            .map_err(|error| format!("创建历史音频目录失败: {error}"))?;
+            .map_err(|error| format!("Failed to create history audio directory: {error}"))?;
         let file_name = format!("{}-{session_id}.wav", now_millis());
         let path = directory.join(&file_name);
-        paths::atomic_write(&path, &wav).map_err(|error| format!("保存历史音频失败: {error}"))?;
+        paths::atomic_write(&path, &wav)
+            .map_err(|error| format!("Failed to save history audio: {error}"))?;
         Ok(file_name)
     })
     .await
-    .map_err(|error| format!("保存历史音频任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute history audio save task: {error}"))?
 }
 
 pub async fn read_audio(file_name: &str) -> Result<Vec<u8>, String> {
     initialize().await?;
-    let path = safe_audio_path(file_name).ok_or_else(|| "历史音频路径无效".to_string())?;
+    let path =
+        safe_audio_path(file_name).ok_or_else(|| "Invalid history audio path".to_string())?;
     tokio::fs::read(path)
         .await
-        .map_err(|error| format!("读取历史音频失败: {error}"))
+        .map_err(|error| format!("Failed to read history audio: {error}"))
 }
 
 fn optional_u64(value: Option<i64>) -> Option<u64> {
@@ -415,15 +422,15 @@ pub async fn insert(draft: HistoryDraft, retention_days: u32) -> Result<i64, Str
                     draft.source_text,
                 ],
             )
-            .map_err(|error| format!("写入转写历史失败: {error}"))?;
+            .map_err(|error| format!("Failed to write transcription history: {error}"))?;
         let id = connection.last_insert_rowid();
         if let Err(error) = cleanup_expired_with_connection(&mut connection, retention_days) {
-            log::warn!("历史记录已保存，但自动清理失败，将在下次启动重试: {error}");
+            log::warn!("History record saved, but automatic cleanup failed; will retry at next startup: {error}");
         }
         Ok(id)
     })
     .await
-    .map_err(|error| format!("写入转写历史任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute transcription history write task: {error}"))?
 }
 
 pub async fn get(id: i64) -> Result<Option<StoredHistoryRecord>, String> {
@@ -437,10 +444,10 @@ pub async fn get(id: i64) -> Result<Option<StoredHistoryRecord>, String> {
                 map_stored_record,
             )
             .optional()
-            .map_err(|error| format!("读取转写历史失败: {error}"))
+            .map_err(|error| format!("Failed to read transcription history: {error}"))
     })
     .await
-    .map_err(|error| format!("读取转写历史任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute transcription history read task: {error}"))?
 }
 
 /// 原子读取待重处理记录并为其音频建立租约。删除命令与这里都使用 IMMEDIATE
@@ -451,7 +458,7 @@ fn get_for_reprocess_with_connection(
 ) -> Result<Option<StoredHistoryRecord>, String> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| format!("开始历史重处理租约事务失败: {error}"))?;
+        .map_err(|error| format!("Failed to begin history reprocess lease transaction: {error}"))?;
     let stored = transaction
         .query_row(
             &format!("SELECT {HISTORY_COLUMNS} FROM transcription_history WHERE id = ?1"),
@@ -459,7 +466,7 @@ fn get_for_reprocess_with_connection(
             map_stored_record,
         )
         .optional()
-        .map_err(|error| format!("读取待重处理历史失败: {error}"))?;
+        .map_err(|error| format!("Failed to read history record for reprocessing: {error}"))?;
     if let Some(audio_file) = stored
         .as_ref()
         .and_then(|value| value.audio_file.as_deref())
@@ -475,11 +482,11 @@ fn get_for_reprocess_with_connection(
                     "#,
                 params![audio_file, now_millis()],
             )
-            .map_err(|error| format!("建立历史音频租约失败: {error}"))?;
+            .map_err(|error| format!("Failed to create history audio lease: {error}"))?;
     }
     transaction
         .commit()
-        .map_err(|error| format!("提交历史音频租约失败: {error}"))?;
+        .map_err(|error| format!("Failed to commit history audio lease: {error}"))?;
     Ok(stored)
 }
 
@@ -490,7 +497,7 @@ pub async fn get_for_reprocess(id: i64) -> Result<Option<StoredHistoryRecord>, S
         get_for_reprocess_with_connection(&mut connection, id)
     })
     .await
-    .map_err(|error| format!("读取待重处理历史任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute history reprocess read task: {error}"))?
 }
 
 fn release_audio_lease_with_connection(
@@ -499,22 +506,24 @@ fn release_audio_lease_with_connection(
 ) -> Result<(), String> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| format!("开始释放历史音频租约事务失败: {error}"))?;
+        .map_err(|error| {
+            format!("Failed to begin history audio lease release transaction: {error}")
+        })?;
     transaction
         .execute(
             "UPDATE history_audio_leases SET lease_count = lease_count - 1, updated_at = ?2 WHERE audio_file = ?1 AND lease_count > 1",
             params![audio_file, now_millis()],
         )
-        .map_err(|error| format!("递减历史音频租约失败: {error}"))?;
+        .map_err(|error| format!("Failed to decrement history audio lease: {error}"))?;
     transaction
         .execute(
             "DELETE FROM history_audio_leases WHERE audio_file = ?1 AND lease_count = 1",
             params![audio_file],
         )
-        .map_err(|error| format!("释放历史音频租约失败: {error}"))?;
+        .map_err(|error| format!("Failed to release history audio lease: {error}"))?;
     transaction
         .commit()
-        .map_err(|error| format!("提交历史音频租约释放失败: {error}"))?;
+        .map_err(|error| format!("Failed to commit history audio lease release: {error}"))?;
     cleanup_audio_if_unreferenced_with_connection(connection, audio_file);
     Ok(())
 }
@@ -526,7 +535,7 @@ pub async fn release_audio_lease(audio_file: String) -> Result<(), String> {
         release_audio_lease_with_connection(&mut connection, &audio_file)
     })
     .await
-    .map_err(|error| format!("释放历史音频租约任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute history audio lease release task: {error}"))?
 }
 
 pub async fn cleanup_audio_if_unreferenced(audio_file: String) -> Result<(), String> {
@@ -537,7 +546,9 @@ pub async fn cleanup_audio_if_unreferenced(audio_file: String) -> Result<(), Str
         Ok(())
     })
     .await
-    .map_err(|error| format!("回收未引用历史音频任务失败: {error}"))?
+    .map_err(|error| {
+        format!("Failed to execute unreferenced history audio cleanup task: {error}")
+    })?
 }
 
 pub async fn list(query: HistoryQuery) -> Result<HistoryPage, String> {
@@ -567,7 +578,7 @@ pub async fn list(query: HistoryQuery) -> Result<HistoryPage, String> {
                 |row| row.get::<_, i64>(0),
             )
             .map(|value| u64::try_from(value).unwrap_or_default())
-            .map_err(|error| format!("统计转写历史失败: {error}"))?;
+            .map_err(|error| format!("Failed to count transcription history: {error}"))?;
 
         let sql = format!(
             "SELECT {HISTORY_COLUMNS} FROM transcription_history {where_clause} \
@@ -575,7 +586,7 @@ pub async fn list(query: HistoryQuery) -> Result<HistoryPage, String> {
         );
         let mut statement = connection
             .prepare(&sql)
-            .map_err(|error| format!("准备历史查询失败: {error}"))?;
+            .map_err(|error| format!("Failed to prepare history query: {error}"))?;
         let rows = statement
             .query_map(
                 params![
@@ -587,11 +598,11 @@ pub async fn list(query: HistoryQuery) -> Result<HistoryPage, String> {
                 ],
                 map_stored_record,
             )
-            .map_err(|error| format!("查询转写历史失败: {error}"))?;
+            .map_err(|error| format!("Failed to query transcription history: {error}"))?;
         let items = rows
             .map(|row| row.map(|stored| stored.record))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("解析转写历史失败: {error}"))?;
+            .map_err(|error| format!("Failed to parse transcription history: {error}"))?;
         let has_more = u64::from(query.offset) + (items.len() as u64) < total;
         Ok(HistoryPage {
             items,
@@ -600,7 +611,7 @@ pub async fn list(query: HistoryQuery) -> Result<HistoryPage, String> {
         })
     })
     .await
-    .map_err(|error| format!("查询转写历史任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute transcription history query task: {error}"))?
 }
 
 fn latency_stats(mut values: Vec<u64>) -> LatencyStats {
@@ -643,7 +654,7 @@ pub async fn stats() -> Result<HistoryStats, String> {
                     ))
                 },
             )
-            .map_err(|error| format!("统计历史概览失败: {error}"))?;
+            .map_err(|error| format!("Failed to calculate history overview stats: {error}"))?;
 
         let mut asr = Vec::new();
         let mut polish = Vec::new();
@@ -652,7 +663,7 @@ pub async fn stats() -> Result<HistoryStats, String> {
             .prepare(
                 "SELECT asr_ms, polish_ms, total_ms FROM transcription_history WHERE status = 'success'",
             )
-            .map_err(|error| format!("准备历史延迟统计失败: {error}"))?;
+            .map_err(|error| format!("Failed to prepare history latency query: {error}"))?;
         let rows = statement
             .query_map([], |row| {
                 Ok((
@@ -661,10 +672,10 @@ pub async fn stats() -> Result<HistoryStats, String> {
                     optional_u64(row.get(2)?),
                 ))
             })
-            .map_err(|error| format!("查询历史延迟统计失败: {error}"))?;
+            .map_err(|error| format!("Failed to query history latency stats: {error}"))?;
         for row in rows {
             let (asr_ms, polish_ms, total_ms) =
-                row.map_err(|error| format!("解析历史延迟统计失败: {error}"))?;
+                row.map_err(|error| format!("Failed to parse history latency stats: {error}"))?;
             asr.extend(asr_ms);
             polish.extend(polish_ms);
             total_latency.extend(total_ms);
@@ -681,7 +692,7 @@ pub async fn stats() -> Result<HistoryStats, String> {
         })
     })
     .await
-    .map_err(|error| format!("统计转写历史任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute transcription history stats task: {error}"))?
 }
 
 fn cleanup_audio_if_unreferenced_with_connection(connection: &Connection, audio_file: &str) {
@@ -696,14 +707,14 @@ fn cleanup_audio_if_unreferenced_with_connection(connection: &Connection, audio_
         |row| row.get::<_, i64>(0),
     );
     let (Ok(references), Ok(leases)) = (references, leases) else {
-        log::warn!("检查历史音频引用失败，保留文件等待下次启动清理: {audio_file}");
+        log::warn!("Failed to check history audio reference, retaining file for next startup cleanup: {audio_file}");
         return;
     };
     if references != 0 || leases != 0 {
         return;
     }
     let Some(path) = safe_audio_path(audio_file) else {
-        log::warn!("拒绝清理非法历史音频路径: {audio_file}");
+        log::warn!("Refusing to clean invalid history audio path: {audio_file}");
         return;
     };
     match std::fs::remove_file(path) {
@@ -712,7 +723,7 @@ fn cleanup_audio_if_unreferenced_with_connection(connection: &Connection, audio_
         Err(error) => {
             // 数据库操作已经提交，文件回收属于可重试垃圾回收，不能把已经
             // 成功的删除伪装成整体失败。
-            log::warn!("删除历史音频失败，保留到下次启动重试: {audio_file}: {error}");
+            log::warn!("Failed to delete history audio, retaining for next startup retry: {audio_file}: {error}");
         }
     }
 }
@@ -723,7 +734,7 @@ fn cleanup_orphan_audio_files_with_connection(connection: &Connection) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
         Err(error) => {
-            log::warn!("扫描历史音频目录失败: {error}");
+            log::warn!("Failed to scan history audio directory: {error}");
             return;
         }
     };
@@ -745,7 +756,9 @@ pub async fn delete(id: i64) -> Result<bool, String> {
         let mut connection = open_connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("开始删除转写历史事务失败: {error}"))?;
+            .map_err(|error| {
+                format!("Failed to begin delete transcription history transaction: {error}")
+            })?;
         let audio_file: Option<String> = transaction
             .query_row(
                 "SELECT audio_file FROM transcription_history WHERE id = ?1",
@@ -753,25 +766,25 @@ pub async fn delete(id: i64) -> Result<bool, String> {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| format!("读取待删除历史失败: {error}"))?
+            .map_err(|error| format!("Failed to read history record to delete: {error}"))?
             .flatten();
         let removed = transaction
             .execute(
                 "DELETE FROM transcription_history WHERE id = ?1",
                 params![id],
             )
-            .map_err(|error| format!("删除转写历史失败: {error}"))?
+            .map_err(|error| format!("Failed to delete transcription history: {error}"))?
             > 0;
-        transaction
-            .commit()
-            .map_err(|error| format!("提交删除转写历史事务失败: {error}"))?;
+        transaction.commit().map_err(|error| {
+            format!("Failed to commit delete transcription history transaction: {error}")
+        })?;
         if let Some(audio_file) = audio_file {
             cleanup_audio_if_unreferenced_with_connection(&connection, &audio_file);
         }
         Ok(removed)
     })
     .await
-    .map_err(|error| format!("删除转写历史任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute transcription history delete task: {error}"))?
 }
 
 fn cleanup_expired_with_connection(
@@ -784,28 +797,29 @@ fn cleanup_expired_with_connection(
     let cutoff = now_millis().saturating_sub(i64::from(retention_days) * 86_400_000);
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| format!("开始历史清理事务失败: {error}"))?;
+        .map_err(|error| format!("Failed to begin history cleanup transaction: {error}"))?;
     let mut statement = transaction
         .prepare(
             "SELECT DISTINCT audio_file FROM transcription_history \
              WHERE created_at < ?1 AND audio_file IS NOT NULL",
         )
-        .map_err(|error| format!("准备历史清理失败: {error}"))?;
+        .map_err(|error| format!("Failed to prepare history cleanup: {error}"))?;
     let audio_files = statement
         .query_map(params![cutoff], |row| row.get::<_, String>(0))
-        .map_err(|error| format!("查询过期历史音频失败: {error}"))?
+        .map_err(|error| format!("Failed to query expired history audio: {error}"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("解析过期历史音频失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse expired history audio: {error}"))?;
     drop(statement);
     let removed = transaction
         .execute(
             "DELETE FROM transcription_history WHERE created_at < ?1",
             params![cutoff],
         )
-        .map_err(|error| format!("清理过期历史失败: {error}"))? as u64;
+        .map_err(|error| format!("Failed to clean expired history: {error}"))?
+        as u64;
     transaction
         .commit()
-        .map_err(|error| format!("提交历史清理事务失败: {error}"))?;
+        .map_err(|error| format!("Failed to commit history cleanup transaction: {error}"))?;
     for audio_file in audio_files {
         cleanup_audio_if_unreferenced_with_connection(connection, &audio_file);
     }
@@ -819,7 +833,7 @@ pub async fn cleanup(retention_days: u32) -> Result<u64, String> {
         cleanup_expired_with_connection(&mut connection, retention_days)
     })
     .await
-    .map_err(|error| format!("清理历史任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute history cleanup task: {error}"))?
 }
 
 pub async fn all_records() -> Result<Vec<HistoryRecord>, String> {
@@ -830,17 +844,17 @@ pub async fn all_records() -> Result<Vec<HistoryRecord>, String> {
             .prepare(&format!(
                 "SELECT {HISTORY_COLUMNS} FROM transcription_history ORDER BY created_at DESC, id DESC"
             ))
-            .map_err(|error| format!("准备历史导出失败: {error}"))?;
+            .map_err(|error| format!("Failed to prepare history export: {error}"))?;
         let records = statement
             .query_map([], map_stored_record)
-            .map_err(|error| format!("查询历史导出数据失败: {error}"))?
+            .map_err(|error| format!("Failed to query history export data: {error}"))?
             .map(|row| row.map(|stored| stored.record))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("解析历史导出数据失败: {error}"))?;
+            .map_err(|error| format!("Failed to parse history export data: {error}"))?;
         Ok(records)
     })
     .await
-    .map_err(|error| format!("读取历史导出数据任务失败: {error}"))?
+    .map_err(|error| format!("Failed to execute history export read task: {error}"))?
 }
 
 #[cfg(test)]

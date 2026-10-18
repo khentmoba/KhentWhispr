@@ -130,7 +130,7 @@ class ModelDownloadAtomicityTests(unittest.TestCase):
             with open(path, "wb") as f:
                 f.write(b"actual")
 
-            with self.assertRaisesRegex(RuntimeError, "sha256|hash|校验"):
+            with self.assertRaisesRegex(RuntimeError, "sha256|hash|checksum"):
                 download_models._write_completion_manifest(
                     tmp,
                     "org/model",

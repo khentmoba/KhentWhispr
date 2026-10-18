@@ -316,7 +316,7 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
             "funasr-status",
             serde_json::json!({
                 "status": "loading",
-                "message": "正在查找引擎环境..."
+                "message": "Locating engine runtime..."
             }),
         );
         (ticket, starting_guard)
@@ -328,14 +328,14 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
         let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
         if !start_ticket_is_current(state, &ticket) {
             log::warn!("引擎运行时已就绪但启动票据已失效，取消本次启动");
-            return Err(AppError::Asr("启动已被取消".to_string()));
+            return Err(AppError::Asr("Startup was cancelled".to_string()));
         }
     }
     let runtime = runtime_result?;
 
     if !start_ticket_is_current(state, &ticket) {
         log::warn!("引擎运行时已就绪但代数已变更，取消本次启动");
-        return Err(AppError::Asr("启动已被取消".to_string()));
+        return Err(AppError::Asr("Startup was cancelled".to_string()));
     }
 
     // 构建子进程命令
@@ -356,7 +356,11 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
                 engine if engine.starts_with("qwen3-asr-") => {
                     paths::get_qwen3_asr_server_path(app_handle)
                 }
-                engine => return Err(AppError::Asr(format!("不支持的本地 ASR 引擎: {engine}"))),
+                engine => {
+                    return Err(AppError::Asr(format!(
+                        "Unsupported local ASR engine: {engine}"
+                    )))
+                }
             };
             let server_script_str = paths::strip_win_prefix(&server_script);
             log::info!(
@@ -367,7 +371,7 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
 
             if !server_script.exists() {
                 return Err(AppError::Asr(format!(
-                    "FunASR 服务器脚本不存在: {}",
+                    "FunASR server script does not exist: {}",
                     server_script_str
                 )));
             }
@@ -416,19 +420,19 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
         // “已生成但尚未写入正式 process slot”的子进程。
         let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
         if !start_ticket_is_current(state, &ticket) {
-            return Err(AppError::Asr("启动已被取消".to_string()));
+            return Err(AppError::Asr("Startup was cancelled".to_string()));
         }
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| AppError::Asr(format!("启动 FunASR 进程失败: {}", e)))?;
+            .map_err(|e| AppError::Asr(format!("Failed to start FunASR process: {}", e)))?;
         let stdin = child.stdin.take().ok_or_else(|| {
             let _ = child.start_kill();
-            AppError::Asr("无法获取 FunASR 进程的标准输入".to_string())
+            AppError::Asr("Failed to capture FunASR process stdin".to_string())
         })?;
         let stdout = child.stdout.take().ok_or_else(|| {
             let _ = child.start_kill();
-            AppError::Asr("无法获取 FunASR 进程的标准输出".to_string())
+            AppError::Asr("Failed to capture FunASR process stdout".to_string())
         })?;
         let child_handle = Arc::new(parking_lot::Mutex::new(Some(child)));
         *state.engine.funasr_starting_process.lock() = Some(StartingFunasrProcess {
@@ -443,7 +447,7 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
             "funasr-status",
             serde_json::json!({
                 "status": "loading",
-                "message": "正在加载语音识别模型..."
+                "message": "Loading speech recognition model..."
             }),
         );
         (stdin, stdout, child_handle)
@@ -454,7 +458,7 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
     let response: ServerResponse = match read_json_response(
         &mut stdout_reader,
         Duration::from_secs(SERVER_INIT_TIMEOUT_SECS),
-        "FunASR 初始化",
+        "FunASR initialization",
     )
     .await
     {
@@ -463,7 +467,7 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
             return if start_ticket_is_current(state, &ticket) {
                 Err(err)
             } else {
-                Err(AppError::Asr("启动已被取消".to_string()))
+                Err(AppError::Asr("Startup was cancelled".to_string()))
             };
         }
     };
@@ -478,12 +482,12 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
         .error
         .clone()
         .or_else(|| response.message.clone())
-        .unwrap_or_else(|| "FunASR 初始化失败".to_string());
+        .unwrap_or_else(|| "FunASR initialization failed".to_string());
 
     if initialized {
         let ready_status = serde_json::json!({
             "status": "ready",
-            "message": "FunASR 服务器已就绪",
+            "message": "FunASR server is ready",
             "device": response.device,
             "gpu_name": response.gpu_name,
             "models_present": true,
@@ -492,16 +496,18 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
         let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
         if !start_ticket_is_current(state, &ticket) {
             log::warn!("FunASR 初始化完成但启动票据已失效，丢弃旧进程");
-            return Err(AppError::Asr("启动已被取消".to_string()));
+            return Err(AppError::Asr("Startup was cancelled".to_string()));
         }
 
         let Some(mut child) = take_starting_child(state, &ticket, &child_handle) else {
-            return Err(AppError::Asr("启动已被取消".to_string()));
+            return Err(AppError::Asr("Startup was cancelled".to_string()));
         };
         let mut process_guard = state.engine.funasr_process.lock().await;
         if process_guard.is_some() {
             let _ = child.start_kill();
-            return Err(AppError::Asr("FunASR 服务器已由其他任务启动".to_string()));
+            return Err(AppError::Asr(
+                "FunASR server was already started by another task".to_string(),
+            ));
         }
         *process_guard = Some(FunasrProcess {
             child,
@@ -517,10 +523,10 @@ pub async fn start_server(app_handle: &tauri::AppHandle, state: &AppState) -> Re
         let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
         if !start_ticket_is_current(state, &ticket) {
             log::warn!("FunASR 初始化失败结果已过期，忽略旧错误状态");
-            return Err(AppError::Asr("启动已被取消".to_string()));
+            return Err(AppError::Asr("Startup was cancelled".to_string()));
         }
         let Some(mut child) = take_starting_child(state, &ticket, &child_handle) else {
-            return Err(AppError::Asr("启动已被取消".to_string()));
+            return Err(AppError::Asr("Startup was cancelled".to_string()));
         };
         let _ = child.start_kill();
         starting_guard.release_child();
@@ -582,7 +588,8 @@ pub async fn transcribe_pcm16(
     // 检查服务器是否就绪
     if !state.is_funasr_ready() {
         return Err(AppError::Asr(
-            "语音识别引擎尚未就绪，请等待初始化完成".to_string(),
+            "Speech recognition engine is not ready yet; please wait for initialization to finish"
+                .to_string(),
         ));
     }
 
@@ -692,7 +699,8 @@ fn response_indicates_inline_unsupported(response: &ServerResponse) -> bool {
     }
 
     response.error.as_deref().is_some_and(|error| {
-        error.contains("音频文件不存在")
+        error.contains("Audio file does not exist")
+            || error.contains("音频文件不存在")
             || error.contains("path should be string")
             || error.contains("os.PathLike")
             || error.contains("NoneType")
@@ -734,7 +742,7 @@ fn server_response_to_transcription_result(
     } else {
         let error_msg = response
             .error
-            .unwrap_or_else(|| "未知的转写错误".to_string());
+            .unwrap_or_else(|| "Unknown transcription error".to_string());
         TranscriptionResult {
             text: String::new(),
             duration: None,
@@ -755,7 +763,7 @@ async fn transcribe_wav_bytes_via_path(
 
     tokio::fs::write(&temp_file, &audio_data)
         .await
-        .map_err(|e| AppError::Asr(format!("写入临时音频文件失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to write temporary audio file: {}", e)))?;
 
     let response = send_command_to_server(
         state,
@@ -813,7 +821,7 @@ async fn send_command_to_server<R: tauri::Runtime>(
     let result = {
         let process = guard
             .as_mut()
-            .ok_or_else(|| AppError::Asr("FunASR 进程未运行".to_string()))?;
+            .ok_or_else(|| AppError::Asr("FunASR process is not running".to_string()))?;
         send_command_impl(process, command).await
     };
 
@@ -830,7 +838,7 @@ async fn send_command_to_server<R: tauri::Runtime>(
                 "funasr-status",
                 serde_json::json!({
                     "status": "crashed",
-                    "message": "语音识别引擎连接已断开，正在准备重启..."
+                    "message": "Speech recognition engine disconnected; preparing to restart..."
                 }),
             );
         }
@@ -849,7 +857,7 @@ async fn send_command_impl(
 ) -> Result<ServerResponse, AppError> {
     let request_id = NEXT_SERVER_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let mut command_value = serde_json::to_value(command)
-        .map_err(|e| AppError::Asr(format!("序列化命令失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to serialize command: {}", e)))?;
     if let Some(map) = command_value.as_object_mut() {
         map.insert(
             "request_id".to_string(),
@@ -858,7 +866,7 @@ async fn send_command_impl(
     }
     // 序列化命令为 Python 端期望的扁平 JSON 格式
     let command_json = serde_json::to_string(&command_value)
-        .map_err(|e| AppError::Asr(format!("序列化命令失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to serialize command: {}", e)))?;
 
     // 写入命令到 stdin
     // `write_all` 确保所有字节都被写入
@@ -866,20 +874,20 @@ async fn send_command_impl(
         .stdin
         .write_all(format!("{}\n", command_json).as_bytes())
         .await
-        .map_err(|e| AppError::Asr(format!("写入命令到 FunASR 失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to write command to FunASR: {}", e)))?;
 
     // `flush` 确保缓冲区的数据被立即发送
     process
         .stdin
         .flush()
         .await
-        .map_err(|e| AppError::Asr(format!("刷新 stdin 缓冲区失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to flush stdin buffer: {}", e)))?;
 
     // 从 stdout 读取响应（允许跳过非 JSON 行）
     read_json_response_matching(
         &mut process.stdout,
         Duration::from_secs(SERVER_RESPONSE_TIMEOUT_SECS),
-        "等待 FunASR 响应",
+        "Waiting for FunASR response",
         |response: &ServerResponse| {
             server_response_matches_request(response.request_id, request_id)
         },
@@ -907,7 +915,7 @@ mod request_identity_tests {
 
 async fn try_send_exit_command(process: &mut FunasrProcess) -> Result<(), AppError> {
     let command_json = serde_json::to_string(&ServerCommand::Exit)
-        .map_err(|e| AppError::Asr(format!("序列化退出命令失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Failed to serialize exit command: {}", e)))?;
     let timeout = Duration::from_millis(SERVER_EXIT_WRITE_TIMEOUT_MS);
 
     tokio::time::timeout(
@@ -917,13 +925,13 @@ async fn try_send_exit_command(process: &mut FunasrProcess) -> Result<(), AppErr
             .write_all(format!("{}\n", command_json).as_bytes()),
     )
     .await
-    .map_err(|_| AppError::Asr("写入退出命令超时".to_string()))?
-    .map_err(|e| AppError::Asr(format!("写入退出命令失败: {}", e)))?;
+    .map_err(|_| AppError::Asr("Timed out writing exit command".to_string()))?
+    .map_err(|e| AppError::Asr(format!("Failed to write exit command: {}", e)))?;
 
     tokio::time::timeout(timeout, process.stdin.flush())
         .await
-        .map_err(|_| AppError::Asr("刷新退出命令超时".to_string()))?
-        .map_err(|e| AppError::Asr(format!("刷新退出命令失败: {}", e)))?;
+        .map_err(|_| AppError::Asr("Timed out flushing exit command".to_string()))?
+        .map_err(|e| AppError::Asr(format!("Failed to flush exit command: {}", e)))?;
 
     Ok(())
 }
@@ -943,11 +951,9 @@ pub async fn push_gpu_idle_seconds(state: &AppState, seconds: u64) -> Result<(),
         send_command_to_server::<tauri::Wry>(state, &ServerCommand::SetGpuIdle { seconds }, None)
             .await?;
     if response.success == Some(false) {
-        return Err(AppError::Asr(
-            response
-                .error
-                .unwrap_or_else(|| "设置 GPU 空闲卸载失败".to_string()),
-        ));
+        return Err(AppError::Asr(response.error.unwrap_or_else(|| {
+            "Failed to configure GPU idle unload".to_string()
+        })));
     }
     Ok(())
 }
@@ -982,9 +988,9 @@ pub async fn check_status(
                 gpu_name: None,
                 gpu_memory_total: None,
                 message: if has_key {
-                    format!("{} 在线服务就绪", label)
+                    format!("{} online service ready", label)
                 } else {
-                    format!("请配置 {} API Key", label)
+                    format!("Please configure the {} API Key", label)
                 },
                 engine: Some(engine),
                 models_present: Some(true),
@@ -998,7 +1004,7 @@ pub async fn check_status(
                 true,
                 false,
                 false,
-                "FunASR 服务器正在启动，模型加载中...".to_string(),
+                "FunASR server is starting and loading models...".to_string(),
             ));
         }
         let model_check = inspect_model_files_for_engine(&engine);
@@ -1009,11 +1015,12 @@ pub async fn check_status(
         let all_present = model_check.all_present && has_engine;
         return Ok(FunASRStatus {
             message: if all_present {
-                "FunASR 服务器未运行".to_string()
+                "FunASR server is not running".to_string()
             } else if !has_engine {
-                "语音引擎未下载，请先下载模型与引擎".to_string()
+                "Speech engine is not downloaded; please download the models and engine first"
+                    .to_string()
             } else {
-                "模型文件未下载，请先下载模型".to_string()
+                "Model files have not been downloaded; download the models first".to_string()
             },
             engine: Some(engine),
             models_present: Some(all_present),
@@ -1036,7 +1043,7 @@ pub async fn check_status(
             let message = response
                 .message
                 .or(response.error)
-                .unwrap_or_else(|| "服务器运行中".to_string());
+                .unwrap_or_else(|| "Server is running".to_string());
 
             Ok(FunASRStatus {
                 running: true,
@@ -1059,7 +1066,7 @@ pub async fn check_status(
                 false,
                 false,
                 false,
-                format!("服务器通信失败: {}", e),
+                format!("Server communication failed: {}", e),
             ))
         }
     }
@@ -1311,12 +1318,12 @@ fn inspect_model_files_for_engine(engine: &str) -> ModelCheckResult {
         "qwen3-asr-0.6b"
     };
     let (repo_id, filename, description) = if normalized_engine == "confucius4-r2t2" {
-        (R2T2_REPO_ID, R2T2_FILENAME, "Confucius4-R2T2 Q8 模型")
+        (R2T2_REPO_ID, R2T2_FILENAME, "Confucius4-R2T2 Q8 model")
     } else {
         (
             QWEN3_ASR_06_REPO_ID,
             QWEN3_ASR_06_FILENAME,
-            "Qwen3-ASR 0.6B Q8模型",
+            "Qwen3-ASR 0.6B Q8 model",
         )
     };
     let mut missing_models = Vec::new();
@@ -1567,7 +1574,7 @@ mod tests {
                 .await
                 .expect_err("closed stdout must fail instead of waiting for a response");
 
-        assert_eq!(error.to_string(), "ASR错误: test失败：stdout 已关闭");
+        assert_eq!(error.to_string(), "ASR error: test failed: stdout closed");
     }
 
     #[tokio::test]
@@ -1583,7 +1590,7 @@ mod tests {
         .expect("response timeout path must not hang the test")
         .expect_err("silent stdout must respect the response timeout");
 
-        assert_eq!(error.to_string(), "ASR错误: test超时");
+        assert_eq!(error.to_string(), "ASR error: test timed out");
     }
 
     #[tokio::test]
