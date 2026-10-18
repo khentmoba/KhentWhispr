@@ -26,9 +26,9 @@ CMVN_FILENAME = "fireredvad_cmvn.json"
 class FireRedVadOptions:
     threshold: float = 0.5
     smooth_window_frames: int = 5
-    min_speech_duration_ms: int = 150
+    min_speech_duration_ms: int = 120
     min_silence_duration_ms: int = 300
-    speech_pad_ms: int = 120
+    speech_pad_ms: int = 200
 
 
 def _resource_path(filename: str) -> Path:

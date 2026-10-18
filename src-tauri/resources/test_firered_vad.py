@@ -49,6 +49,18 @@ class FireRedVadPostprocessingTests(unittest.TestCase):
             [{"start": 1_280, "end": 13_120}],
         )
 
+    def test_default_options_preserve_short_utterances_and_wider_consonant_padding(self):
+        vad = object.__new__(FireRedVad)
+        vad.options = FireRedVadOptions()
+        probabilities = np.concatenate(
+            [np.zeros(30), np.ones(12), np.zeros(40)]
+        ).astype(np.float32)
+
+        self.assertEqual(
+            vad._timestamps_from_probabilities(probabilities, 16_000),
+            [{"start": 1_920, "end": 10_240}],
+        )
+
 
 class FireRedVadAssetTests(unittest.TestCase):
     def test_bundled_model_rejects_one_second_of_silence(self):

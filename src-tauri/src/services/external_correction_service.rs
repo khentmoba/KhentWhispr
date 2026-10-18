@@ -165,18 +165,15 @@ fn tokens(text: &str) -> Vec<&str> {
     result
 }
 
-// Only a single short word substitution with a small edit distance is eligible.
-// shortcut: whitespace/phrase edits and long terms are skipped; expand only with labeled examples.
-fn correction(before: &str, after: &str) -> Option<(String, String)> {
-    let original = tokens(before);
-    let updated = tokens(after);
-    if original.len() != updated.len() {
-        return None;
-    }
-    let mut changes = original.iter().zip(&updated).filter(|(a, b)| a != b);
-    let (&from, &to) = changes.next()?;
-    if changes.next().is_some()
-        || !from.chars().all(char::is_alphanumeric)
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}'
+    )
+}
+
+fn word_correction(from: &str, to: &str) -> Option<(String, String)> {
+    if !from.chars().all(char::is_alphanumeric)
         || !to.chars().all(char::is_alphanumeric)
         || !from.chars().any(char::is_alphabetic)
         || !to.chars().any(char::is_alphabetic)
@@ -189,7 +186,8 @@ fn correction(before: &str, after: &str) -> Option<(String, String)> {
     }
     let a: Vec<char> = from.chars().collect();
     let b: Vec<char> = to.chars().collect();
-    if a.is_empty() || b.is_empty() || a.len() > 24 || b.len() > 24 {
+    let max_len = a.len().max(b.len());
+    if a.is_empty() || b.is_empty() || max_len > 24 {
         return None;
     }
     let mut row: Vec<usize> = (0..=b.len()).collect();
@@ -209,10 +207,72 @@ fn correction(before: &str, after: &str) -> Option<(String, String)> {
             a[i] == b[i + 1] && a[i + 1] == b[i] && a[..i] == b[..i] && a[i + 2..] == b[i + 2..]
         });
     let distance = if swapped { 1 } else { row[b.len()] };
-    if distance == 0 || distance > 2 || distance * 2 > a.len().max(b.len()) {
+    let max_distance = if max_len >= 9 { 3 } else { 2 };
+    if distance == 0 || distance > max_distance || distance * 2 > a.len().max(b.len()) {
         return None;
     }
     Some((from.to_string(), to.to_string()))
+}
+
+fn compound_correction(orig_mid: &[&str], upd_mid: &[&str]) -> Option<(String, String)> {
+    let valid_words = |slice: &[&str]| {
+        slice.iter().enumerate().all(|(idx, tok)| {
+            if idx % 2 == 1 {
+                *tok == " "
+            } else {
+                !tok.is_empty()
+                    && tok.chars().all(char::is_alphanumeric)
+                    && tok.chars().any(char::is_alphabetic)
+                    && !tok.chars().any(is_cjk)
+            }
+        })
+    };
+    if !matches!((orig_mid.len(), upd_mid.len()), (3, 1) | (1, 3))
+        || !valid_words(orig_mid)
+        || !valid_words(upd_mid)
+    {
+        return None;
+    }
+    let joined_from: String = orig_mid.iter().copied().filter(|t| *t != " ").collect();
+    let joined_to: String = upd_mid.iter().copied().filter(|t| *t != " ").collect();
+    if joined_from.chars().count() < 4
+        || joined_to.chars().count() < 4
+        || (!joined_from.eq_ignore_ascii_case(&joined_to)
+            && word_correction(&joined_from, &joined_to).is_none())
+    {
+        return None;
+    }
+    Some((orig_mid.concat(), upd_mid.concat()))
+}
+
+// Single word substitution or 2-word compound split/merge with small edit distance.
+// shortcut: arbitrary phrase rewrites are skipped; expand only with labeled examples.
+fn correction(before: &str, after: &str) -> Option<(String, String)> {
+    let original = tokens(before);
+    let updated = tokens(after);
+    if original.len() == updated.len() {
+        let mut changes = original.iter().zip(&updated).filter(|(a, b)| a != b);
+        let (&from, &to) = changes.next()?;
+        if changes.next().is_some() {
+            return None;
+        }
+        return word_correction(from, to);
+    }
+    let prefix = original
+        .iter()
+        .zip(&updated)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = original[prefix..]
+        .iter()
+        .rev()
+        .zip(updated[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    compound_correction(
+        &original[prefix..original.len() - suffix],
+        &updated[prefix..updated.len() - suffix],
+    )
 }
 
 /// Apply only unambiguous, user-confirmed spelling rules, without chaining replacements.
@@ -220,7 +280,7 @@ pub fn apply_spelling_rules(
     text: &str,
     profile: &crate::state::user_profile::UserProfile,
 ) -> String {
-    use crate::state::user_profile::CorrectionSource;
+    use crate::state::user_profile::{CorrectionPattern, CorrectionSource};
     if !profile.external_correction_learning {
         return text.to_string();
     }
@@ -232,24 +292,93 @@ pub fn apply_spelling_rules(
                 && correction(&rule.original, &rule.corrected).is_some()
         })
         .collect();
-    tokens(text)
-        .into_iter()
-        .map(|token| {
-            let mut matches = rules.iter().filter(|rule| rule.original == token);
-            let Some(first) = matches.next() else {
-                return token;
-            };
-            if matches.any(|rule| rule.corrected != first.corrected) {
-                return token;
-            }
-            first.corrected.as_str()
+    let unique = |key: &str| -> Option<&str> {
+        let mut matches = rules.iter().filter(|rule| rule.original == key);
+        let first = matches.next()?;
+        (!matches.any(|rule| rule.corrected != first.corrected)).then_some(first.corrected.as_str())
+    };
+    let cjk_rules: Vec<&CorrectionPattern> = rules
+        .iter()
+        .copied()
+        .filter(|rule| {
+            rule.original.chars().all(is_cjk)
+                && rule.original.chars().count() >= 2
+                && unique(&rule.original).is_some()
         })
-        .collect()
+        .collect();
+    let toks = tokens(text);
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < toks.len() {
+        if i + 2 < toks.len() && toks[i + 1] == " " {
+            let phrase = format!("{} {}", toks[i], toks[i + 2]);
+            if let Some(rep) = unique(&phrase) {
+                out.push_str(rep);
+                i += 3;
+                continue;
+            }
+        }
+        if let Some(rep) = unique(toks[i]) {
+            out.push_str(rep);
+            i += 1;
+            continue;
+        }
+        if !cjk_rules.is_empty() && toks[i].chars().all(is_cjk) {
+            let token = toks[i];
+            let mut spans: Vec<(usize, usize, &str)> = Vec::new();
+            for rule in &cjk_rules {
+                for (start, matched) in token.match_indices(&rule.original) {
+                    spans.push((start, start + matched.len(), rule.corrected.as_str()));
+                }
+            }
+            if !spans.is_empty() {
+                spans.sort_by(|a, b| (b.1 - b.0).cmp(&(a.1 - a.0)).then(a.0.cmp(&b.0)));
+                let mut kept: Vec<(usize, usize, &str)> = Vec::new();
+                for span in spans {
+                    if !kept.iter().any(|k| span.0 < k.1 && k.0 < span.1) {
+                        kept.push(span);
+                    }
+                }
+                kept.sort_by_key(|span| span.0);
+                let mut cursor = 0;
+                for (start, end, rep) in kept {
+                    out.push_str(&token[cursor..start]);
+                    out.push_str(rep);
+                    cursor = end;
+                }
+                out.push_str(&token[cursor..]);
+                i += 1;
+                continue;
+            }
+        }
+        out.push_str(toks[i]);
+        i += 1;
+    }
+    out
 }
 
 fn corrections(before: &str, after: &str) -> Option<Vec<(String, String)>> {
     let original = tokens(before);
     let updated = tokens(after);
+    if original.len() != updated.len() {
+        let prefix = original
+            .iter()
+            .zip(&updated)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let suffix = original[prefix..]
+            .iter()
+            .rev()
+            .zip(updated[prefix..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        if let Some(pair) = compound_correction(
+            &original[prefix..original.len() - suffix],
+            &updated[prefix..updated.len() - suffix],
+        ) {
+            return Some(vec![pair]);
+        }
+    }
     if updated.len() < original.len() {
         return None;
     }
@@ -275,7 +404,7 @@ fn corrections(before: &str, after: &str) -> Option<Vec<(String, String)>> {
                 && !a.chars().any(char::is_alphanumeric)
                 && b.starts_with(*a))
         })
-        .map(|((_, a), b)| correction(a, b))
+        .map(|((_, a), b)| word_correction(a, b))
         .collect();
     pairs.filter(|pairs| !pairs.is_empty())
 }
@@ -513,5 +642,34 @@ mod tests {
         ] {
             assert_eq!(correction(before, after), None, "{before} -> {after}");
         }
+    }
+
+    #[test]
+    fn learns_compound_words_cjk_terms_and_promotes_proper_hotwords() {
+        use crate::services::profile_service::learn_from_structured;
+        use crate::state::user_profile::{CorrectionSource, UserProfile};
+        let mut profile = UserProfile {
+            external_correction_learning: true,
+            ..Default::default()
+        };
+        let compound = corrections("Use speak flow today.", "Use SpeakFlow today.").unwrap();
+        let cjk = corrections("同机大学", "同济大学").unwrap();
+        let longer = corrections("KhentWhisper", "KhentWhispr").unwrap();
+        let common = corrections("teh", "the").unwrap();
+        for pairs in [&compound, &cjk, &longer, &common] {
+            learn_from_structured(&mut profile, pairs, &[], CorrectionSource::User);
+        }
+        assert_eq!(
+            apply_spelling_rules(
+                "Use speak flow with KhentWhisper at 今天去同机大学开会。",
+                &profile
+            ),
+            "Use SpeakFlow with KhentWhispr at 今天去同济大学开会。"
+        );
+        let hot_words: Vec<&str> = profile.hot_words.iter().map(|h| h.text.as_str()).collect();
+        assert!(hot_words.contains(&"SpeakFlow"));
+        assert!(hot_words.contains(&"同济大学"));
+        assert!(hot_words.contains(&"KhentWhispr"));
+        assert!(!hot_words.contains(&"the"));
     }
 }

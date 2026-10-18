@@ -27,7 +27,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
@@ -760,31 +760,16 @@ fn response_indicates_inline_unsupported(response: &ServerResponse) -> bool {
 
 fn server_response_to_transcription_result(
     state: &AppState,
-    mut response: ServerResponse,
+    response: ServerResponse,
 ) -> TranscriptionResult {
     if response.success == Some(true) {
-        if response
-            .engine
-            .as_deref()
-            .is_some_and(|engine| engine.starts_with("qwen3-asr-"))
-        {
-            let text = response.text.as_deref().unwrap_or_default();
-            let started = Instant::now();
-            let correction = state.with_profile(|profile| {
-                super::qwen_hotword_service::correct_qwen_profile_terms(text, profile)
-            });
-            if correction.replacements > 0 {
-                log::info!(
-                    "Qwen3-ASR 本地热词纠偏完成: {} 处, {} 微秒",
-                    correction.replacements,
-                    started.elapsed().as_micros()
-                );
-                response.text = Some(correction.text);
-            }
-        }
+        let text = super::qwen_hotword_service::apply_profile_hotword_corrections(
+            state,
+            response.text.as_deref().unwrap_or_default(),
+        );
 
         TranscriptionResult {
-            text: response.text.unwrap_or_default(),
+            text,
             duration: response.duration,
             success: true,
             error: None,
@@ -1662,14 +1647,16 @@ mod tests {
             });
         });
 
-        let qwen_response: ServerResponse = serde_json::from_value(serde_json::json!({
-            "success": true,
-            "text": "请用 get hub 打开 open cloud。",
-            "engine": "qwen3-asr-0.6b"
-        }))
-        .unwrap();
-        let qwen_result = server_response_to_transcription_result(&state, qwen_response);
-        assert_eq!(qwen_result.text, "请用 github 打开 openclaw。");
+        for engine in ["qwen3-asr-0.6b", "confucius4-r2t2"] {
+            let response: ServerResponse = serde_json::from_value(serde_json::json!({
+                "success": true,
+                "text": "请用 get hub 打开 open cloud。",
+                "engine": engine
+            }))
+            .unwrap();
+            let result = server_response_to_transcription_result(&state, response);
+            assert_eq!(result.text, "请用 github 打开 openclaw。");
+        }
     }
 
     #[test]

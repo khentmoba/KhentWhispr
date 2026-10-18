@@ -211,7 +211,10 @@ impl NativeStreamClient {
         self.apply_update(&update);
         self.closed = true;
         Ok(TranscriptionResult {
-            text: self.committed_text.clone(),
+            text: crate::services::qwen_hotword_service::apply_profile_hotword_corrections(
+                state,
+                &self.committed_text,
+            ),
             duration: Some(self.sample_count as f64 / 16_000.0),
             success: true,
             error: None,

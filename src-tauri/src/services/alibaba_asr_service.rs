@@ -68,6 +68,15 @@ fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
+fn hotword_context(state: &AppState) -> String {
+    let words = state.with_profile(|p| p.get_hot_word_texts(100));
+    if words.is_empty() {
+        String::new()
+    } else {
+        format!("Hotwords: {}", words.join(", "))
+    }
+}
+
 async fn transcribe_via_dashscope_asr(
     state: &AppState,
     base: &str,
@@ -76,12 +85,13 @@ async fn transcribe_via_dashscope_asr(
     audio_wav: Vec<u8>,
 ) -> Result<TranscriptionResult, AppError> {
     let data_url = format!("data:audio/wav;base64,{}", b64(&audio_wav));
+    let system_text = hotword_context(state);
 
     let body = serde_json::json!({
         "model": model,
         "input": {
             "messages": [
-                {"role": "system", "content": [{"text": ""}]},
+                {"role": "system", "content": [{"text": system_text}]},
                 {"role": "user", "content": [{"audio": data_url}]}
             ]
         },
@@ -150,7 +160,9 @@ async fn transcribe_via_dashscope_asr(
     }
 
     Ok(TranscriptionResult {
-        text: text_out,
+        text: crate::services::qwen_hotword_service::apply_profile_hotword_corrections(
+            state, &text_out,
+        ),
         duration: None,
         success: true,
         error: None,
@@ -170,6 +182,15 @@ async fn transcribe_via_omni_chat(
 
     let encoded = b64(&audio_wav);
     let data_url = format!("data:;base64,{}", encoded);
+    let hotwords = hotword_context(state);
+    let system_prompt = if hotwords.is_empty() {
+        "You are a professional speech recognizer. Transcribe the audio verbatim. Output only the transcription with no extra commentary.".to_string()
+    } else {
+        format!(
+            "You are a professional speech recognizer. Transcribe the audio verbatim. Output only the transcription with no extra commentary.
+{hotwords}"
+        )
+    };
 
     let body = serde_json::json!({
         "model": model,
@@ -179,7 +200,7 @@ async fn transcribe_via_omni_chat(
         "messages": [
             {
                 "role": "system",
-                "content": "You are a professional speech recognizer. Transcribe the audio verbatim. Output only the transcription with no extra commentary."
+                "content": system_prompt
             },
             {
                 "role": "user",
@@ -276,7 +297,9 @@ async fn transcribe_via_omni_chat(
     }
 
     Ok(TranscriptionResult {
-        text: collected,
+        text: crate::services::qwen_hotword_service::apply_profile_hotword_corrections(
+            state, &collected,
+        ),
         duration: None,
         success: true,
         error: None,
