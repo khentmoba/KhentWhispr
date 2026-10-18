@@ -32,7 +32,7 @@ export default function MainPage({ onNavigate, animClass = "" }: {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [errorDismissed, setErrorDismissed] = useState(false);
   const [onboardingDismissed, setOnboardingDismissed] = useState(() => readLocalStorage(ONBOARDING_DISMISSED_KEY) === "true");
-  const isToggleMode = useRef(readLocalStorage(RECORDING_MODE_KEY) === "toggle").current;
+  const isToggleMode = readLocalStorage(RECORDING_MODE_KEY) === "toggle";
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const previousResult = useRef<{ id: string; top: number } | null>(null);

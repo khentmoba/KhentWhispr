@@ -79,35 +79,7 @@ pub fn correct_qwen_hot_words(text: &str, hot_words: &[HotWord]) -> HotWordCorre
         }
     }
 
-    candidates.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then((b.end - b.start).cmp(&(a.end - a.start)))
-            .then(a.rank.cmp(&b.rank))
-            .then(a.start.cmp(&b.start))
-    });
-
-    let mut selected: Vec<ReplacementCandidate<'_>> = Vec::new();
-    for candidate in candidates {
-        let overlaps = selected
-            .iter()
-            .any(|kept| candidate.start < kept.end && kept.start < candidate.end);
-        if !overlaps {
-            selected.push(candidate);
-        }
-    }
-
-    selected.sort_by(|a, b| b.start.cmp(&a.start));
-    let replacements = selected.len();
-    let mut corrected = text.to_owned();
-    for candidate in selected {
-        corrected.replace_range(candidate.start..candidate.end, candidate.replacement);
-    }
-
-    HotWordCorrection {
-        text: corrected,
-        replacements,
-    }
+    apply_candidates(text, candidates)
 }
 
 fn correct_known_aliases(

@@ -90,6 +90,10 @@
     },
     "resources": {
       "resources/qwen3_asr_server.py": "resources/qwen3_asr_server.py",
+      "resources/r2t2_asr_server.py": "resources/r2t2_asr_server.py",
+      "resources/r2t2_native.py": "resources/r2t2_native.py",
+      "resources/r2t2_stream.py": "resources/r2t2_stream.py",
+      "resources/r2t2_segmented.py": "resources/r2t2_segmented.py",
       "resources/firered_vad.py": "resources/firered_vad.py",
       "resources/fireredvad_vad.onnx": "resources/fireredvad_vad.onnx",
       "resources/fireredvad_cmvn.json": "resources/fireredvad_cmvn.json",
