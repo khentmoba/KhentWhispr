@@ -78,7 +78,6 @@ pub fn normalize_profile(profile: &mut UserProfile) -> ProfileCleanupStats {
     profile.web_search.enabled = false;
     profile.jev = Default::default();
     for rule in &mut profile.app_profile_rules {
-        rule.ai_polish = AppRuleOverride::Disabled;
         rule.screen_context = AppRuleOverride::Disabled;
         rule.translation = AppTranslationOverride::Disabled;
         rule.translation_target = None;
@@ -906,6 +905,40 @@ mod tests {
         assert!(!profile.selection_assistant.enabled);
         assert!(!profile.web_search.enabled);
         assert!(!profile.jev.enabled);
+    }
+
+    #[test]
+    fn history_only_rules_preserve_polish_settings_after_save_and_load() {
+        for ai_polish in [
+            AppRuleOverride::Inherit,
+            AppRuleOverride::Enabled,
+            AppRuleOverride::Disabled,
+        ] {
+            let profile = UserProfile {
+                app_profile_rules: vec![AppProfileRule {
+                    id: "code-history".into(),
+                    process_name: "Code.exe".into(),
+                    ai_polish,
+                    history: AppRuleOverride::Disabled,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let saved = super::serialize_profile(&profile).unwrap();
+            let mut loaded: UserProfile = serde_json::from_str(&saved).unwrap();
+            normalize_profile(&mut loaded);
+            let resolved = loaded.resolve_app_profile("Code.exe", "main.rs");
+            assert_eq!(loaded.app_profile_rules[0].ai_polish, ai_polish);
+            assert_eq!(resolved.history_enabled, Some(false));
+            assert_eq!(
+                resolved.ai_polish_enabled,
+                match ai_polish {
+                    AppRuleOverride::Inherit => None,
+                    AppRuleOverride::Enabled => Some(true),
+                    AppRuleOverride::Disabled => Some(false),
+                }
+            );
+        }
     }
 
     #[test]

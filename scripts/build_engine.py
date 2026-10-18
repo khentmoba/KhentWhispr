@@ -435,6 +435,11 @@ def verify_archive_sources(archive: Path) -> None:
 
 
 def main(cpu_only=False):
+    # Redirected Windows streams otherwise use a legacy encoding that cannot print paths or progress.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     if not ENTRY_SCRIPT.exists():
         print(f"错误: 入口脚本不存在: {ENTRY_SCRIPT}", file=sys.stderr)
         sys.exit(1)

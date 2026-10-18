@@ -1094,10 +1094,11 @@ pub async fn check_status(
             ));
         }
         let model_check = inspect_model_files_for_engine(&engine);
-        let has_engine = installation::find_python().await.is_ok()
-            || paths::get_engine_exe_path(app_handle).is_some()
+        let has_engine = paths::get_engine_exe_path(app_handle).is_some()
             || paths::get_engine_archive_path(app_handle).is_some()
-            || paths::get_resource_engine_exe_path(app_handle).is_some();
+            || (cfg!(debug_assertions)
+                && (paths::get_resource_engine_exe_path(app_handle).is_some()
+                    || installation::find_python().await.is_ok()));
         let all_present = model_check.all_present && has_engine;
         let model_state = model_state_with_engine(model_check.model_state, has_engine);
         return Ok(FunASRStatus {

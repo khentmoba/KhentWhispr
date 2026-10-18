@@ -89,6 +89,24 @@ class EngineArchiveSourceTests(unittest.TestCase):
 
 
 class BuildEngineArchiveAtomicityTests(unittest.TestCase):
+    def test_build_configures_utf8_for_redirected_windows_streams(self):
+        stdout_bytes, stderr_bytes = io.BytesIO(), io.BytesIO()
+        stdout = io.TextIOWrapper(stdout_bytes, encoding="cp1252")
+        stderr = io.TextIOWrapper(stderr_bytes, encoding="cp1252")
+        with mock.patch.object(self.module.sys, "stdout", stdout), \
+             mock.patch.object(self.module.sys, "stderr", stderr), \
+             mock.patch.object(self.module.subprocess, "run", return_value=types.SimpleNamespace(returncode=37)):
+            with self.assertRaises(SystemExit) as error:
+                self.module.main()
+        self.assertEqual(error.exception.code, 37)
+        self.assertEqual(stdout.encoding, "utf-8")
+        self.assertEqual(stderr.encoding, "utf-8")
+        stdout.flush()
+        stderr.flush()
+        self.assertIn("PyInstaller", stdout_bytes.getvalue().decode("utf-8"))
+        self.assertIn("PyInstaller", stderr_bytes.getvalue().decode("utf-8"))
+        self.assertEqual(self.output_archive.read_bytes(), OLD_ARCHIVE)
+
     def test_packaging_shares_only_identical_runtime_dlls_and_updates_manifest(self):
         def fake_pyinstaller(_cmd):
             internal = self.dist_dir / "engine/_internal"

@@ -42,6 +42,11 @@ Python code, native libraries and dependencies are unchanged. Distribution build
 compare the bundled Python sources with the checkout and reject stale archives;
 rebuild the engine when this check fails.
 
+Downloaded and offline engine archives must match the SHA-256 hash pinned into
+that app build; a custom download URL cannot bypass this check. Installed release
+builds use the packaged runtime, never system Python. Engine downloads stop after
+30 seconds without network progress and can be cancelled while waiting for data.
+
 Optional local-model prefetch:
 
 ```bash

@@ -2,7 +2,8 @@
 
 use crate::state::AppState;
 use crate::utils::{paths, AppError};
-use std::path::PathBuf;
+use sha2::{Digest, Sha256};
+use std::{future::Future, path::PathBuf, time::Duration};
 use tauri::Emitter;
 use tokio::process::Command;
 
@@ -94,11 +95,13 @@ pub async fn find_engine(
         return Ok(EngineRuntime::Bundled { exe_path: path_str });
     }
 
-    // 策略3：资源目录中的 engine.exe（开发时直接 PyInstaller 输出）
-    if let Some(engine_path) = paths::get_resource_engine_exe_path(app_handle) {
-        let path_str = paths::strip_win_prefix(&engine_path);
-        log::info!("Found engine in resources directory: {}", path_str);
-        return Ok(EngineRuntime::Bundled { exe_path: path_str });
+    // Unpackaged executables are a development-only fallback.
+    if cfg!(debug_assertions) {
+        if let Some(engine_path) = paths::get_resource_engine_exe_path(app_handle) {
+            let path_str = paths::strip_win_prefix(&engine_path);
+            log::info!("Found engine in resources directory: {}", path_str);
+            return Ok(EngineRuntime::Bundled { exe_path: path_str });
+        }
     }
 
     // 策略4：开发模式
@@ -137,6 +140,7 @@ async fn extract_engine_archive(
 
     // 解压是 CPU 密集型 + IO 密集型，放到阻塞线程
     tokio::task::spawn_blocking(move || {
+        verify_engine_archive(&archive, ENGINE_ARCHIVE_FINGERPRINT)?;
         let parent = engine_dir.parent().ok_or_else(|| {
             AppError::Asr("Engine directory missing parent directory".to_string())
         })?;
@@ -369,6 +373,42 @@ impl<'a> Drop for TempFileGuard<'a> {
     }
 }
 
+fn verify_engine_archive(archive: &std::path::Path, expected: &str) -> Result<(), AppError> {
+    let mut file = std::fs::File::open(archive)
+        .map_err(|e| AppError::Download(format!("Failed to open engine archive: {e}")))?;
+    let mut digest = Sha256::new();
+    let size = std::io::copy(&mut file, &mut digest)
+        .map_err(|e| AppError::Download(format!("Failed to hash engine archive: {e}")))?;
+    let actual = format!("sha256:{:x}", digest.finalize());
+    if size == 0 || actual != expected {
+        return Err(AppError::Download(
+            "Engine archive checksum mismatch; refusing to install unverified code".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn download_step<T>(
+    progress_gate: &EngineProgressGate,
+    operation: impl Future<Output = Result<T, reqwest::Error>>,
+) -> Result<T, AppError> {
+    let operation = tokio::time::timeout(Duration::from_secs(30), operation);
+    tokio::pin!(operation);
+    loop {
+        if !progress_gate.is_current() {
+            return Err(AppError::Asr("Engine download was cancelled".into()));
+        }
+        tokio::select! {
+            result = &mut operation => {
+                return result
+                    .map_err(|_| AppError::Download("Engine download stalled for 30 seconds".into()))?
+                    .map_err(|e| AppError::Download(format!("Engine download failed: {e}")));
+            }
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+    }
+}
+
 fn candidate_engine_download_urls() -> Vec<String> {
     let mut urls = Vec::new();
 
@@ -390,12 +430,6 @@ fn candidate_engine_download_urls() -> Vec<String> {
         "https://github.com/khentmoba/SpeakFlow/releases/download/{}/engine.tar.xz",
         default_tag
     ));
-    urls.push(
-        "https://github.com/khentmoba/SpeakFlow/releases/latest/download/engine.tar.xz".to_string(),
-    );
-    urls.push("https://ghproxy.net/https://github.com/khentmoba/SpeakFlow/releases/latest/download/engine.tar.xz".to_string());
-    urls.push("https://mirror.ghproxy.com/https://github.com/khentmoba/SpeakFlow/releases/latest/download/engine.tar.xz".to_string());
-
     urls
 }
 
@@ -406,11 +440,7 @@ async fn download_to_file(
     app_handle: &tauri::AppHandle,
     progress_gate: &EngineProgressGate,
 ) -> Result<(), AppError> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| AppError::Download(format!("Request failed: {e}")))?;
+    let mut response = download_step(progress_gate, client.get(url).send()).await?;
 
     if !response.status().is_success() {
         return Err(AppError::Download(format!(
@@ -420,7 +450,6 @@ async fn download_to_file(
     }
 
     let total_size = response.content_length();
-    let mut stream = response.bytes_stream();
     let mut file = tokio::fs::File::create(target_path)
         .await
         .map_err(|e| AppError::Download(format!("Failed to create temporary file: {e}")))?;
@@ -428,14 +457,7 @@ async fn download_to_file(
     let mut downloaded = 0_u64;
     let mut last_percent = None;
 
-    while let Some(chunk_res) = tokio_stream::StreamExt::next(&mut stream).await {
-        if !progress_gate.is_current() {
-            let _ = tokio::fs::remove_file(target_path).await;
-            return Err(AppError::Asr("Engine download was cancelled".to_string()));
-        }
-
-        let chunk = chunk_res
-            .map_err(|e| AppError::Download(format!("Failed to read stream data: {e}")))?;
+    while let Some(chunk) = download_step(progress_gate, response.chunk()).await? {
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
             .map_err(|e| AppError::Download(format!("Failed to write temporary file: {e}")))?;
@@ -574,6 +596,11 @@ async fn download_and_extract_engine(
 
 /// 查找可用的 Python 解释器（开发模式回退）
 pub(super) async fn find_python() -> Result<String, AppError> {
+    if !cfg!(debug_assertions) {
+        return Err(AppError::Asr(
+            "System Python is only supported in development builds".into(),
+        ));
+    }
     // ---- 策略1：检查项目 .venv 虚拟环境 ----
     let mut venv_candidates = vec![PathBuf::from(".venv"), PathBuf::from("..").join(".venv")];
     if let Ok(exe_path) = std::env::current_exe() {
@@ -636,4 +663,124 @@ pub(super) async fn find_python() -> Result<String, AppError> {
         "No available Python interpreter found. Please install Python 3.8+ or create a .venv virtual environment in the project directory (uv recommended)."
             .to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn progress_gate() -> EngineProgressGate {
+        EngineProgressGate {
+            generation: Arc::new(AtomicU64::new(1)),
+            status_commit: Arc::new(parking_lot::Mutex::new(())),
+            expected_generation: 1,
+        }
+    }
+
+    #[test]
+    fn archive_verification_rejects_modified_empty_and_unpinned_archives() {
+        let path =
+            std::env::temp_dir().join(format!("speak-flow-archive-{}", rand::random::<u64>()));
+        let _cleanup = TempFileGuard(&path);
+        let expected = "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        std::fs::write(&path, b"abc").unwrap();
+        verify_engine_archive(&path, expected).unwrap();
+        assert!(verify_engine_archive(&path, "1.0.5").is_err());
+        std::fs::write(&path, b"tampered executable").unwrap();
+        assert!(verify_engine_archive(&path, expected).is_err());
+        std::fs::write(&path, b"").unwrap();
+        assert!(verify_engine_archive(
+            &path,
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn release_discovery_rejects_system_python_before_searching() {
+        let source = include_str!("installation.rs");
+        let discovery = source
+            .split("pub(super) async fn find_python()")
+            .nth(1)
+            .unwrap();
+        let guard = discovery.find("if !cfg!(debug_assertions)").unwrap();
+        let rejection = discovery
+            .find("System Python is only supported in development builds")
+            .unwrap();
+        let search = discovery.find("let mut venv_candidates").unwrap();
+        assert!(guard < rejection && rejection < search);
+    }
+
+    async fn stalled_download(send_headers: bool, cancel: bool) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/engine.tar.xz", listener.local_addr().unwrap());
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            if send_headers {
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+            ready_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+            drop(socket);
+        });
+        let gate = progress_gate();
+        let worker_gate = gate.clone();
+        let (headers_tx, headers_rx) = tokio::sync::oneshot::channel();
+        let download = tokio::spawn(async move {
+            let client = reqwest::Client::builder().no_proxy().build().unwrap();
+            let mut response = download_step(&worker_gate, client.get(url).send()).await?;
+            let _ = headers_tx.send(());
+            download_step(&worker_gate, response.chunk()).await
+        });
+        tokio::time::timeout(Duration::from_secs(5), ready_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        if send_headers {
+            tokio::time::timeout(Duration::from_secs(5), headers_rx)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        if cancel {
+            gate.generation.fetch_add(1, Ordering::SeqCst);
+        }
+        tokio::time::pause();
+        let started = tokio::time::Instant::now();
+        let error = download.await.unwrap().unwrap_err().to_string();
+        if cancel {
+            assert!(error.contains("cancelled"), "{error}");
+            assert!(started.elapsed() <= Duration::from_millis(200));
+        } else {
+            assert!(error.contains("stalled"), "{error}");
+            assert!(started.elapsed() <= Duration::from_secs(31));
+        }
+        server.abort();
+        tokio::time::resume();
+    }
+
+    #[tokio::test]
+    async fn engine_download_times_out_on_stalled_headers_and_body() {
+        stalled_download(false, false).await;
+        stalled_download(true, false).await;
+    }
+
+    #[tokio::test]
+    async fn engine_download_cancels_without_waiting_for_headers_or_body() {
+        stalled_download(false, true).await;
+        stalled_download(true, true).await;
+    }
 }

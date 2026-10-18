@@ -160,7 +160,7 @@ fn pipe_filling_command() -> ServerCommand {
         offset: 0,
         // The Windows anonymous pipe cannot buffer this payload while its
         // live peer parks without ever reading stdin.
-        audio_base64: "A".repeat(8 * 1024 * 1024),
+        audio_base64: "A".repeat(64 * 1024),
         audio_format: "pcm_f32le".to_string(),
         sample_rate: 16_000,
     }
@@ -355,7 +355,7 @@ mod async_ownership_replay_tests {
                     tokio::time::timeout(Duration::from_secs(1), async {
                         while !consumed.exists() {
                             tokio::select! {
-                                result = operation.as_mut().unwrap().as_mut() => panic!("command settled before write consumed: {}", result.is_ok()),
+                                result = operation.as_mut().unwrap().as_mut() => panic!("command settled before write consumed: {result:?}"),
                                 _ = tokio::time::sleep(Duration::from_millis(1)) => {}
                             }
                         }
