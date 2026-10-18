@@ -10,7 +10,7 @@ use crate::utils::paths;
 
 const MAX_CORRECTION_PATTERNS: usize = 500;
 const MAX_HOT_WORDS: usize = 300;
-const MAX_SEGMENT_CHARS: usize = 12;
+const MAX_SEGMENT_CHARS: usize = 24;
 const MAX_HOT_WORD_CHARS: usize = 24;
 const MAX_USER_HOT_WORD_CHARS: usize = 80;
 pub const MAX_APP_PROFILE_RULES: usize = 100;
@@ -797,6 +797,20 @@ pub fn learn_from_structured(
             &source,
             now,
         );
+        if source == CorrectionSource::User {
+            let normalized = normalize_hot_word_text(corrected);
+            let is_hotword_term = normalized
+                .chars()
+                .any(|c| c.is_ascii_uppercase() || ('\u{4e00}'..='\u{9fff}').contains(&c))
+                || normalized.contains(' ');
+            if is_hotword_term && is_reasonable_hot_word(&normalized, HotWordSource::Learned) {
+                update_vocab_frequency(
+                    &mut profile.vocab_frequency,
+                    std::iter::repeat_n(normalized, initial_count as usize),
+                    now,
+                );
+            }
+        }
     }
 
     update_vocab_frequency(

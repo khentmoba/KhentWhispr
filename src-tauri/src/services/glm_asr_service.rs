@@ -133,7 +133,10 @@ pub async fn transcribe(
     }
 
     Ok(TranscriptionResult {
-        text: parsed.text.unwrap_or_default(),
+        text: crate::services::qwen_hotword_service::apply_profile_hotword_corrections(
+            state,
+            &parsed.text.unwrap_or_default(),
+        ),
         duration: None,
         success: true,
         error: None,

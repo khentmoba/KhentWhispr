@@ -29,6 +29,22 @@ struct WordSpan {
     end: usize,
 }
 
+pub fn apply_profile_hotword_corrections(state: &crate::state::AppState, text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    let started = std::time::Instant::now();
+    let correction = state.with_profile(|profile| correct_qwen_profile_terms(text, profile));
+    if correction.replacements > 0 {
+        log::info!(
+            "Local hotword correction applied: {} replacements in {} us",
+            correction.replacements,
+            started.elapsed().as_micros()
+        );
+    }
+    correction.text
+}
+
 pub fn correct_qwen_profile_terms(text: &str, profile: &UserProfile) -> HotWordCorrection {
     let hot_words = correct_qwen_hot_words(text, &profile.hot_words);
     let aliases = correct_known_aliases(
