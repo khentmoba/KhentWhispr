@@ -104,7 +104,9 @@ pub fn start_microphone_level_monitor(
         let recording = state.recording.recording.lock();
         let _monitor = state.recording.microphone_level_monitor.lock();
         if recording.is_some() {
-            return Err(AppError::Audio("录音期间无法启动麦克风预览".into()));
+            return Err(AppError::Audio(
+                "Cannot start microphone preview during recording".into(),
+            ));
         }
         state
             .recording
@@ -130,7 +132,8 @@ pub fn start_microphone_level_monitor(
             let dn = device_name.clone();
             move || {
                 let peak = Arc::new(AtomicU32::new(0));
-                let err_cb = |e: cpal::StreamError| log::warn!("麦克风预览流错误: {}", e);
+                let err_cb =
+                    |e: cpal::StreamError| log::warn!("Microphone preview stream error: {}", e);
 
                 let mk_i16 = {
                     let p = peak.clone();
@@ -156,12 +159,18 @@ pub fn start_microphone_level_monitor(
                 ) {
                     Ok(s) => s,
                     Err(e) => {
-                        let _ = ready_tx.send(Err(format!("创建麦克风预览流失败: {}", e)));
+                        let _ = ready_tx.send(Err(format!(
+                            "Failed to create microphone preview stream: {}",
+                            e
+                        )));
                         return;
                     }
                 };
                 if let Err(e) = stream.play() {
-                    let _ = ready_tx.send(Err(format!("启动麦克风预览流失败: {}", e)));
+                    let _ = ready_tx.send(Err(format!(
+                        "Failed to start microphone preview stream: {}",
+                        e
+                    )));
                     return;
                 }
                 let _ = ready_tx.send(Ok(()));
@@ -183,7 +192,9 @@ pub fn start_microphone_level_monitor(
                 drop(stream);
             }
         })
-        .map_err(|e| AppError::Audio(format!("创建麦克风预览线程失败: {}", e)))?;
+        .map_err(|e| {
+            AppError::Audio(format!("Failed to create microphone preview thread: {}", e))
+        })?;
 
     match ready_rx.recv_timeout(std::time::Duration::from_secs(3)) {
         Ok(Ok(())) => {}
@@ -195,9 +206,15 @@ pub fn start_microphone_level_monitor(
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             stop_flag.store(true, Ordering::Relaxed);
             let _ = handle.join();
-            return Err(AppError::Audio("麦克风预览启动超时".into()));
+            return Err(AppError::Audio(
+                "Microphone preview startup timed out".into(),
+            ));
         }
-        Err(_) => return Err(AppError::Audio("麦克风预览线程未返回结果".into())),
+        Err(_) => {
+            return Err(AppError::Audio(
+                "Microphone preview thread returned no result".into(),
+            ))
+        }
     }
 
     let recording = state.recording.recording.lock();
@@ -214,7 +231,9 @@ pub fn start_microphone_level_monitor(
         drop(recording);
         stop_flag.store(true, Ordering::Release);
         let _ = handle.join();
-        return Err(AppError::Audio("麦克风预览启动请求已过期".into()));
+        return Err(AppError::Audio(
+            "Microphone preview startup request expired".into(),
+        ));
     }
     *monitor = Some(MicrophoneLevelMonitor {
         stop_flag,
@@ -231,7 +250,7 @@ pub fn test_microphone_sync(selected_device_name: Option<String>) -> Result<Stri
     let received = Arc::new(AtomicBool::new(false));
     let fmt = config.sample_format();
 
-    let err_cb = |e: cpal::StreamError| log::warn!("麦克风测试流错误: {}", e);
+    let err_cb = |e: cpal::StreamError| log::warn!("Microphone test stream error: {}", e);
 
     let r1 = received.clone();
     let r2 = received.clone();
@@ -251,18 +270,21 @@ pub fn test_microphone_sync(selected_device_name: Option<String>) -> Result<Stri
             r3.store(true, Ordering::Relaxed);
         }
     )
-    .map_err(|e| AppError::Audio(format!("创建音频流失败: {}", e)))?;
+    .map_err(|e| AppError::Audio(format!("Failed to create audio stream: {}", e)))?;
 
     stream
         .play()
-        .map_err(|e| AppError::Audio(format!("启动音频流失败: {}", e)))?;
+        .map_err(|e| AppError::Audio(format!("Failed to start audio stream: {}", e)))?;
     std::thread::sleep(std::time::Duration::from_millis(220));
     drop(stream);
 
     if received.load(Ordering::Relaxed) {
-        Ok(format!("麦克风正常 ({})", device_name))
+        Ok(format!("Microphone normal ({})", device_name))
     } else {
-        Ok(format!("麦克风已连接但未检测到音频数据 ({})", device_name))
+        Ok(format!(
+            "Microphone connected but no audio detected ({})",
+            device_name
+        ))
     }
 }
 

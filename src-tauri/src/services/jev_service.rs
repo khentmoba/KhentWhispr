@@ -61,7 +61,7 @@ pub fn load_api_key_for_provider(
     app_handle
         .keyring()
         .get_password(KEYRING_SERVICE, keyring_user_for_provider(provider))
-        .map_err(|_| "无法读取决策模型 API Key".to_string())
+        .map_err(|_| "Failed to read decision model API Key".to_string())
         .map(|value| value.unwrap_or_default())
 }
 
@@ -75,12 +75,12 @@ pub fn save_or_delete_api_key(
         app_handle
             .keyring()
             .delete_password(KEYRING_SERVICE, keyring_user)
-            .map_err(|_| "无法删除决策模型 API Key".to_string())
+            .map_err(|_| "Failed to delete decision model API Key".to_string())
     } else {
         app_handle
             .keyring()
             .set_password(KEYRING_SERVICE, keyring_user, api_key.trim())
-            .map_err(|_| "无法保存决策模型 API Key".to_string())
+            .map_err(|_| "Failed to save decision model API Key".to_string())
     }
 }
 

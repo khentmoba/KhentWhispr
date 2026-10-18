@@ -52,15 +52,15 @@ class FireRedVad:
         self.cmvn_path = Path(cmvn_path) if cmvn_path else _resource_path(CMVN_FILENAME)
 
         if not self.model_path.is_file():
-            raise FileNotFoundError(f"FireRedVAD 模型不存在: {self.model_path}")
+            raise FileNotFoundError(f"FireRedVAD model not found: {self.model_path}")
         if not self.cmvn_path.is_file():
-            raise FileNotFoundError(f"FireRedVAD CMVN 不存在: {self.cmvn_path}")
+            raise FileNotFoundError(f"FireRedVAD CMVN file not found: {self.cmvn_path}")
 
         cmvn = json.loads(self.cmvn_path.read_text(encoding="utf-8"))
         self._mean = np.asarray(cmvn["mean"], dtype=np.float32)
         self._inverse_std = np.asarray(cmvn["inverse_std"], dtype=np.float32)
         if self._mean.shape != (80,) or self._inverse_std.shape != (80,):
-            raise ValueError("FireRedVAD CMVN 必须包含 80 维 mean 和 inverse_std")
+            raise ValueError("FireRedVAD CMVN must contain 80-dimensional mean and inverse_std arrays")
 
         fbank_options = knf.FbankOptions()
         fbank_options.frame_opts.samp_freq = SAMPLE_RATE

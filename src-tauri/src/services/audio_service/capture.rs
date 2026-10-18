@@ -29,7 +29,7 @@ static RECORD_CAP_WARNED: AtomicBool = AtomicBool::new(false);
 pub(super) fn warn_if_record_cap_reached(current_len: usize) {
     if current_len >= MAX_RECORD_SAMPLES && !RECORD_CAP_WARNED.swap(true, Ordering::Relaxed) {
         log::warn!(
-            "录音缓冲触达硬上限 {} 个 i16 样本，后续输入将被丢弃",
+            "Recording buffer reached hard limit of {} i16 samples; subsequent input will be dropped",
             MAX_RECORD_SAMPLES
         );
     }
@@ -42,7 +42,7 @@ fn confirm_audio_thread_exit(handle: std::thread::JoinHandle<()>, wait: std::tim
         .spawn(move || {
             let result = handle.join();
             if result.is_err() {
-                log::warn!("录音线程启动超时后退出时发生 panic");
+                log::warn!("Recording thread panicked while exiting after startup timeout");
             }
             let _ = done_tx.send(());
         });
@@ -50,11 +50,14 @@ fn confirm_audio_thread_exit(handle: std::thread::JoinHandle<()>, wait: std::tim
     match joiner {
         Ok(_) => {
             if done_rx.recv_timeout(wait).is_err() {
-                log::warn!("录音线程启动超时后仍未完成退出，后台 join 将继续等待");
+                log::warn!("Recording thread has not finished exiting after startup timeout; background join will continue waiting");
             }
         }
         Err(err) => {
-            log::warn!("创建录音线程退出确认 helper 失败: {}", err);
+            log::warn!(
+                "Failed to create recording thread exit confirmation helper: {}",
+                err
+            );
         }
     }
 }
@@ -107,7 +110,9 @@ fn run_windows_native_capture(
     rate_tx: &mpsc::SyncSender<Result<u32, String>>,
 ) -> bool {
     if WINDOWS_NATIVE_CAPTURE_DISABLED.load(Ordering::Acquire) {
-        log::info!("Windows 原生语音处理已在本次进程中降级，直接使用 CPAL");
+        log::info!(
+            "Windows native voice processing degraded for this process; using CPAL directly"
+        );
         return false;
     }
 
@@ -138,24 +143,24 @@ fn run_windows_native_capture(
                             )
                         {
                             capture.run(&worker_stop, &worker_samples);
-                            log::info!("Windows 原生音频捕获已停止");
+                            log::info!("Windows native audio capture stopped");
                         }
                     }
                     Err(error) => {
                         let _ = startup_tx.send(Err(format!(
-                            "Windows 原生语音处理录音未能收到首个音频包: {error}"
+                            "Windows native voice processing recording failed to receive first audio packet: {error}"
                         )));
                     }
                 },
                 Err(error) => {
                     let _ =
-                        startup_tx.send(Err(format!("Windows 原生语音处理录音不可用: {error}")));
+                        startup_tx.send(Err(format!("Windows native voice processing recording unavailable: {error}")));
                 }
             }
         }) {
         Ok(handle) => handle,
         Err(error) => {
-            log::warn!("创建 Windows 原生音频线程失败，回退 CPAL: {}", error);
+            log::warn!("Failed to create Windows native audio thread; falling back to CPAL: {}", error);
             return false;
         }
     };
@@ -167,26 +172,26 @@ fn run_windows_native_capture(
         WindowsNativeCaptureStartup::Ready => {
             if accept_tx.send(true).is_err() {
                 let _ = native_handle.join();
-                log::warn!("Windows 原生音频线程在确认启动前退出，回退 CPAL");
+                log::warn!("Windows native audio thread exited before confirming startup; falling back to CPAL");
                 return false;
             }
             let _ = rate_tx.send(Ok(TARGET_SAMPLE_RATE));
             if native_handle.join().is_err() {
-                log::warn!("Windows 原生音频线程退出时发生 panic");
+                log::warn!("Windows native audio thread panicked on exit");
             }
             true
         }
         WindowsNativeCaptureStartup::Unavailable(error) => {
             drop(accept_tx);
             let _ = native_handle.join();
-            log::warn!("{}，回退 CPAL", error);
+            log::warn!("{}; falling back to CPAL", error);
             false
         }
         WindowsNativeCaptureStartup::TimedOut => {
             WINDOWS_NATIVE_CAPTURE_DISABLED.store(true, Ordering::Release);
             drop(accept_tx);
             log::warn!(
-                "Windows 原生语音处理录音启动超过 {} ms，回退 CPAL；本次进程后续录音将直接使用 CPAL",
+                "Windows native voice processing recording startup exceeded {} ms; falling back to CPAL; subsequent recordings in this process will use CPAL directly",
                 WINDOWS_NATIVE_CAPTURE_INIT_TIMEOUT_MS
             );
             // Do not join a worker that is blocked in a driver/COM call. Once it
@@ -197,7 +202,9 @@ fn run_windows_native_capture(
         WindowsNativeCaptureStartup::Disconnected => {
             drop(accept_tx);
             let _ = native_handle.join();
-            log::warn!("Windows 原生音频线程未返回启动结果，回退 CPAL");
+            log::warn!(
+                "Windows native audio thread returned no startup result; falling back to CPAL"
+            );
             false
         }
     }
@@ -220,13 +227,16 @@ pub(super) fn resolve_input_device(
                 }
             }
         }
-        log::warn!("指定麦克风不可用，回退到默认设备: {}", name);
+        log::warn!(
+            "Specified microphone unavailable; falling back to default device: {}",
+            name
+        );
     }
 
     let device = host
         .default_input_device()
-        .ok_or_else(|| AppError::Audio("未找到可用的音频输入设备".into()))?;
-    let name = device.name().unwrap_or_else(|_| "未知设备".into());
+        .ok_or_else(|| AppError::Audio("No available audio input device found".into()))?;
+    let name = device.name().unwrap_or_else(|_| "Unknown Device".into());
     Ok((device, name))
 }
 
@@ -238,11 +248,13 @@ pub(super) fn load_best_input_config(
 
     let configs: Vec<_> = device
         .supported_input_configs()
-        .map_err(|e| AppError::Audio(format!("查询音频设备配置失败: {}", e)))?
+        .map_err(|e| AppError::Audio(format!("Failed to query audio device configuration: {}", e)))?
         .collect();
 
     if configs.is_empty() {
-        return Err(AppError::Audio("音频设备不支持任何输入配置".into()));
+        return Err(AppError::Audio(
+            "Audio device does not support any input configuration".into(),
+        ));
     }
 
     let supports_16k = |c: &&cpal::SupportedStreamConfigRange| {
@@ -266,7 +278,7 @@ pub(super) fn load_best_input_config(
                 .map(|c| c.with_max_sample_rate())
         });
 
-    pick.ok_or_else(|| AppError::Audio("无法找到合适的音频输入配置".into()))
+    pick.ok_or_else(|| AppError::Audio("Unable to find suitable audio input configuration".into()))
 }
 
 pub fn list_input_devices_sync(
@@ -278,7 +290,7 @@ pub fn list_input_devices_sync(
 
     let mut devices: Vec<InputDeviceInfo> = host
         .input_devices()
-        .map_err(|e| AppError::Audio(format!("枚举音频输入设备失败: {}", e)))?
+        .map_err(|e| AppError::Audio(format!("Failed to enumerate audio input devices: {}", e)))?
         .filter_map(|d| {
             d.name().ok().map(|name| InputDeviceInfo {
                 is_default: default_name.as_deref() == Some(&name),
@@ -476,7 +488,7 @@ pub fn spawn_audio_capture_thread(
                     return;
                 }
             };
-            log::info!("使用音频输入设备: {}", device_name);
+            log::info!("Using audio input device: {}", device_name);
 
             let config = match load_best_input_config(&device) {
                 Ok(c) => c,
@@ -490,13 +502,13 @@ pub fn spawn_audio_capture_thread(
             let channels = config.channels() as usize;
             let sample_format = config.sample_format();
             log::info!(
-                "音频配置: {}Hz, {}ch, {:?}",
+                "Audio configuration: {}Hz, {}ch, {:?}",
                 sample_rate,
                 channels,
                 sample_format
             );
 
-            let err_cb = |e: cpal::StreamError| log::error!("音频流错误: {}", e);
+            let err_cb = |e: cpal::StreamError| log::error!("Audio stream error: {}", e);
             let stop_cb = stop.clone();
 
             let mk_i16 = {
@@ -547,13 +559,13 @@ pub fn spawn_audio_capture_thread(
             ) {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = rate_tx.send(Err(format!("创建音频流失败: {}", e)));
+                    let _ = rate_tx.send(Err(format!("Failed to create audio stream: {}", e)));
                     return;
                 }
             };
 
             if let Err(e) = stream.play() {
-                let _ = rate_tx.send(Err(format!("启动音频流失败: {}", e)));
+                let _ = rate_tx.send(Err(format!("Failed to start audio stream: {}", e)));
                 return;
             }
             let _ = rate_tx.send(Ok(sample_rate));
@@ -562,9 +574,9 @@ pub fn spawn_audio_capture_thread(
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             drop(stream);
-            log::info!("音频捕获已停止");
+            log::info!("Audio capture stopped");
         })
-        .map_err(|e| AppError::Audio(format!("创建录音线程失败: {}", e)))?;
+        .map_err(|e| AppError::Audio(format!("Failed to create recording thread: {}", e)))?;
 
     let sample_rate = match rate_rx.recv_timeout(std::time::Duration::from_secs(
         AUDIO_CAPTURE_INIT_TIMEOUT_SECS,
@@ -577,11 +589,15 @@ pub fn spawn_audio_capture_thread(
                 std::time::Duration::from_millis(AUDIO_CAPTURE_TIMEOUT_JOIN_MS),
             );
             return Err(AppError::Audio(format!(
-                "录音线程启动超时（{} 秒）",
+                "Recording thread startup timed out ({} seconds)",
                 AUDIO_CAPTURE_INIT_TIMEOUT_SECS
             )));
         }
-        Err(_) => return Err(AppError::Audio("录音线程启动后未返回结果".into())),
+        Err(_) => {
+            return Err(AppError::Audio(
+                "Recording thread returned no result after startup".into(),
+            ))
+        }
     };
 
     Ok((handle, sample_rate))

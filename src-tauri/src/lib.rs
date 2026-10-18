@@ -389,9 +389,9 @@ fn spawn_funasr_startup(app_handle: tauri::AppHandle) {
                 serde_json::json!({
                     "status": if has_key { "ready" } else { "need_api_key" },
                     "message": if has_key {
-                        format!("{} 在线服务就绪", label)
+                        format!("{} online service ready", label)
                     } else {
-                        format!("请配置 {} API Key", label)
+                        format!("Please configure the {} API Key", label)
                     },
                     "device": "cloud",
                     "gpu_name": serde_json::Value::Null,
@@ -414,7 +414,7 @@ fn spawn_funasr_startup(app_handle: tauri::AppHandle) {
                 "funasr-status",
                 serde_json::json!({
                     "status": "error",
-                    "message": format!("FunASR 启动失败: {}", err),
+                    "message": format!("Failed to start FunASR: {}", err),
                 }),
             );
         }
@@ -600,9 +600,9 @@ fn setup_system_tray(app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::e
         .map_or(1.0, |monitor| monitor.scale_factor());
     let icon_size = tray_icon::size_for_scale(scale);
 
-    let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app_handle)?;
-    let hide_item = MenuItemBuilder::with_id("hide", "隐藏主窗口").build(app_handle)?;
-    let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app_handle)?;
+    let show_item = MenuItemBuilder::with_id("show", "Show main window").build(app_handle)?;
+    let hide_item = MenuItemBuilder::with_id("hide", "Hide main window").build(app_handle)?;
+    let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app_handle)?;
     let menu = MenuBuilder::new(app_handle)
         .item(&show_item)
         .item(&hide_item)
@@ -611,7 +611,7 @@ fn setup_system_tray(app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::e
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .icon(tray_icon::image(icon_size, false))
-        .tooltip("SpeakFlow - 语音转文字")
+        .tooltip("SpeakFlow - Voice to text")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {

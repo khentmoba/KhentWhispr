@@ -75,7 +75,7 @@ pub(crate) fn chat_output_token_limit_key(endpoint: &LlmEndpoint) -> &'static st
 /// Wire value for OpenAI OAuth fast-mode priority processing.
 ///
 /// Why "priority" and not "fast":
-///   The user-facing label ("fast mode" / "快速模式") is the product name, but
+///   The user-facing label ("fast mode") is the product name, but
 ///   the HTTP body value accepted by the OpenAI Responses API is "priority".
 ///   Official Codex CLI remaps `ServiceTier::Fast` → `"priority"` before
 ///   sending — see openai/codex `codex-rs/core/src/client.rs` (main, line
@@ -213,19 +213,13 @@ pub(crate) fn remember_output_token_limit_unsupported(endpoint: &LlmEndpoint) {
         .lock()
         .insert(output_token_limit_unsupported_cache_key(endpoint));
 }
-/// `ensure_non_empty_llm_content` 产生的错误消息的稳定前缀。
-/// 调用方（例如 polish 4 段 transport fallback）需要识别这条错误来决定
-/// 是否短路重试——同一个 prompt 在另一个 transport stage 通常也会回空，
-/// 没必要再花 3 次 LLM 请求。
-pub(crate) const EMPTY_LLM_RESPONSE_ERROR_PREFIX: &str = "LLM 响应为空（";
+/// Stable prefix for error messages produced by `ensure_non_empty_llm_content`.
+/// Callers (such as polish transport fallback) recognize this error to decide
+/// whether to short-circuit retries.
+pub(crate) const EMPTY_LLM_RESPONSE_ERROR_PREFIX: &str = "LLM response was empty (";
 
-/// 把"HTTP 成功但没产生任何可用文本"统一映射为错误，并把 provider/model
-/// 信息塞到错误里便于诊断。`source` 用于区分调用栈
-/// （例如 "non_stream"、"openai_chat_sse_done"、"openai_chat_sse_eos"、
-/// "anthropic_sse_message_stop"、"anthropic_sse_eos"）。
-///
-/// 注：reasoning-only / tool-call-only 等"合法的空文本"响应不走这个路径。
-/// OpenAI Responses SSE 在 `read_openai_responses_sse_stream` 中独立处理。
+/// Maps "HTTP success without usable text" to a unified error containing provider/model
+/// diagnostics. `source` distinguishes call sites (e.g. "non_stream", "openai_chat_sse_done").
 pub(crate) fn ensure_non_empty_llm_content(
     content: String,
     endpoint: &LlmEndpoint,
@@ -233,7 +227,7 @@ pub(crate) fn ensure_non_empty_llm_content(
 ) -> Result<String, String> {
     if content.trim().is_empty() {
         Err(format!(
-            "{}{}）：provider={}，model={}",
+            "{}{}): provider={}, model={}",
             EMPTY_LLM_RESPONSE_ERROR_PREFIX, source, endpoint.provider, endpoint.model
         ))
     } else {
@@ -241,20 +235,12 @@ pub(crate) fn ensure_non_empty_llm_content(
     }
 }
 
-/// 识别 `ensure_non_empty_llm_content` 产生的"空响应"错误。其它来源的错误
-/// 字符串里只要不是手工拼接 EMPTY_LLM_RESPONSE_ERROR_PREFIX，就不会撞这个
-/// 前缀（中文 + 全角括号的组合在错误信息里很罕见）。
+/// Recognizes empty LLM response errors produced by `ensure_non_empty_llm_content`.
 pub(crate) fn is_empty_llm_response_error(err: &str) -> bool {
-    err.starts_with(EMPTY_LLM_RESPONSE_ERROR_PREFIX)
+    err.starts_with(EMPTY_LLM_RESPONSE_ERROR_PREFIX) || err.starts_with("LLM 响应为空（")
 }
 
-/// 把 Responses SSE 流读到尾时的 "是否为空" 判定统一到一处。
-/// 优先级：accumulated 非空 → fallback_content 非空 → 委托
-/// `ensure_non_empty_llm_content` 让上层短路 transport fallback。
-///
-/// 注：这里沿用 [DONE] / Ok(None) / response.completed 三个分支原本的
-/// `!is_empty()` 语义（不做 trim），避免改变现有行为；真正的 trim 检查由
-/// 下游 `ensure_non_empty_llm_content` 在最终 Err 路径上负责。
+/// Unifies the "is empty" check when reading a Responses SSE stream to completion.
 pub(crate) fn finalize_responses_sse_accumulated(
     accumulated: String,
     fallback_content: Option<String>,
@@ -314,13 +300,13 @@ pub(crate) fn extract_openai_compat_error_message(body_text: &str) -> Option<Str
 
     let guidance = match error["code"].as_str() {
         Some("subscription_sharing_usage_limit_exceeded") => {
-            Some("轻语的 ChatGPT 套餐额度已达上限，请在 ChatGPT 设置的 Usage 页面查看额度。")
+            Some("SpeakFlow has reached its ChatGPT plan quota limit. Please check your usage on the ChatGPT settings Usage page.")
         }
         Some("subscription_sharing_user_not_eligible") => {
-            Some("当前 ChatGPT 账户或工作区未获准使用套餐接入，请检查账户与工作区权限。")
+            Some("The current ChatGPT account or workspace is not eligible for plan access. Please check account and workspace permissions.")
         }
         Some("subscription_sharing_usage_unavailable") => {
-            Some("暂时无法检查 ChatGPT 套餐额度，请稍后重试。")
+            Some("Temporarily unable to check ChatGPT plan quota. Please try again later.")
         }
         _ => None,
     };
@@ -354,6 +340,9 @@ pub(crate) fn extract_openai_compat_error_message(body_text: &str) -> Option<Str
 /// Terminal auth/policy/quota failures cannot be recovered by changing transport.
 pub(crate) fn is_terminal_provider_error(error: &str) -> bool {
     error.contains("CHATGPT_PLAN_ERROR:")
+        || error.contains("API returned error 401")
+        || error.contains("API returned error 402")
+        || error.contains("API returned error 403")
         || error.contains("API 返回错误 401")
         || error.contains("API 返回错误 402")
         || error.contains("API 返回错误 403")
@@ -361,10 +350,21 @@ pub(crate) fn is_terminal_provider_error(error: &str) -> bool {
         || error.contains("subscription_sharing_user_not_eligible")
         || error.contains("CHATGPT_REAUTH_REQUIRED")
         || error.contains("CODEX_REAUTH_REQUIRED")
+        || error.contains("ChatGPT authentication route updated")
+        || error.contains("authentication route updated")
         || error.contains("认证路线已更新")
+        || error.contains("ChatGPT account switched")
+        || error.contains("Grok account switched")
+        || error.contains("account switched")
         || error.contains("账户已切换")
+        || error.contains("ChatGPT has been signed out")
+        || error.contains("signed out")
         || error.contains("已退出登录")
+        || error.contains("sign-in expired")
+        || error.contains("authorization expired")
         || error.contains("登录已失效")
+        || error.contains("ChatGPT plan usage is not authorized")
+        || error.contains("plan usage is not authorized")
         || error.contains("套餐使用未获授权")
 }
 

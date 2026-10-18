@@ -108,6 +108,24 @@ describe("useModelStatus funasr-status listener ownership", () => {
     expect(hook.result.current.stage).toBe(stageBeforeUnmount);
   });
 
+  it("offers a download when the backend reports missing models in English", async () => {
+    let handler: ((event: { payload: { status: string; message?: string } }) => void) | undefined;
+    mocks.listen.mockImplementation((event: string, callback: typeof handler) => {
+      if (event === "funasr-status") handler = callback;
+      return Promise.resolve(vi.fn());
+    });
+    const hook = renderHook(() => useModelStatus());
+    await flushMicrotasks();
+
+    act(() => {
+      handler?.({ payload: { status: "error", message: "Model files have not been downloaded" } });
+    });
+
+    expect(hook.result.current.stage).toBe("need_download");
+    expect(hook.result.current.error).toBeNull();
+    hook.unmount();
+  });
+
   it("restarts a disconnected engine after it was already ready", async () => {
     let handler:
       | ((event: { payload: { status: string; message?: string } }) => void)

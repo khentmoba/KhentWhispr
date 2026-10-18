@@ -162,7 +162,7 @@ where
     loop {
         let remaining = timeout
             .checked_sub(start_at.elapsed())
-            .ok_or_else(|| AppError::Asr(format!("{}超时", context)))?;
+            .ok_or_else(|| AppError::Asr(format!("{context} timed out")))?;
 
         line_bytes.clear();
         let read_result =
@@ -170,16 +170,14 @@ where
 
         match read_result {
             Ok(Ok(0)) => {
-                return Err(AppError::Asr(format!("{}失败：stdout 已关闭", context)));
+                return Err(AppError::Asr(format!("{context} failed: stdout closed")));
             }
             Ok(Ok(_)) => {
                 let line = match std::str::from_utf8(&line_bytes) {
                     Ok(line) => std::borrow::Cow::Borrowed(line),
                     Err(err) => {
                         log::warn!(
-                            "{}阶段收到非 UTF-8 输出，已按损坏文本容错处理: {}",
-                            context,
-                            err
+                            "{context} received non-UTF-8 output; tolerated as corrupted text: {err}"
                         );
                         String::from_utf8_lossy(&line_bytes)
                     }
@@ -194,7 +192,7 @@ where
                     if accept(&value) {
                         return Ok(value);
                     }
-                    log::warn!("{}阶段丢弃了不匹配的旧 JSON 响应", context);
+                    log::warn!("{context} discarded mismatched stale JSON response");
                     continue;
                 }
 
@@ -204,27 +202,26 @@ where
                     if start < end {
                         if let Ok(value) = serde_json::from_str::<T>(&trimmed[start..=end]) {
                             if !accept(&value) {
-                                log::warn!("{}阶段丢弃了不匹配的旧 JSON 响应", context);
+                                log::warn!("{context} discarded mismatched stale JSON response");
                                 continue;
                             }
-                            log::warn!("{}阶段从混合输出中恢复了 JSON 响应", context);
+                            log::warn!("{context} recovered JSON response from mixed output");
                             return Ok(value);
                         }
                     }
                 }
 
                 log::warn!(
-                    "{}阶段收到非JSON输出 ({}字符)",
-                    context,
+                    "{context} received non-JSON output ({} characters)",
                     trimmed.chars().count()
                 );
                 continue;
             }
             Ok(Err(e)) => {
-                return Err(AppError::Asr(format!("{}失败：{}", context, e)));
+                return Err(AppError::Asr(format!("{context} failed: {e}")));
             }
             Err(_) => {
-                return Err(AppError::Asr(format!("{}超时", context)));
+                return Err(AppError::Asr(format!("{context} timed out")));
             }
         }
     }

@@ -93,8 +93,8 @@ async fn read_error_body(
 ) -> Result<String, String> {
     tokio::time::timeout_at(deadline, response.text())
         .await
-        .map_err(|_| "响应读取超时".to_string())?
-        .map_err(|error| format!("响应读取失败: {error}"))
+        .map_err(|_| "Response reading timed out".to_string())?
+        .map_err(|error| format!("Failed to read response: {error}"))
 }
 
 async fn dispatch_request(
@@ -109,8 +109,8 @@ async fn dispatch_request(
     let request = http_client.post(request_url).headers(headers);
     tokio::time::timeout_at(deadline, request.json(body).send())
         .await
-        .map_err(|_| "请求超时".to_string())?
-        .map_err(|e| format!("请求失败: {}", e))
+        .map_err(|_| "Request timed out".to_string())?
+        .map_err(|e| format!("Request failed: {}", e))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -140,7 +140,7 @@ where
     let replacement = if response.status() == reqwest::StatusCode::UNAUTHORIZED {
         tokio::time::timeout_at(deadline, recover())
             .await
-            .map_err(|_| "认证刷新超时")??
+            .map_err(|_| "Authentication refresh timed out")??
     } else {
         None
     };
@@ -150,7 +150,7 @@ where
             if let Some(id) = session_id {
                 headers.insert(
                     "session_id",
-                    id.to_string().parse().map_err(|_| "会话标识无效")?,
+                    id.to_string().parse().map_err(|_| "Invalid session ID")?,
                 );
             }
         }
@@ -178,12 +178,12 @@ pub async fn send_llm_request(
     });
     let endpoint = deepseek_responses_endpoint.as_ref().unwrap_or(endpoint);
     let mut headers = llm_provider::build_auth_headers(&endpoint.api_format, api_key)
-        .map_err(|e| format!("构建请求头失败: {e}"))?;
+        .map_err(|e| format!("Failed to build request headers: {e}"))?;
     if uses_grok_build_oauth_backend(endpoint, api_key) {
         if let Some(token) = grok_build_oauth_service::decode_grok_build_oauth_access_token(api_key)
         {
             headers = grok_build_oauth_service::grok_cli_request_headers(&token)
-                .map_err(|e| format!("构建 Grok Build 请求头失败: {e}"))?;
+                .map_err(|e| format!("Failed to build Grok Build request headers: {e}"))?;
         }
     }
     if uses_codex_chatgpt_backend(endpoint, api_key) {
@@ -234,7 +234,7 @@ pub async fn send_llm_request(
             == Some(llm_provider::AutoReasoningStrategy::NoControls)
         {
             return Err(format!(
-                "API 返回错误 {}: {}",
+                "API returned error {}: {}",
                 initial_status, error_message
             ));
         }
@@ -247,7 +247,7 @@ pub async fn send_llm_request(
             ctx.mode,
         ) {
             log::warn!(
-                "当前模型拒绝推理参数，尝试自动探测策略 {}: provider={}, model={}, err={}",
+                "Model rejected reasoning parameters, trying auto-probe strategy {}: provider={}, model={}, err={}",
                 strategy.strategy_name(),
                 endpoint.provider,
                 endpoint.model,
@@ -280,7 +280,7 @@ pub async fn send_llm_request(
             {
                 output_token_limit_unsupported = true;
                 log::warn!(
-                    "当前后端不支持输出长度参数，已移除后继续推理参数探测: provider={}, model={}, err={}",
+                    "Backend does not support output token limit parameters, retrying reasoning probe without them: provider={}, model={}, err={}",
                     endpoint.provider,
                     endpoint.model,
                     error_message
@@ -311,12 +311,12 @@ pub async fn send_llm_request(
                 error_message = extract_api_error_message(endpoint, &body_text);
             }
             if !llm_provider::looks_like_reasoning_unsupported_error(&error_message) {
-                return Err(format!("API 返回错误 {}: {}", status, error_message));
+                return Err(format!("API returned error {}: {}", status, error_message));
             }
         }
 
         log::warn!(
-            "当前模型不支持推理参数，已移除后自动重试: provider={}, model={}, err={}",
+            "Model does not support reasoning parameters, automatically retrying without them: provider={}, model={}, err={}",
             endpoint.provider,
             endpoint.model,
             error_message
@@ -343,7 +343,7 @@ pub async fn send_llm_request(
                 && has_output_token_limit(&fallback_body)
             {
                 log::warn!(
-                    "当前后端不支持输出长度参数，已移除后继续无推理参数重试: provider={}, model={}, err={}",
+                    "Backend does not support output token limit parameters, retrying without reasoning or token limit parameters: provider={}, model={}, err={}",
                     endpoint.provider,
                     endpoint.model,
                     error_message
@@ -374,7 +374,7 @@ pub async fn send_llm_request(
                 body_text = read_error_body(retry_response, ctx.deadline).await?;
                 error_message = extract_api_error_message(endpoint, &body_text);
             }
-            return Err(format!("API 返回错误 {}: {}", status, error_message));
+            return Err(format!("API returned error {}: {}", status, error_message));
         }
         if output_token_limit_unsupported {
             remember_output_token_limit_unsupported(endpoint);
@@ -428,7 +428,7 @@ pub async fn send_llm_request(
         if is_retryable_overload_error(status, &error_message) {
             for delay_ms in RETRYABLE_429_DELAYS_MS {
                 log::warn!(
-                    "LLM 请求遇到可重试的 429，延迟 {}ms 后重试: provider={}, model={}, err={}",
+                    "LLM request encountered retryable 429, retrying after {}ms delay: provider={}, model={}, err={}",
                     delay_ms,
                     endpoint.provider,
                     endpoint.model,
@@ -439,7 +439,7 @@ pub async fn send_llm_request(
                     tokio::time::sleep(Duration::from_millis(*delay_ms)),
                 )
                 .await
-                .map_err(|_| "请求超时".to_string())?;
+                .map_err(|_| "Request timed out".to_string())?;
                 let retry_response = dispatch_request(
                     http_client,
                     endpoint,
@@ -468,7 +468,7 @@ pub async fn send_llm_request(
             && has_output_token_limit(&request_body)
         {
             log::warn!(
-                "当前后端不支持输出长度参数，已移除后自动重试: provider={}, model={}, err={}",
+                "Backend does not support output token limit parameters, automatically retrying without them: provider={}, model={}, err={}",
                 endpoint.provider,
                 endpoint.model,
                 error_message
@@ -501,7 +501,7 @@ pub async fn send_llm_request(
                     .await?;
                     remember_output_token_limit_unsupported(endpoint);
                 } else {
-                    return Err(format!("API 返回错误 {}: {}", status, error_message));
+                    return Err(format!("API returned error {}: {}", status, error_message));
                 }
             } else {
                 remember_output_token_limit_unsupported(endpoint);
@@ -518,7 +518,7 @@ pub async fn send_llm_request(
             )
             .await?;
         } else {
-            return Err(format!("API 返回错误 {}: {}", status, error_message));
+            return Err(format!("API returned error {}: {}", status, error_message));
         }
     }
 
@@ -538,11 +538,11 @@ pub async fn send_llm_request(
         }
     }
 
-    // 根据 body 中实际是否启用了 stream 来决定响应解析方式
-    // （build_llm_body 可能因供应商限制而跳过 stream，如 Cerebras json_object 不兼容流式）
+    // Determine response parsing method based on whether stream is actually enabled in body
+    // (build_llm_body may skip stream due to provider constraints, e.g. Cerebras json_object)
     if transport_stream {
         if requested_stream && app_handle.is_none() {
-            return Err("流式请求缺少 app_handle".to_string());
+            return Err("Streaming request missing app_handle".to_string());
         }
         let stream_app_handle = if requested_stream { app_handle } else { None };
         let progress_timeout = stream_progress_timeout(options);
@@ -590,8 +590,8 @@ pub async fn send_llm_request(
     } else {
         let json: Value = tokio::time::timeout_at(deadline, response.json())
             .await
-            .map_err(|_| "响应读取超时".to_string())?
-            .map_err(|e| format!("响应解析失败: {}", e))?;
+            .map_err(|_| "Response reading timed out".to_string())?
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
         ensure_non_empty_llm_content(
             extract_content(endpoint, &json).unwrap_or_default(),
             endpoint,

@@ -123,10 +123,10 @@ fn apply_subtitle_layout(
             logical_width,
             logical_height,
         )))
-        .map_err(|e| tauri_error("设置字幕窗口尺寸失败", e))?;
+        .map_err(|e| tauri_error("Failed to resize subtitle window", e))?;
     window
         .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)))
-        .map_err(|e| tauri_error("设置字幕窗口位置失败", e))?;
+        .map_err(|e| tauri_error("Failed to position subtitle window", e))?;
     Ok(())
 }
 
@@ -137,23 +137,23 @@ pub(crate) fn set_subtitle_window_interactive(
     if let Some(window) = app_handle.get_webview_window("subtitle") {
         window
             .set_ignore_cursor_events(!interactive)
-            .map_err(|e| tauri_error("设置字幕窗口交互状态失败", e))?;
+            .map_err(|e| tauri_error("Failed to set subtitle window interaction", e))?;
     }
     Ok(())
 }
 
 #[tauri::command]
 pub async fn hide_main_window(app_handle: tauri::AppHandle) -> Result<String, AppError> {
-    let window = require_window(&app_handle, "main", "主窗口不存在")?;
+    let window = require_window(&app_handle, "main", "Main window does not exist")?;
     window
         .hide()
-        .map_err(|e| tauri_error("隐藏主窗口失败", e))?;
-    Ok("主窗口已隐藏".to_string())
+        .map_err(|e| tauri_error("Failed to hide main window", e))?;
+    Ok("Main window hidden".to_string())
 }
 
 fn create_subtitle_window_unlocked(app_handle: &tauri::AppHandle) -> Result<String, AppError> {
     if app_handle.get_webview_window("subtitle").is_some() {
-        return Ok("字幕窗口已存在".to_string());
+        return Ok("Subtitle window already exists".to_string());
     }
 
     let (logical_width, logical_height, x, y) = resolve_subtitle_layout(app_handle);
@@ -163,7 +163,7 @@ fn create_subtitle_window_unlocked(app_handle: &tauri::AppHandle) -> Result<Stri
         "subtitle",
         tauri::WebviewUrl::App("/?window=subtitle".into()),
     )
-    .title("字幕")
+    .title("Subtitles")
     .inner_size(logical_width, logical_height)
     .position(x, y)
     .transparent(true)
@@ -175,13 +175,13 @@ fn create_subtitle_window_unlocked(app_handle: &tauri::AppHandle) -> Result<Stri
     .shadow(false)
     .visible(false)
     .build()
-    .map_err(|e| tauri_error("创建字幕窗口失败", e))?;
+    .map_err(|e| tauri_error("Failed to create subtitle window", e))?;
 
     if let Err(err) = window.set_ignore_cursor_events(true) {
         log::warn!("设置字幕窗口鼠标穿透失败，继续运行: {}", err);
     }
 
-    Ok("字幕窗口已创建".to_string())
+    Ok("Subtitle window created".to_string())
 }
 
 pub async fn create_subtitle_window(app_handle: tauri::AppHandle) -> Result<String, AppError> {
@@ -240,7 +240,7 @@ fn stale_session_show_result(session_id: u64, show_gen: u64) -> String {
         session_id,
         show_gen
     );
-    "字幕窗口显示请求已过期".to_string()
+    "Subtitle window display request expired".to_string()
 }
 
 fn show_subtitle_window_unlocked(
@@ -263,7 +263,11 @@ fn show_subtitle_window_unlocked(
         }
     }
 
-    let window = require_window(app_handle, "subtitle", "字幕窗口创建后仍不存在")?;
+    let window = require_window(
+        app_handle,
+        "subtitle",
+        "Subtitle window is missing after creation",
+    )?;
     if let Err(err) = apply_subtitle_layout(app_handle, &window) {
         log::warn!("刷新字幕窗口布局失败，继续尝试显示: {}", err);
     }
@@ -284,11 +288,11 @@ fn show_subtitle_window_unlocked(
         }
         window
             .show()
-            .map_err(|e| tauri_error("显示字幕窗口失败", e))?;
+            .map_err(|e| tauri_error("Failed to show subtitle window", e))?;
     } else {
         window
             .show()
-            .map_err(|e| tauri_error("显示字幕窗口失败", e))?;
+            .map_err(|e| tauri_error("Failed to show subtitle window", e))?;
     }
 
     // 确保窗口在最顶层（Windows 上 hide/show 后可能丢失置顶状态）
@@ -305,7 +309,7 @@ fn show_subtitle_window_unlocked(
         log::warn!("重新设置字幕窗口鼠标穿透失败: {}", err);
     }
 
-    Ok("字幕窗口已显示".to_string())
+    Ok("Subtitle window shown".to_string())
 }
 
 #[tauri::command]
@@ -357,10 +361,10 @@ pub fn hide_subtitle_window_inner(app_handle: &tauri::AppHandle) -> Result<Strin
         let _ = set_subtitle_window_interactive(app_handle, false);
         window
             .hide()
-            .map_err(|e| tauri_error("隐藏字幕窗口失败", e))?;
-        Ok("字幕窗口已隐藏".to_string())
+            .map_err(|e| tauri_error("Failed to hide subtitle window", e))?;
+        Ok("Subtitle window hidden".to_string())
     } else {
-        Ok("字幕窗口不存在".to_string())
+        Ok("Subtitle window does not exist".to_string())
     }
 }
 

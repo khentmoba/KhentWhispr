@@ -49,7 +49,7 @@ describe("subtitle entrance motion", () => {
 
     expect(capsuleRule).toMatch(/transform-origin:\s*50%\s+100%;/);
     expect(capsuleRule).toMatch(/animation:\s*subtitle-rise-in\s+200ms/);
-    expect(capsuleRule).toMatch(/background:\s*rgba\(11,\s*13,\s*16,\s*0\.82\);/);
+    expect(capsuleRule).toMatch(/background:\s*var\(--color-bg-elevated\);/);
     expect(capsuleRule).not.toMatch(/(?:linear|radial)-gradient\(/);
     expect(ruleBody(subtitleCss, ".subtitle-capsule::before")).toBe("");
     expect(subtitleCss).toMatch(
@@ -63,7 +63,7 @@ describe("subtitle entrance motion", () => {
     const assistantRule = ruleBody(subtitleCss, ".subtitle-capsule-assistant");
 
     expect(textRule).not.toMatch(/subtitle-text-grow-in/);
-    expect(lightCapsuleRule).toMatch(/background:\s*rgba\(255,\s*255,\s*255,\s*0\.88\);/);
+    expect(lightCapsuleRule).toMatch(/background:\s*var\(--color-bg-elevated\);/);
     expect(assistantRule).toMatch(/background:\s*var\(--subtitle-assistant-surface\);/);
   });
 });

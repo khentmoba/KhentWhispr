@@ -55,7 +55,9 @@ fn registry_path() -> std::path::PathBuf {
 }
 
 fn read_registry() -> Result<Registry, String> {
-    let _guard = REGISTRY_LOCK.lock().map_err(|_| "ChatGPT 账户记录被锁定")?;
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .map_err(|_| "ChatGPT account registry is locked")?;
     read_registry_unlocked()
 }
 
@@ -65,7 +67,8 @@ fn read_registry_unlocked() -> Result<Registry, String> {
 
 fn read_registry_at(path: &std::path::Path) -> Result<Registry, String> {
     match std::fs::read(path) {
-        Ok(raw) => serde_json::from_slice(&raw).map_err(|_| "读取 ChatGPT 账户记录失败".into()),
+        Ok(raw) => serde_json::from_slice(&raw)
+            .map_err(|_| "Failed to read ChatGPT account registry".into()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let mut bytes = [0u8; 16];
             OsRng.fill(&mut bytes);
@@ -87,13 +90,14 @@ fn read_registry_at(path: &std::path::Path) -> Result<Registry, String> {
             write_registry_at(path, &registry)?;
             Ok(registry)
         }
-        Err(_) => Err("读取 ChatGPT 账户记录失败".into()),
+        Err(_) => Err("Failed to read ChatGPT account registry".into()),
     }
 }
 
 fn write_registry_at(path: &std::path::Path, registry: &Registry) -> Result<(), String> {
-    let raw = serde_json::to_vec(registry).map_err(|_| "序列化 ChatGPT 账户记录失败")?;
-    paths::atomic_write(path, &raw).map_err(|_| "保存 ChatGPT 账户记录失败".into())
+    let raw =
+        serde_json::to_vec(registry).map_err(|_| "Failed to serialize ChatGPT account registry")?;
+    paths::atomic_write(path, &raw).map_err(|_| "Failed to save ChatGPT account registry".into())
 }
 
 pub(super) fn forget_account(client_id: &str) -> Result<(), String> {
@@ -101,7 +105,9 @@ pub(super) fn forget_account(client_id: &str) -> Result<(), String> {
 }
 
 fn forget_account_at(path: &std::path::Path, client_id: &str) -> Result<(), String> {
-    let _guard = REGISTRY_LOCK.lock().map_err(|_| "ChatGPT 账户记录被锁定")?;
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .map_err(|_| "ChatGPT account registry is locked")?;
     let mut registry = read_registry_at(path)?;
     registry.accounts.retain(|r| r.client_id != client_id);
     registry.pending_client_ids.retain(|id| id != client_id);
@@ -121,7 +127,10 @@ fn select_account<'a>(
         return if client_id.is_none() {
             Ok(None)
         } else {
-            Err("新建 ChatGPT 注册时不能指定已有账户。".into())
+            Err(
+                "Cannot specify an existing account when creating a new ChatGPT registration."
+                    .into(),
+            )
         };
     }
     let requested = client_id.or_else(|| preferred_client_id(registry));
@@ -145,7 +154,7 @@ fn select_account<'a>(
                     })
             })
             .map(Some)
-            .ok_or_else(|| "ChatGPT 账户记录不存在，请添加账户。".into()),
+            .ok_or_else(|| "ChatGPT account record does not exist. Please add an account.".into()),
         None => Ok(None),
     }
 }
@@ -170,7 +179,9 @@ fn remember_pending(client_id: &str) -> Result<(), String> {
 }
 
 fn remember_pending_at(path: &std::path::Path, client_id: &str) -> Result<(), String> {
-    let _guard = REGISTRY_LOCK.lock().map_err(|_| "ChatGPT 账户记录被锁定")?;
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .map_err(|_| "ChatGPT account registry is locked")?;
     let mut registry = read_registry_at(path)?;
     if !registry.accounts.iter().any(|r| r.client_id == client_id) {
         registry.pending_client_ids.retain(|id| id != client_id);
@@ -188,14 +199,16 @@ fn remember_account_at(
     path: &std::path::Path,
     account: &ChatgptRegistration,
 ) -> Result<(), String> {
-    let _guard = REGISTRY_LOCK.lock().map_err(|_| "ChatGPT 账户记录被锁定")?;
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .map_err(|_| "ChatGPT account registry is locked")?;
     let mut registry = read_registry_at(path)?;
     if registry
         .accounts
         .iter()
         .any(|r| r.client_id == account.client_id && r.subject != account.subject)
     {
-        return Err("ChatGPT 账户身份与原注册不一致，请重新添加账户。".into());
+        return Err("ChatGPT account identity does not match the original registration. Please add the account again.".into());
     }
     registry
         .accounts
@@ -273,17 +286,17 @@ async fn discovery(client: &reqwest::Client) -> Result<Discovery, String> {
         .timeout(HTTP_TIMEOUT)
         .send()
         .await
-        .map_err(|_| "获取 ChatGPT 授权元数据失败")?
+        .map_err(|_| "Failed to fetch ChatGPT authorization metadata")?
         .error_for_status()
-        .map_err(|_| "ChatGPT 授权元数据不可用")?
+        .map_err(|_| "ChatGPT authorization metadata unavailable")?
         .json()
         .await
-        .map_err(|_| "ChatGPT 授权元数据格式无效")?;
+        .map_err(|_| "Invalid ChatGPT authorization metadata format")?;
     if data.issuer != ISSUER
         || !trusted_auth_url(&data.jwks_uri)
         || !trusted_auth_url(&data.revocation_endpoint)
     {
-        return Err("ChatGPT 授权元数据来源无效".into());
+        return Err("Invalid ChatGPT authorization metadata source".into());
     }
     Ok(data)
 }
@@ -324,17 +337,17 @@ fn validate_id_token(
 ) -> Result<IdClaims, String> {
     let parts = token.split('.').collect::<Vec<_>>();
     if parts.len() != 3 {
-        return Err("ChatGPT 身份 token 格式无效".into());
+        return Err("Invalid ChatGPT ID token format".into());
     }
     let decode = |s: &str| {
         base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(s)
-            .map_err(|_| "ChatGPT 身份 token 编码无效".to_string())
+            .map_err(|_| "Invalid ChatGPT ID token encoding".to_string())
     };
-    let header: serde_json::Value =
-        serde_json::from_slice(&decode(parts[0])?).map_err(|_| "ChatGPT 身份 token 头无效")?;
+    let header: serde_json::Value = serde_json::from_slice(&decode(parts[0])?)
+        .map_err(|_| "Invalid ChatGPT ID token header")?;
     if header["alg"].as_str() != Some("RS256") {
-        return Err("ChatGPT 身份 token 签名算法无效".into());
+        return Err("Invalid ChatGPT ID token signature algorithm".into());
     }
     let key = jwks
         .keys
@@ -344,7 +357,7 @@ fn validate_id_token(
                 && k.kty == "RSA"
                 && k.alg.as_deref().is_none_or(|a| a == "RS256")
         })
-        .ok_or("ChatGPT 身份 token 签名密钥不存在")?;
+        .ok_or("ChatGPT ID token signing key does not exist")?;
     RsaPublicKeyComponents {
         n: &decode(&key.n)?,
         e: &decode(&key.e)?,
@@ -354,9 +367,9 @@ fn validate_id_token(
         format!("{}.{}", parts[0], parts[1]).as_bytes(),
         &decode(parts[2])?,
     )
-    .map_err(|_| "ChatGPT 身份 token 签名验证失败")?;
-    let claims: IdClaims =
-        serde_json::from_slice(&decode(parts[1])?).map_err(|_| "ChatGPT 身份 token 内容无效")?;
+    .map_err(|_| "Failed to verify ChatGPT ID token signature")?;
+    let claims: IdClaims = serde_json::from_slice(&decode(parts[1])?)
+        .map_err(|_| "Invalid ChatGPT ID token payload")?;
     let audience_matches = claims.aud.as_str() == Some(client_id)
         || claims
             .aud
@@ -370,7 +383,7 @@ fn validate_id_token(
         || nonce.is_some_and(|n| claims.nonce.as_deref() != Some(n))
         || subject.is_some_and(|s| claims.sub != s)
     {
-        return Err("ChatGPT 身份、有效期或登录 nonce 验证失败".into());
+        return Err("Failed to validate ChatGPT identity, expiration, or sign-in nonce".into());
     }
     Ok(claims)
 }
@@ -393,12 +406,12 @@ async fn signing_keys(client: &reqwest::Client) -> Result<Jwks, String> {
         .timeout(HTTP_TIMEOUT)
         .send()
         .await
-        .map_err(|_| "获取 ChatGPT 签名密钥失败")?
+        .map_err(|_| "Failed to fetch ChatGPT signing keys")?
         .error_for_status()
-        .map_err(|_| "ChatGPT 签名密钥不可用")?
+        .map_err(|_| "ChatGPT signing keys unavailable")?
         .json()
         .await
-        .map_err(|_| "ChatGPT 签名密钥格式无效")?;
+        .map_err(|_| "Invalid ChatGPT signing keys format")?;
     Ok(jwks)
 }
 
@@ -436,7 +449,7 @@ fn authorize_url(
     }
     reqwest::Url::parse_with_params(&format!("{ISSUER}/api/accounts/authorize"), &parameters)
         .map(|u| u.to_string())
-        .map_err(|_| "构造 ChatGPT 登录地址失败".into())
+        .map_err(|_| "Failed to construct ChatGPT sign-in URL".into())
 }
 
 async fn token_request(
@@ -457,12 +470,12 @@ async fn token_request_at(
         .form(form)
         .send()
         .await
-        .map_err(|_| "ChatGPT token 请求失败，请稍后重试")?;
+        .map_err(|_| "ChatGPT token request failed. Please try again later.")?;
     let status = response.status();
     let bytes = response
         .bytes()
         .await
-        .map_err(|_| "读取 ChatGPT token 响应失败")?;
+        .map_err(|_| "Failed to read ChatGPT token response")?;
     if !status.is_success() {
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
         // Never echo an upstream body: token endpoints can include credentials.
@@ -479,11 +492,16 @@ async fn token_request_at(
                 | "refresh_token_reused"
                 | "refresh_token_invalidated"
         ) {
-            return Err("CHATGPT_REAUTH_REQUIRED: ChatGPT 授权已失效，请重新登录。".into());
+            return Err(
+                "CHATGPT_REAUTH_REQUIRED: ChatGPT authorization expired. Please sign in again."
+                    .into(),
+            );
         }
-        return Err(format!("ChatGPT token 请求失败 ({status})，请稍后重试。"));
+        return Err(format!(
+            "ChatGPT token request failed ({status}). Please try again later."
+        ));
     }
-    serde_json::from_slice(&bytes).map_err(|_| "ChatGPT token 响应格式无效".into())
+    serde_json::from_slice(&bytes).map_err(|_| "Invalid ChatGPT token response format".into())
 }
 
 fn session_from_tokens(
@@ -499,7 +517,9 @@ fn session_from_tokens(
             .as_deref()
             .is_none_or(|t| t.trim().is_empty())
     {
-        return Err("ChatGPT 登录未返回完整凭据，请重新登录。".into());
+        return Err(
+            "ChatGPT sign-in did not return complete credentials. Please sign in again.".into(),
+        );
     }
     Ok(OpenaiCodexOauthSession {
         email: registration.email.clone(),
@@ -540,7 +560,7 @@ pub(super) async fn login(
         &registry,
         previous.as_ref(),
     )?;
-    webbrowser::open(&url).map_err(|_| "打开 ChatGPT 登录浏览器失败")?;
+    webbrowser::open(&url).map_err(|_| "Failed to open browser for ChatGPT sign-in")?;
     let OAuthCallback {
         code,
         client_id: issued_id,
@@ -549,11 +569,17 @@ pub(super) async fn login(
     let result = async {
         let issued_id = match (previous.as_ref(), issued_id) {
             (Some(account), Some(id)) if id != account.client_id => {
-                return Err("ChatGPT 返回的客户端与所选账户不一致".into())
+                return Err(
+                    "ChatGPT returned a client ID that does not match the selected account".into(),
+                )
             }
             (Some(account), _) => account.client_id.to_owned(),
             (None, Some(id)) if !id.trim().is_empty() && id != "dynamic_agent_client" => id,
-            _ => return Err("ChatGPT 注册没有返回客户端 ID，请重新登录。".into()),
+            _ => {
+                return Err(
+                    "ChatGPT registration did not return a client ID. Please sign in again.".into(),
+                )
+            }
         };
         // The client is already registered upstream. Retain its ID before token
         // exchange, without publishing an identity or credentials yet.
@@ -567,7 +593,9 @@ pub(super) async fn login(
                 }
             })?
         {
-            return Err("ChatGPT 登录已被更新的操作取代，请重试。".into());
+            return Err(
+                "ChatGPT sign-in superseded by a newer operation. Please try again.".into(),
+            );
         }
         let tokens = token_request(
             &state.http_client,
@@ -586,7 +614,7 @@ pub(super) async fn login(
             tokens
                 .id_token
                 .as_deref()
-                .ok_or("ChatGPT 登录缺少身份 token")?,
+                .ok_or("ChatGPT sign-in is missing an ID token")?,
             &issued_id,
             Some(&nonce),
             previous
@@ -609,12 +637,12 @@ pub(super) async fn login(
     let html = match &result {
         Ok(status) if !status.plan_usage_enabled => callback_html(
             "Signed In",
-            "已登录，但未允许轻语使用 ChatGPT 套餐额度。请返回轻语重新授权。",
+            "Signed in, but SpeakFlow was not authorized to use ChatGPT plan quota. Please return to SpeakFlow and re-authorize.",
             false,
         ),
         Ok(_) => callback_html(
             "Authorization Successful",
-            "可以关闭这个页面并返回轻语。",
+            "You can close this page and return to SpeakFlow.",
             true,
         ),
         Err(error) => callback_html("Authorization Failed", error, false),
@@ -630,7 +658,7 @@ pub(super) async fn refresh(
     let registration = session
         .registration
         .as_ref()
-        .ok_or("ChatGPT 客户端记录缺失")?;
+        .ok_or("Missing ChatGPT client record")?;
     // Fetch verification material before rotating the refresh token. A failed
     // metadata request must not discard a successfully rotated credential.
     let keys = signing_keys(client).await?;
@@ -669,7 +697,7 @@ pub(super) async fn revoke(
     session: &OpenaiCodexOauthSession,
 ) -> Result<(), String> {
     const UNCONFIRMED: &str =
-        "ChatGPT 本地登录已清除，远端撤销未确认，可在 ChatGPT 设置中断开轻语。";
+        "ChatGPT local sign-in cleared; remote revocation unconfirmed. You can disconnect SpeakFlow in ChatGPT settings.";
     let registration = session.registration.as_ref().ok_or(UNCONFIRMED)?;
     let metadata = discovery(client).await.map_err(|_| UNCONFIRMED)?;
     client
@@ -1030,8 +1058,8 @@ mod tests {
             ..Default::default()
         };
         let error = revoke(&client, &session).await.unwrap_err();
-        assert!(error.contains("本地"));
-        assert!(error.contains("远端撤销未确认"));
+        assert!(error.contains("local sign-in"));
+        assert!(error.contains("remote revocation unconfirmed"));
         server.await.unwrap();
     }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
-import { History as HistoryIcon, Settings, Minus, X } from "lucide-react";
+import { ArrowUpRight, FileText, Keyboard, Minus, Settings, X } from "lucide-react";
 import { toast } from "sonner";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRecordingContext } from "@/contexts/RecordingContext";
@@ -135,18 +135,7 @@ export default function MainPage({ onNavigate, animClass = "" }: {
   return (
     <div className="page-root main-page">
       <TitleBar
-        title={t("app.title")}
-        showLogo
-        leftAction={
-          <div className="title-bar-cluster">
-            <button aria-label={t("historyPage.open")} className="icon-btn plain" onClick={() => flushPendingEditAndNavigate("history")}>
-              <HistoryIcon size={13} strokeWidth={1.5} />
-            </button>
-            <button aria-label={t("common.settings")} className="icon-btn plain icon-btn-gear" onClick={() => flushPendingEditAndNavigate("settings")}>
-              <Settings size={13} strokeWidth={1.5} />
-            </button>
-          </div>
-        }
+        title="Dictation"
         rightActions={
           <>
             <button aria-label={t("common.minimize")} className="icon-btn" onClick={() => getCurrentWindow().minimize()}>
@@ -159,9 +148,23 @@ export default function MainPage({ onNavigate, animClass = "" }: {
         }
       />
 
-      <div className={pageContentClass} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
-        {/* Recording zone */}
-        <div className="recording-zone" style={{ padding: `24px ${PADDING}px 18px` }}>
+      <div className={`${pageContentClass} dictation-content`}>
+        <header className="workspace-heading">
+          <div>
+            <h1>Make room for your words.</h1>
+            <p>Speak naturally. SpeakFlow takes care of the typing.</p>
+          </div>
+          <button className="workspace-settings-link" onClick={() => flushPendingEditAndNavigate("settings")}>
+            <Settings size={15} aria-hidden="true" /> Configure
+          </button>
+        </header>
+        <div className="dictation-grid">
+        <section className="recording-panel" data-recording={isRecording || isStarting} aria-label="Recording controls">
+        <div className="recording-panel-heading">
+          <h2>{isRecording ? "Listening to you" : isStarting ? "Connecting" : isProcessing ? "Working on your words" : isReady ? "Ready when you are" : stage === "error" ? "Let’s get you set up" : "Getting ready"}</h2>
+          <p>{isRecording ? "Finish speaking, then stop the recording." : isReady ? "A thought, a message, a first draft." : "Your engine status appears below."}</p>
+        </div>
+        <div className="recording-zone">
           <StatusIndicator
             stage={stage}
             isReady={isReady}
@@ -197,6 +200,11 @@ export default function MainPage({ onNavigate, animClass = "" }: {
             </div>
           )}
         </div>
+        <div className="recording-panel-footer">
+          <Keyboard size={16} aria-hidden="true" />
+          <p>Works in your active app.<br /><span>No need to switch windows.</span></p>
+        </div>
+        </section>
 
         {/* Error */}
         {(recordingError || modelError) && !errorDismissed && (
@@ -214,7 +222,18 @@ export default function MainPage({ onNavigate, animClass = "" }: {
         )}
 
         {/* Results */}
-        <div ref={resultsRef} className="results-area" style={{ padding: `12px ${PADDING}px 12px` }}>
+        <section ref={resultsRef} className="results-area" aria-label="Transcription workspace">
+          <div className="transcript-heading">
+            <h2>Your transcript</h2>
+            <button onClick={() => flushPendingEditAndNavigate("history")}>History <ArrowUpRight size={14} aria-hidden="true" /></button>
+          </div>
+          {!transcriptionResult && !isProcessing && (
+            <div className="transcript-empty">
+              <FileText size={32} strokeWidth={1.25} aria-hidden="true" />
+              <h3>Your words will appear here.</h3>
+              <p>Start a recording to turn your voice into text. You can review, edit, and copy the result here.</p>
+            </div>
+          )}
           {polishAuditWarning && (
             <div className="polish-audit-notice" role="status">
               <p>{t("settings.jevAuditWarning")}</p>
@@ -243,7 +262,7 @@ export default function MainPage({ onNavigate, animClass = "" }: {
           />
           {/* First-use onboarding hint */}
           {!onboardingDismissed && !transcriptionResult && !isProcessing && isReady && history.length === 0 && (
-            <div className="result-card result-card-first onboarding-hero-card animate-fade-in">
+            <div className="onboarding-hero-card">
                 <div className="result-card-header">
                   <span className="result-card-title">
                     <span className="result-dot" />
@@ -264,17 +283,18 @@ export default function MainPage({ onNavigate, animClass = "" }: {
                   <div className="onboarding-step-row">
                     <span className="onboarding-step-pill">1</span>
                     <p>
-                      {t("main.pressHotkey")} <strong className="onboarding-accent">{hotkeyDisplay}</strong> {isToggleMode ? t("main.hotkeyHintToggle") : t("main.hotkeyHintHold")}
+                      {isToggleMode ? "Press" : "Hold"} <strong className="onboarding-accent">{hotkeyDisplay || "F2"}</strong> {isToggleMode ? "to start. Press again to finish." : "and speak. Release to finish."}
                     </p>
                   </div>
                   <div className="onboarding-step-row">
                     <span className="onboarding-step-pill">2</span>
-                    <p>{t("main.autoInputHint")}</p>
+                    <p>Your text is inserted at the cursor in your active app.</p>
                   </div>
-                  <p className="onboarding-subtext">{t("main.settingsHint")}</p>
+                  <p className="onboarding-subtext">Change your microphone, hotkey, and engine in Settings.</p>
                 </div>
             </div>
           )}
+        </section>
         </div>
       </div>
     </div>

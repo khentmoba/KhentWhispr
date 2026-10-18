@@ -26,7 +26,7 @@ impl ComGuard {
     fn initialize() -> Result<Self, String> {
         wasapi::initialize_mta()
             .ok()
-            .map_err(|err| format!("初始化 COM MTA 失败: {err}"))?;
+            .map_err(|err| format!("Failed to initialize COM MTA: {err}"))?;
         Ok(Self)
     }
 }
@@ -49,8 +49,8 @@ pub(super) struct WindowsSpeechCapture {
 impl WindowsSpeechCapture {
     pub(super) fn start(preferred_name: Option<&str>) -> Result<Self, String> {
         let com = ComGuard::initialize()?;
-        let enumerator =
-            DeviceEnumerator::new().map_err(|err| format!("创建设备枚举器失败: {err}"))?;
+        let enumerator = DeviceEnumerator::new()
+            .map_err(|err| format!("Failed to create device enumerator: {err}"))?;
         let (device, device_name) = select_capture_device(&enumerator, preferred_name)?;
 
         let categories = [
@@ -67,7 +67,7 @@ impl WindowsSpeechCapture {
                     #[cfg(test)]
                     eprintln!("native_category={category_name}");
                     log::info!(
-                        "使用 Windows 原生语音处理录音: 设备='{}', 类别={}, {}Hz, 1ch, i16",
+                        "Recording with Windows native voice processing: device='{}', category={}, {}Hz, 1ch, i16",
                         device_name,
                         category_name,
                         TARGET_SAMPLE_RATE
@@ -85,7 +85,7 @@ impl WindowsSpeechCapture {
         }
 
         Err(format!(
-            "设备 '{}' 不支持听写语音流（{}）",
+            "Device '{}' does not support dictation audio stream ({})",
             device_name,
             failures.join("; ")
         ))
@@ -99,10 +99,10 @@ impl WindowsSpeechCapture {
     ) -> Result<(AudioClient, AudioCaptureClient, Handle, Vec<u8>), String> {
         let mut client = device
             .get_iaudioclient()
-            .map_err(|err| format!("创建 AudioClient 失败: {err}"))?;
+            .map_err(|err| format!("Failed to create AudioClient: {err}"))?;
         client
             .set_properties(AudioClientProperties::new().set_category(category))
-            .map_err(|err| format!("设置 {category_name} 类别失败: {err}"))?;
+            .map_err(|err| format!("Failed to set {category_name} category: {err}"))?;
 
         let desired_format = WaveFormat::new(
             16,
@@ -114,30 +114,30 @@ impl WindowsSpeechCapture {
         );
         let (_, min_period) = client
             .get_device_period()
-            .map_err(|err| format!("读取设备周期失败: {err}"))?;
+            .map_err(|err| format!("Failed to read device period: {err}"))?;
         let mode = StreamMode::EventsShared {
             autoconvert: true,
             buffer_duration_hns: min_period,
         };
         client
             .initialize_client(&desired_format, &Direction::Capture, &mode)
-            .map_err(|err| format!("初始化共享语音流失败: {err}"))?;
+            .map_err(|err| format!("Failed to initialize shared audio stream: {err}"))?;
 
         log_audio_effects(&client);
         configure_aec(&client, enumerator);
 
         let event = client
             .set_get_eventhandle()
-            .map_err(|err| format!("创建音频事件失败: {err}"))?;
+            .map_err(|err| format!("Failed to create audio event: {err}"))?;
         let buffer_frames = client
             .get_buffer_size()
-            .map_err(|err| format!("读取音频缓冲大小失败: {err}"))?;
+            .map_err(|err| format!("Failed to read audio buffer size: {err}"))?;
         let capture_client = client
             .get_audiocaptureclient()
-            .map_err(|err| format!("创建捕获客户端失败: {err}"))?;
+            .map_err(|err| format!("Failed to create capture client: {err}"))?;
         client
             .start_stream()
-            .map_err(|err| format!("启动语音流失败: {err}"))?;
+            .map_err(|err| format!("Failed to start audio stream: {err}"))?;
 
         Ok((
             client,
@@ -159,7 +159,7 @@ impl WindowsSpeechCapture {
             }
         }
         Err(format!(
-            "{} ms 内没有收到音频数据",
+            "No audio data received within {} ms",
             EVENT_WAIT_MS as usize * PRIME_ATTEMPTS
         ))
     }
@@ -173,7 +173,7 @@ impl WindowsSpeechCapture {
             match self.read_event(samples) {
                 Ok(_) | Err(WasapiError::EventTimeout) => {}
                 Err(err) => {
-                    log::error!("Windows 原生音频流错误: {}", err);
+                    log::error!("Windows native audio stream error: {}", err);
                     break;
                 }
             }
@@ -221,7 +221,7 @@ impl WindowsSpeechCapture {
             total_frames += read_frames;
 
             if info.flags.data_discontinuity {
-                log::warn!("Windows 原生音频流检测到数据不连续");
+                log::warn!("Windows native audio stream detected data discontinuity");
             }
         }
 
@@ -232,7 +232,10 @@ impl WindowsSpeechCapture {
 impl Drop for WindowsSpeechCapture {
     fn drop(&mut self) {
         if let Err(err) = self.client.stop_stream() {
-            log::debug!("停止 Windows 原生音频流时返回错误: {}", err);
+            log::debug!(
+                "Error returned when stopping Windows native audio stream: {}",
+                err
+            );
         }
     }
 }
@@ -244,11 +247,11 @@ fn select_capture_device(
     if let Some(name) = preferred_name.filter(|name| !name.trim().is_empty()) {
         let collection = enumerator
             .get_device_collection(&Direction::Capture)
-            .map_err(|err| format!("枚举输入设备失败: {err}"))?;
+            .map_err(|err| format!("Failed to enumerate input devices: {err}"))?;
         match collection.get_device_with_name(name) {
             Ok(device) => return Ok((device, name.to_owned())),
             Err(err) => log::warn!(
-                "Windows 原生捕获找不到指定麦克风 '{}'，回退默认设备: {}",
+                "Windows native capture could not find specified microphone '{}'; falling back to default device: {}",
                 name,
                 err
             ),
@@ -257,10 +260,10 @@ fn select_capture_device(
 
     let device = enumerator
         .get_default_device(&Direction::Capture)
-        .map_err(|err| format!("获取默认输入设备失败: {err}"))?;
+        .map_err(|err| format!("Failed to get default input device: {err}"))?;
     let name = device
         .get_friendlyname()
-        .unwrap_or_else(|_| "未知设备".into());
+        .unwrap_or_else(|_| "Unknown Device".into());
     Ok((device, name))
 }
 
@@ -268,7 +271,7 @@ fn configure_aec(client: &AudioClient, enumerator: &DeviceEnumerator) {
     let control = match client.get_aec_control() {
         Ok(control) => control,
         Err(_) => {
-            log::info!("Windows 当前设备/语音模式未提供可控 AEC");
+            log::info!("Windows current device/voice mode does not provide controllable AEC");
             #[cfg(test)]
             eprintln!("native_aec=false");
             return;
@@ -280,17 +283,17 @@ fn configure_aec(client: &AudioClient, enumerator: &DeviceEnumerator) {
         .ok()
         .and_then(|device| device.get_id().ok());
     let endpoint_mode = if render_endpoint_id.is_some() {
-        "默认播放设备"
+        "default playback device"
     } else {
-        "Windows 自动选择的播放设备"
+        "Windows automatically selected playback device"
     };
     match control.set_echo_cancellation_render_endpoint(render_endpoint_id) {
         Ok(()) => {
-            log::info!("Windows AEC 已启用并绑定{}", endpoint_mode);
+            log::info!("Windows AEC enabled and bound to {}", endpoint_mode);
             #[cfg(test)]
             eprintln!("native_aec=true");
         }
-        Err(err) => log::warn!("Windows AEC 可用但启用失败: {}", err),
+        Err(err) => log::warn!("Windows AEC is available but failed to enable: {}", err),
     }
 }
 
@@ -301,13 +304,16 @@ fn log_audio_effects(client: &AudioClient) {
     {
         Ok(Some(effects)) => effects,
         Ok(None) => {
-            log::info!("Windows 原生语音流未报告活动音频效果");
+            log::info!("Windows native audio stream reported no active audio effects");
             #[cfg(test)]
             eprintln!("native_effects=[] native_effect_count=0");
             return;
         }
         Err(err) => {
-            log::info!("当前 Windows/驱动不支持枚举活动音频效果: {}", err);
+            log::info!(
+                "Current Windows/driver does not support enumerating active audio effects: {}",
+                err
+            );
             #[cfg(test)]
             eprintln!("native_effects=unavailable");
             return;
@@ -319,7 +325,7 @@ fn log_audio_effects(client: &AudioClient) {
         .filter_map(|effect| known_effect_name(&effect.id))
         .collect();
     log::info!(
-        "Windows 原生语音流活动音频效果: 已识别=[{}], 总数={}",
+        "Windows native audio stream active audio effects: recognized=[{}], total={}",
         known.join(", "),
         effects.len()
     );

@@ -113,9 +113,11 @@ async fn broken_pipe_invalidates_live_process_and_allows_a_fresh_server() {
         .expect("broken IPC must return promptly")
         .expect_err("closed pipe must fail");
         assert!(
-            error.to_string().contains("刷新 stdin 缓冲区失败")
-                || error.to_string().contains("写入命令到 FunASR 失败")
-                || error.to_string().contains("stdout 已关闭"),
+            error.to_string().contains("Failed to flush stdin buffer")
+                || error
+                    .to_string()
+                    .contains("Failed to write command to FunASR")
+                || error.to_string().contains("stdout closed"),
             "unexpected failure: {error}"
         );
         assert!(!state.is_funasr_ready(), "broken IPC cannot remain ready");

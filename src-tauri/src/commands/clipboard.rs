@@ -50,19 +50,22 @@ where
 fn capture_clipboard_snapshot() -> Result<uiautomation::clipboards::Snapshot, AppError> {
     use uiautomation::clipboards::Clipboard;
 
-    let clipboard = Clipboard::open()
-        .map_err(|error| AppError::Other(format!("打开剪贴板以创建快照失败: {error}")))?;
+    let clipboard = Clipboard::open().map_err(|error| {
+        AppError::Other(format!(
+            "Failed to open clipboard to create snapshot: {error}"
+        ))
+    })?;
 
     match try_all_then_standard(|try_all_formats| clipboard.snapshot(try_all_formats)) {
         Ok((snapshot, None)) => Ok(snapshot),
         Ok((snapshot, Some(all_formats_error))) => {
             log::warn!(
-                "完整剪贴板快照失败，已回退到标准格式快照: {all_formats_error}"
+                "Full clipboard snapshot failed; using the standard-format snapshot instead: {all_formats_error}"
             );
             Ok(snapshot)
         }
         Err((all_formats_error, standard_formats_error)) => Err(AppError::Other(format!(
-            "创建剪贴板快照失败（完整格式: {all_formats_error}; 标准格式: {standard_formats_error}）"
+            "Failed to create clipboard snapshot (full format: {all_formats_error}; standard format: {standard_formats_error})"
         ))),
     }
 }
@@ -81,7 +84,7 @@ fn send_inputs(inputs: &[INPUT]) -> Result<(), AppError> {
         };
         if sent as usize != chunk.len() {
             return Err(AppError::Other(format!(
-                "SendInput 调用失败：只发送了 {}/{} 个输入事件（{}）",
+                "SendInput failed: sent only {}/{} input events ({})",
                 sent,
                 chunk.len(),
                 std::io::Error::last_os_error()
@@ -261,7 +264,7 @@ pub async fn copy_to_clipboard(
 ) -> Result<String, AppError> {
     write_text_to_clipboard(&app_handle, &text)?;
     log::info!("已复制 {} 个字符到剪贴板", text.len());
-    Ok("已复制到剪贴板".to_string())
+    Ok("Copied to clipboard".to_string())
 }
 
 pub fn write_text_to_clipboard(app_handle: &tauri::AppHandle, text: &str) -> Result<(), AppError> {
@@ -270,7 +273,7 @@ pub fn write_text_to_clipboard(app_handle: &tauri::AppHandle, text: &str) -> Res
     app_handle
         .clipboard()
         .write_text(text)
-        .map_err(|e| AppError::Other(format!("写入剪贴板失败: {}", e)))
+        .map_err(|e| AppError::Other(format!("Failed to write clipboard: {}", e)))
 }
 
 pub fn should_restore_clipboard_after_paste(
@@ -304,11 +307,15 @@ pub async fn paste_text_impl(
             use uiautomation::clipboards::{Clipboard, Snapshot};
 
             fn restore_clipboard_snapshot(snapshot: Snapshot) -> Result<(), AppError> {
-                let clipboard = Clipboard::open()
-                    .map_err(|e| AppError::Other(format!("打开剪贴板以恢复快照失败: {}", e)))?;
-                clipboard
-                    .restore(snapshot)
-                    .map_err(|e| AppError::Other(format!("恢复剪贴板快照失败: {}", e)))
+                let clipboard = Clipboard::open().map_err(|e| {
+                    AppError::Other(format!(
+                        "Failed to open clipboard to restore snapshot: {}",
+                        e
+                    ))
+                })?;
+                clipboard.restore(snapshot).map_err(|e| {
+                    AppError::Other(format!("Failed to restore clipboard snapshot: {}", e))
+                })
             }
 
             let clipboard_snapshot = capture_clipboard_snapshot()?;
@@ -316,7 +323,7 @@ pub async fn paste_text_impl(
             app_handle
                 .clipboard()
                 .write_text(text)
-                .map_err(|e| AppError::Other(format!("写入剪贴板失败: {}", e)))?;
+                .map_err(|e| AppError::Other(format!("Failed to write clipboard: {}", e)))?;
 
             let paste_result = (|| -> Result<(), AppError> {
                 std::thread::sleep(std::time::Duration::from_millis(10));
@@ -436,12 +443,12 @@ pub async fn paste_text_impl(
         let _ = text;
         let _ = method;
         return Err(AppError::Other(
-            "当前平台暂不支持自动输入，仅 Windows 可用".to_string(),
+            "Automatic text input is currently supported only on Windows".to_string(),
         ));
     }
 
     log::info!("已输入 {} 个字符", text.len());
-    Ok("已输入".to_string())
+    Ok("Text entered".to_string())
 }
 
 #[cfg(test)]

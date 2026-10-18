@@ -1,39 +1,39 @@
 /* ============================================================
    SpeakFlow Design System
-   Quiet Instrument — near-black working surfaces, one restrained blue signal,
-   compact typography, and state-driven motion.
+   Focused Workspace — mineral green surfaces, native type, and clear state,
+   comfortable reading, and restrained motion.
    ============================================================ */
 
 /* ---------- Light theme (default) ---------- */
 :root {
   color-scheme: light;
   /* Surfaces — neutral layers keep long settings sessions visually quiet */
-  --color-bg-primary: #F5F7FA;
-  --color-bg-secondary: #EDF0F5;
-  --color-bg-tertiary: #E3E8EF;
+  --color-bg-primary: #F6F8F7;
+  --color-bg-secondary: #EAF0ED;
+  --color-bg-tertiary: #DEE7E2;
   --color-bg-elevated: #FFFFFF;
-  --color-bg-overlay: rgba(245, 247, 250, 0.94);
-  --color-bg-sunken: #E7ECF2;
+  --color-bg-overlay: rgba(246, 248, 247, 0.94);
+  --color-bg-sunken: #E6EDE9;
 
   /* Text — compact product hierarchy with WCAG AA contrast */
-  --color-text-primary: #171B22;
-  --color-text-secondary: #515B6B;
-  --color-text-tertiary: #5C6777;
+  --color-text-primary: #20362E;
+  --color-text-secondary: #51635A;
+  --color-text-tertiary: #617168;
   --color-text-inverse: #FFFFFF;
   --color-text-brand: var(--color-accent);
 
   /* Brand signal — recording, polish, and primary actions */
-  --color-accent: #036A91;
-  --color-accent-hover: #025A7C;
-  --color-accent-active: #024B68;
-  --color-accent-subtle: rgba(3, 106, 145, 0.10);
-  --color-accent-muted: rgba(3, 106, 145, 0.05);
-  --color-accent-rgb: 3, 106, 145;
+  --color-accent: #28664F;
+  --color-accent-hover: #20553F;
+  --color-accent-active: #194632;
+  --color-accent-subtle: rgba(40, 102, 79, 0.10);
+  --color-accent-muted: rgba(40, 102, 79, 0.05);
+  --color-accent-rgb: 40, 102, 79;
 
   /* Borders */
-  --color-border: #A1ACBC;
+  --color-border: #AABBB1;
   --color-border-subtle: rgba(0, 0, 0, 0.08);
-  --color-border-accent: rgba(3, 106, 145, 0.30);
+  --color-border-accent: rgba(40, 102, 79, 0.30);
 
   /* Status */
   --color-success: #2E8B57;
@@ -59,15 +59,15 @@
   --shadow-glow: 0 0 0 3px rgba(var(--color-accent-rgb), 0.15);
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
   --shadow-card-hover: 0 4px 16px rgba(23, 32, 48, 0.10), 0 1px 3px rgba(23, 32, 48, 0.05);
-  --glow-acoustic: 0 0 20px rgba(3, 106, 145, 0.22);
+  --glow-acoustic: 0 0 20px rgba(40, 102, 79, 0.22);
   --shadow-record-ring: 0 0 0 4px rgba(var(--color-accent-rgb), 0.20);
 
   /* Radii */
   --radius-xs: 4px;
   --radius-sm: 8px;
   --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
   --radius-2xl: 28px;
   --radius-full: 9999px;
 
@@ -99,14 +99,14 @@
   --transition-slow: var(--dur-5) var(--ease-out-quart);
 
   /* Typography — Windows native fonts; no runtime font download. */
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-ui: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   --font-serif: var(--font-ui);
   --font-sans: var(--font-ui);
   --font-mono: "Cascadia Mono", Consolas, monospace;
   --font-display: var(--font-ui);
 
   /* Text sizes */
-  --text-2xs: 0.6875rem;  /* 11px minimum for compact labels */
+  --text-2xs: 0.75rem;  /* 12px minimum for compact labels */
   --text-xs: 0.75rem;     /* 12px */
   --text-sm: 0.8125rem;   /* 13px */
   --text-base: 0.875rem;  /* 14px */
@@ -142,29 +142,29 @@
 [data-theme="dark"],
 .dark {
   color-scheme: dark;
-  --color-bg-primary: #0B0D10;
-  --color-bg-secondary: #12161C;
-  --color-bg-tertiary: #1C222B;
-  --color-bg-elevated: #171C24;
-  --color-bg-overlay: rgba(11, 13, 16, 0.94);
-  --color-bg-sunken: #080A0D;
+  --color-bg-primary: #141D19;
+  --color-bg-secondary: #1B2821;
+  --color-bg-tertiary: #29392F;
+  --color-bg-elevated: #202E26;
+  --color-bg-overlay: rgba(20, 29, 25, 0.94);
+  --color-bg-sunken: #101813;
 
-  --color-text-primary: #EDF1F7;
-  --color-text-secondary: #ACB6C5;
-  --color-text-tertiary: #929EAF;
-  --color-text-inverse: #0B0D10;
+  --color-text-primary: #EAF1EC;
+  --color-text-secondary: #B7C7BD;
+  --color-text-tertiary: #9BAFA1;
+  --color-text-inverse: #141D19;
   --color-text-brand: var(--color-accent);
 
-  --color-accent: #38BDF8;
-  --color-accent-hover: #70D2FC;
-  --color-accent-active: #28AFE8;
-  --color-accent-subtle: rgba(56, 189, 248, 0.14);
-  --color-accent-muted: rgba(56, 189, 248, 0.07);
-  --color-accent-rgb: 56, 189, 248;
+  --color-accent: #9AC9AA;
+  --color-accent-hover: #B8DEC3;
+  --color-accent-active: #7FBF94;
+  --color-accent-subtle: rgba(154, 201, 170, 0.14);
+  --color-accent-muted: rgba(154, 201, 170, 0.07);
+  --color-accent-rgb: 154, 201, 170;
 
-  --color-border: #343E4D;
+  --color-border: #3B5042;
   --color-border-subtle: rgba(255, 255, 255, 0.06);
-  --color-border-accent: rgba(56, 189, 248, 0.30);
+  --color-border-accent: rgba(154, 201, 170, 0.30);
 
   --color-success: #5DB86A;
   --color-success-bg: rgba(93, 184, 106, 0.10);
@@ -187,7 +187,7 @@
   --shadow-glow: 0 0 0 3px rgba(var(--color-accent-rgb), 0.20);
   --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(255, 255, 255, 0.04);
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.40), 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --glow-acoustic: 0 0 28px rgba(56, 189, 248, 0.35);
+  --glow-acoustic: 0 0 28px rgba(154, 201, 170, 0.35);
   --shadow-record-ring: 0 0 0 4px rgba(var(--color-accent-rgb), 0.12);
 
   --bg-gradient: var(--color-bg-primary);

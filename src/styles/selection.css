@@ -30,9 +30,9 @@ body,
 
 .selection-panel {
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-bg-elevated) 98%, transparent);
+  background: var(--color-bg-elevated);
 }
 
 .selection-toolbar {
@@ -59,7 +59,8 @@ body,
   margin-right: var(--space-sm);
   border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
-  background: var(--color-bg-secondary);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
 }
 
 .selection-preview-copy {
@@ -118,7 +119,8 @@ body,
   align-items: center;
   gap: 2px;
   min-height: 48px;
-  padding: 5px 7px 7px;
+  padding: 6px 8px;
+  background: var(--color-bg-secondary);
   border-top: 1px solid var(--color-border-subtle);
 }
 

@@ -260,7 +260,7 @@ fn codex_models_headers(
     headers.insert(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("Bearer {}", token.access_token))
-            .map_err(|err| format!("Codex 模型目录认证信息无效: {err}"))?,
+            .map_err(|err| format!("Invalid Codex model catalog auth header: {err}"))?,
     );
     headers.insert(
         HeaderName::from_static("originator"),
@@ -282,7 +282,7 @@ fn codex_models_headers(
         headers.insert(
             HeaderName::from_static("chatgpt-account-id"),
             HeaderValue::from_str(account_id)
-                .map_err(|err| format!("Codex 账户标识无效: {err}"))?,
+                .map_err(|err| format!("Invalid Codex account ID: {err}"))?,
         );
     }
     Ok(headers)
@@ -302,7 +302,7 @@ fn parse_models_payload(
         ModelListFormat::Openai => {
             let mut models = payload["data"]
                 .as_array()
-                .ok_or_else(|| "模型列表格式不正确：缺少 data 数组".to_string())?
+                .ok_or_else(|| "Invalid model list response: missing data array".to_string())?
                 .iter()
                 .filter_map(|item| {
                     let id = item["id"].as_str()?.trim();
@@ -325,7 +325,9 @@ fn parse_models_payload(
         | ModelListFormat::ChatgptPlan => {
             let mut models = payload["models"]
                 .as_array()
-                .ok_or_else(|| "Codex 模型目录格式不正确：缺少 models 数组".to_string())?
+                .ok_or_else(|| {
+                    "Invalid Codex model catalog response: missing models array".to_string()
+                })?
                 .iter()
                 .filter_map(|item| {
                     // SpeakFlow sends selected models through the Responses
@@ -379,20 +381,21 @@ fn model_list_http_error(
     if format.is_codex() {
         if format == ModelListFormat::ChatgptPlan {
             if status == reqwest::StatusCode::UNAUTHORIZED {
-                return "ChatGPT 登录或套餐授权已失效，请重新登录后再获取模型列表。".into();
+                return "ChatGPT sign-in or plan authorization expired. Please sign in again before fetching the model list.".into();
             }
             if status == reqwest::StatusCode::FORBIDDEN {
-                return "当前 ChatGPT 账户、工作区或地区未获准使用套餐模型目录。".into();
+                return "The current ChatGPT account, workspace, or region is not authorized to access the plan model catalog.".into();
             }
         }
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return "Codex 登录已过期，请重新登录后再拉取模型列表".to_string();
+            return "Codex sign-in expired. Please sign in again before fetching the model list"
+                .to_string();
         }
         if status == reqwest::StatusCode::FORBIDDEN {
-            return "当前 ChatGPT 账户或工作区无权读取 Codex 模型目录".to_string();
+            return "The current ChatGPT account or workspace is not authorized to read the Codex model catalog".to_string();
         }
     }
-    format!("模型列表接口返回 {}: {}", status, body)
+    format!("Model list endpoint returned {}: {}", status, body)
 }
 
 fn cached_codex_fallback(
@@ -452,9 +455,9 @@ pub async fn list_ai_models(
     let api_key = auth.api_key;
     if api_key.is_empty() {
         if provider == "xai" {
-            return Err("请先填写 API Key 或完成 Grok Build 登录".to_string());
+            return Err("Please enter an API Key or complete Grok Build sign-in first".to_string());
         }
-        return Err("请先填写 API Key 或完成 OpenAI Codex 登录".to_string());
+        return Err("Please enter an API Key or complete OpenAI Codex sign-in first".to_string());
     }
 
     let (chatgpt_token, inference_uses_chatgpt_backend) =
@@ -565,7 +568,7 @@ pub async fn list_ai_models(
                                 }
                             })
                         })
-                        .ok_or("ChatGPT 登录已失效，请重新登录。")?;
+                        .ok_or("ChatGPT sign-in expired. Please sign in again.")?;
                     codex_models_headers(&token)?
                 } else {
                     llm_provider::build_auth_headers(&ApiFormat::OpenaiCompat, &refreshed)?
@@ -607,7 +610,7 @@ pub async fn list_ai_models(
             return Err(error);
         }
         Err(e) => {
-            let error = format!("拉取模型列表失败: {e}");
+            let error = format!("Failed to fetch model list: {e}");
             if let Some(fallback) = cached_codex_fallback(
                 codex_cache_key.as_deref(),
                 &source_url,
@@ -623,7 +626,7 @@ pub async fn list_ai_models(
     let payload: serde_json::Value = match response.json().await {
         Ok(payload) => payload,
         Err(e) => {
-            let error = format!("模型列表响应解析失败: {e}");
+            let error = format!("Failed to parse model list response: {e}");
             if let Some(fallback) = cached_codex_fallback(
                 codex_cache_key.as_deref(),
                 &source_url,
@@ -871,7 +874,7 @@ mod tests {
             parse_models_payload(&serde_json::json!({"data": []}), ModelListFormat::CodexApi)
                 .expect_err("missing models array should fail loudly");
 
-        assert!(error.contains("缺少 models 数组"));
+        assert!(error.contains("missing models array"));
     }
 
     #[test]
@@ -902,13 +905,13 @@ mod tests {
             "ignored",
             ModelListFormat::CodexApi
         )
-        .contains("重新登录"));
+        .contains("sign in again"));
         assert!(model_list_http_error(
             reqwest::StatusCode::FORBIDDEN,
             "ignored",
             ModelListFormat::CodexApi
         )
-        .contains("无权"));
+        .contains("not authorized"));
     }
 
     #[test]

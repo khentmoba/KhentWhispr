@@ -18,16 +18,16 @@ interface ToolbarLabels {
 }
 
 const DEFAULT_LABELS: ToolbarLabels = {
-  toolbar: "划词助手",
-  translate: "翻译",
-  explain: "解释",
-  optimize: "优化",
-  copy: "复制",
-  copied: "已复制",
-  search: "搜索",
-  close: "关闭",
-  selected: "已选择",
-  drag: "拖动窗口",
+  toolbar: "Selection assistant",
+  translate: "Translate",
+  explain: "Explain",
+  optimize: "Improve",
+  copy: "Copy",
+  copied: "Copied",
+  search: "Search",
+  close: "Close",
+  selected: "Selected",
+  drag: "Move window",
 };
 
 interface SelectionToolbarProps {
@@ -87,7 +87,7 @@ export function SelectionToolbar({
           onStartDrag();
         }}
       >
-        <div className="selection-brand" aria-hidden="true">轻</div>
+        <div className="selection-brand" aria-hidden="true">S</div>
         <div className="selection-preview-copy">
           <span>{labels.selected}</span>
           <p title={selectionText}>{selectionText}</p>

@@ -54,7 +54,7 @@ fn release_build_rejects_an_empty_archive() {
     let error = build_support::select_engine_archive(test_dir.path(), false)
         .expect_err("release build must reject an empty archive");
 
-    assert!(error.contains("非空"));
+    assert!(error.contains("non-empty"));
 }
 
 #[test]

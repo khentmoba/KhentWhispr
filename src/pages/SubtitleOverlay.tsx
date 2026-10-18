@@ -29,7 +29,7 @@ import {
   type RecordingSnapshot,
 } from "@/api/tauri";
 import { readLocalStorage } from "@/lib/storage";
-import { THEME_STORAGE_KEY, LANGUAGE_STORAGE_KEY } from "@/lib/constants";
+import { THEME_STORAGE_KEY } from "@/lib/constants";
 import { useSmoothText, segmentGraphemes } from "@/hooks/useSmoothText";
 import "@/i18n";
 import "../styles/theme.css";
@@ -227,7 +227,7 @@ export default function SubtitleOverlay() {
   const interactiveAssistantResult = mode === "assistant" && phase === "result" && text.trim().length > 0;
   const assistantInteractive = interactiveAssistantResult || conversationOpen;
   const [showLiveTranscript] = useLiveTranscript();
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
 
   const updatePhase = useCallback((nextPhase: Phase) => {
     if (nextPhase !== "result") setPolishFlash(false);
@@ -323,9 +323,6 @@ export default function SubtitleOverlay() {
     // 监听 localStorage 变更（跨窗口同步）
     const onStorage = (e: StorageEvent) => {
       if (e.key === THEME_STORAGE_KEY) applyTheme();
-      if (e.key === LANGUAGE_STORAGE_KEY && e.newValue) {
-        void i18n.changeLanguage(e.newValue);
-      }
     };
 
     // 监听系统主题变更（当设置为"跟随系统"时）

@@ -23,7 +23,9 @@ pub async fn set_r2t2_config(
         .as_deref()
         .is_some_and(|value| !LANGUAGES.contains(&value))
     {
-        return Err(AppError::Other("R2T2 不支持所选语言".into()));
+        return Err(AppError::Other(
+            "R2T2 does not support the selected language".into(),
+        ));
     }
     crate::services::profile_service::update_profile_and_schedule(state.inner(), |profile| {
         profile.r2t2.context = context.trim().to_string();
@@ -40,14 +42,15 @@ fn lock_idle_asr(state: &AppState) -> Result<tokio::sync::MutexGuard<'_, ()>, Ap
         .is_some_and(|snapshot| snapshot.phase == crate::state::RecordingPhase::Processing);
     if recording || processing {
         return Err(AppError::Other(
-            "录音或处理尚未结束，请稍后修改语音引擎".into(),
+            "Recording or processing is still in progress; please change the speech engine later"
+                .into(),
         ));
     }
-    state
-        .engine
-        .native_asr_owner
-        .try_lock()
-        .map_err(|_| AppError::Other("语音识别正在进行，请稍后修改语音引擎".into()))
+    state.engine.native_asr_owner.try_lock().map_err(|_| {
+        AppError::Other(
+            "Speech recognition is in progress; please change the speech engine later".into(),
+        )
+    })
 }
 
 #[tauri::command]
@@ -56,7 +59,7 @@ pub async fn start_funasr(
     state: tauri::State<'_, AppState>,
 ) -> Result<String, AppError> {
     funasr_service::start_server(&app_handle, state.inner()).await?;
-    Ok("FunASR 服务器启动成功".to_string())
+    Ok("FunASR server started".to_string())
 }
 
 /// IPC 音频上限。前端是受信任的（同进程渲染器），但仍统一卡上限：
@@ -78,17 +81,17 @@ pub async fn transcribe_audio(
     use base64::Engine;
     if audio_base64.len() > MAX_TRANSCRIBE_AUDIO_BASE64_BYTES {
         return Err(AppError::Asr(format!(
-            "音频过大：base64 {} 字节超过上限 {} 字节",
+            "Audio is too large: base64 size {} bytes exceeds limit {} bytes",
             audio_base64.len(),
             MAX_TRANSCRIBE_AUDIO_BASE64_BYTES
         )));
     }
     let audio_data = base64::engine::general_purpose::STANDARD
         .decode(&audio_base64)
-        .map_err(|e| AppError::Asr(format!("Base64 解码失败: {}", e)))?;
+        .map_err(|e| AppError::Asr(format!("Base64 decode failed: {}", e)))?;
     if audio_data.len() > MAX_TRANSCRIBE_AUDIO_BYTES {
         return Err(AppError::Asr(format!(
-            "音频过大：解码后 {} 字节超过上限 {} 字节",
+            "Audio is too large: decoded size {} bytes exceeds limit {} bytes",
             audio_data.len(),
             MAX_TRANSCRIBE_AUDIO_BYTES
         )));
@@ -126,11 +129,11 @@ pub async fn cancel_model_download(state: tauri::State<'_, AppState>) -> Result<
 
     if let Some(cancel) = cancellation {
         let _ = cancel.send(());
-        Ok("已取消模型下载".to_string())
+        Ok("Model download cancelled".to_string())
     } else if state.engine.download_task.lock().await.is_some() {
-        Ok("模型下载正在取消".to_string())
+        Ok("Cancelling model download".to_string())
     } else {
-        Ok("当前没有下载任务".to_string())
+        Ok("No active download task".to_string())
     }
 }
 
@@ -146,13 +149,13 @@ pub async fn restart_funasr(
         // 在线引擎无需重启 Python，仅刷新就绪状态
         let has_key = !state.read_online_asr_api_key().is_empty();
         state.set_funasr_ready(has_key);
-        return Ok("在线引擎状态已刷新".to_string());
+        return Ok("Online engine status refreshed".to_string());
     }
 
     // 首次启动可能仍在解压 engine.zip 或加载模型，自动重启不应打断这一过程。
     if state.engine.is_funasr_starting() {
         log::info!("FunASR 正在启动中，跳过本次重启请求");
-        return Ok("FunASR 正在启动中，跳过重启".to_string());
+        return Ok("FunASR is starting; skipping restart".to_string());
     }
 
     log::info!("正在重启 FunASR 服务器...");
@@ -161,7 +164,7 @@ pub async fn restart_funasr(
     drop(lifecycle_guard);
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     funasr_service::start_server(&app_handle, state.inner()).await?;
-    Ok("FunASR 服务器已重启".to_string())
+    Ok("FunASR server restarted".to_string())
 }
 
 #[tauri::command]
@@ -216,9 +219,9 @@ fn online_status_payload(engine: &str, has_key: bool) -> serde_json::Value {
     serde_json::json!({
         "status": if has_key { "ready" } else { "need_api_key" },
         "message": if has_key {
-            format!("{} 在线服务就绪", label)
+            format!("{} online service ready", label)
         } else {
-            format!("请配置 {} API Key", label)
+            format!("Please configure the {} API Key", label)
         },
         "device": "cloud",
         "gpu_name": serde_json::Value::Null,
@@ -241,7 +244,7 @@ pub async fn set_engine(
     ];
     if !VALID.contains(&engine.as_str()) {
         return Err(AppError::Other(format!(
-            "不支持的引擎类型: {}，可选值: {}",
+            "Unsupported engine type: {}. Valid values: {}",
             engine,
             VALID.join(", ")
         )));
@@ -251,13 +254,13 @@ pub async fn set_engine(
     let _asr_guard = lock_idle_asr(state.inner())?;
     if state.engine.download_task.lock().await.is_some() {
         return Err(AppError::Other(
-            "模型正在下载，请等待完成或取消下载后再切换引擎".to_string(),
+            "Models are downloading; please wait for completion or cancel the download before switching engines".to_string(),
         ));
     }
     // 配置文件使用原子替换；只有提交成功后才停止旧服务。这样磁盘/权限错误
     // 不会把仍然有效的旧引擎留在“配置未变但进程已停”的状态。
     paths::write_engine_config(&engine)
-        .map_err(|e| AppError::Other(format!("写入引擎配置失败: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Failed to save engine configuration: {}", e)))?;
     state.engine.block_funasr_starting();
     let switch_result: Result<(), AppError> = async {
         funasr_service::stop_server(state.inner()).await?;
@@ -297,13 +300,13 @@ pub async fn set_gpu_idle_seconds(
     let requested_seconds = seconds.max(timeout_seconds.unwrap_or(0));
     if requested_seconds > paths::MAX_GPU_IDLE_SECONDS {
         return Err(AppError::Other(format!(
-            "GPU 空闲时间过长: {}，最大 {} 秒",
+            "GPU idle timeout is too large: {}, maximum {} seconds",
             requested_seconds,
             paths::MAX_GPU_IDLE_SECONDS
         )));
     }
     paths::write_gpu_idle_seconds(seconds, timeout_seconds)
-        .map_err(|e| AppError::Other(format!("写入 GPU 空闲设置失败: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Failed to save GPU idle setting: {}", e)))?;
     // 正在运行的本地引擎立刻生效；没启动或在线引擎只记在 engine.json。
     funasr_service::push_gpu_idle_seconds(state.inner(), seconds).await?;
     Ok(seconds)
@@ -369,13 +372,13 @@ pub async fn set_online_asr_endpoint(
 ) -> Result<serde_json::Value, AppError> {
     if region != "international" && region != "domestic" {
         return Err(AppError::Other(format!(
-            "不支持的区域: {}，可选值: international, domestic",
+            "Unsupported region: {}. Valid values: international, domestic",
             region
         )));
     }
     let _lifecycle_guard = state.engine.funasr_lifecycle_op.lock().await;
     paths::write_online_asr_endpoint(&region)
-        .map_err(|e| AppError::Other(format!("写入端点配置失败: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Failed to save endpoint configuration: {}", e)))?;
 
     // 区域切换对 Alibaba 意味着换了 API Key 来源；重新加载缓存并刷新就绪状态。
     let engine = paths::read_engine_config();
@@ -408,7 +411,7 @@ pub async fn get_alibaba_asr_config() -> Result<serde_json::Value, AppError> {
 pub async fn set_alibaba_asr_model(model: String) -> Result<serde_json::Value, AppError> {
     let trimmed = model.trim();
     if trimmed.is_empty() {
-        return Err(AppError::Other("模型 ID 不能为空".into()));
+        return Err(AppError::Other("Model ID cannot be empty".into()));
     }
     // 轻量白名单：模型 ID 只允许 ascii 字母数字以及 `.-_`，防止被注入到 JSON body
     // 里产生奇怪的 URL / 字段。DashScope 的模型命名规范本身就在这个范围内。
@@ -417,12 +420,12 @@ pub async fn set_alibaba_asr_model(model: String) -> Result<serde_json::Value, A
         .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
     {
         return Err(AppError::Other(format!(
-            "非法模型 ID: {}，仅允许字母数字与 .-_",
+            "Invalid model ID: {}. Only letters, numbers, and .-_ are allowed",
             trimmed
         )));
     }
     paths::write_alibaba_model(trimmed)
-        .map_err(|e| AppError::Other(format!("写入模型配置失败: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Failed to save model configuration: {}", e)))?;
     Ok(serde_json::json!({
         "model": paths::read_alibaba_model(),
     }))
@@ -561,9 +564,9 @@ fn models_dir_update_result(
 ) -> ModelsDirUpdateResult {
     ModelsDirUpdateResult {
         message: if restore_default {
-            "已恢复默认模型目录".to_string()
+            "Restored default model directory".to_string()
         } else {
-            "模型目录已更新".to_string()
+            "Model directory updated".to_string()
         },
         runtime_warning,
     }
@@ -589,7 +592,7 @@ pub async fn set_models_dir(
     let _asr_guard = lock_idle_asr(state.inner())?;
     if state.engine.download_task.lock().await.is_some() {
         return Err(AppError::Other(
-            "模型正在下载，请等待完成或取消下载后再切换目录".to_string(),
+            "Models are downloading; please wait for completion or cancel the download before changing directories".to_string(),
         ));
     }
     let old_dir = paths::get_effective_models_dir();
@@ -606,11 +609,11 @@ pub async fn set_models_dir(
     if canon_old == canon_new {
         if restore_default {
             paths::write_models_dir(None)
-                .map_err(|e| AppError::Other(format!("写入配置失败: {}", e)))?;
+                .map_err(|e| AppError::Other(format!("Failed to save configuration: {}", e)))?;
             return Ok(models_dir_update_result(true, None));
         }
         return Ok(ModelsDirUpdateResult {
-            message: "路径未变化".to_string(),
+            message: "Path unchanged".to_string(),
             runtime_warning: None,
         });
     }
@@ -619,15 +622,15 @@ pub async fn set_models_dir(
     let new_dir_clone = new_dir.clone();
     tokio::task::spawn_blocking(move || std::fs::create_dir_all(&new_dir_clone))
         .await
-        .map_err(|e| AppError::Other(format!("创建目录失败: {}", e)))?
-        .map_err(|e| AppError::Other(format!("创建目录失败: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Failed to create directory: {}", e)))?
+        .map_err(|e| AppError::Other(format!("Failed to create directory: {}", e)))?;
 
     let engine = paths::read_engine_config();
     let local_engine = !paths::is_online_engine(&engine);
     let prepared_sources = if migrate && old_dir.is_dir() {
         let _ = app_handle.emit(
             "models-migrate-status",
-            serde_json::json!({ "status": "migrating", "message": "正在复制模型文件..." }),
+            serde_json::json!({ "status": "migrating", "message": "Copying model files..." }),
         );
 
         let old = old_dir.clone();
@@ -635,8 +638,8 @@ pub async fn set_models_dir(
         let handle = app_handle.clone();
         tokio::task::spawn_blocking(move || migrate_model_dirs(&old, &dest, Some(&handle)))
             .await
-            .map_err(|e| AppError::Other(format!("迁移任务失败: {}", e)))?
-            .map_err(|e| AppError::Other(format!("迁移失败: {}", e)))?
+            .map_err(|e| AppError::Other(format!("Migration task failed: {}", e)))?
+            .map_err(|e| AppError::Other(format!("Migration failed: {}", e)))?
     } else {
         Vec::new()
     };
@@ -645,7 +648,7 @@ pub async fn set_models_dir(
     // 配置原子提交成功之后才取消旧启动并停止旧服务。
     let dir_str = paths::strip_win_prefix(&new_dir);
     paths::write_models_dir((!restore_default).then_some(dir_str.as_str()))
-        .map_err(|e| AppError::Other(format!("写入配置失败: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Failed to save configuration: {}", e)))?;
 
     state.engine.block_funasr_starting();
     let update_result: Result<bool, AppError> = async {
@@ -671,7 +674,10 @@ pub async fn set_models_dir(
         Ok(should_start) => should_start,
         Err(err) => {
             state.set_funasr_ready(false);
-            runtime_warning = Some(format!("目录配置已保存，但运行时更新失败: {}", err));
+            runtime_warning = Some(format!(
+                "Directory setting saved, but runtime update failed: {}",
+                err
+            ));
             false
         }
     };
@@ -680,7 +686,10 @@ pub async fn set_models_dir(
     if should_start {
         if let Err(err) = funasr_service::start_server(&app_handle, state.inner()).await {
             state.set_funasr_ready(false);
-            runtime_warning = Some(format!("目录配置已保存，但服务启动失败: {}", err));
+            runtime_warning = Some(format!(
+                "Directory setting saved, but service startup failed: {}",
+                err
+            ));
         } else if !prepared_sources.is_empty() {
             // start 完成到 cleanup 之间可能有另一次目录切换。重新进入 lifecycle
             // 并确认当前配置仍指向本次目标，避免删除已经被切回使用的旧目录。
@@ -698,11 +707,11 @@ pub async fn set_models_dir(
                     Ok(Ok(())) => {}
                     Ok(Err(err)) => {
                         runtime_warning =
-                            Some(format!("模型目录已切换，但部分旧目录未能清理: {}", err));
+                            Some(format!("Model directory switched, but some old directories could not be cleaned up: {}", err));
                     }
                     Err(err) => {
                         runtime_warning =
-                            Some(format!("模型目录已切换，但旧目录清理任务异常: {}", err));
+                            Some(format!("Model directory switched, but the old directory cleanup task failed: {}", err));
                     }
                 }
             } else {
@@ -736,16 +745,28 @@ fn migrate_model_dirs(
     dst: &std::path::Path,
     handle: Option<&tauri::AppHandle>,
 ) -> Result<Vec<std::path::PathBuf>, String> {
-    let canonical_src = std::fs::canonicalize(src)
-        .map_err(|e| format!("解析源模型目录失败 {}: {}", src.display(), e))?;
-    let canonical_dst = std::fs::canonicalize(dst)
-        .map_err(|e| format!("解析目标模型目录失败 {}: {}", dst.display(), e))?;
+    let canonical_src = std::fs::canonicalize(src).map_err(|e| {
+        format!(
+            "Failed to resolve source model directory {}: {}",
+            src.display(),
+            e
+        )
+    })?;
+    let canonical_dst = std::fs::canonicalize(dst).map_err(|e| {
+        format!(
+            "Failed to resolve target model directory {}: {}",
+            dst.display(),
+            e
+        )
+    })?;
     if canonical_dst.starts_with(&canonical_src) {
-        return Err("目标模型目录不能位于当前模型目录内部".to_string());
+        return Err(
+            "Target model directory cannot be inside the current model directory".to_string(),
+        );
     }
 
     let entries: Vec<_> = std::fs::read_dir(src)
-        .map_err(|e| format!("读取源目录失败: {}", e))?
+        .map_err(|e| format!("Failed to read source directory: {}", e))?
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with("models--") && e.path().is_dir())
         .collect();
@@ -764,7 +785,7 @@ fn migrate_model_dirs(
         let dst_path = dst.join(&name);
 
         copy_dir_recursive(&src_path, &dst_path)
-            .map_err(|e| format!("复制 {} 失败: {}", name.to_string_lossy(), e))?;
+            .map_err(|e| format!("Failed to copy {}: {}", name.to_string_lossy(), e))?;
         copied_sources.push(src_path);
         log::info!("迁移准备（copy，保留源）: {}", name.to_string_lossy());
 
@@ -773,7 +794,7 @@ fn migrate_model_dirs(
                 "models-migrate-status",
                 serde_json::json!({
                     "status": "migrating",
-                    "message": format!("正在迁移 {}/{}...", i + 1, total),
+                    "message": format!("Migrating {}/{}...", i + 1, total),
                     "progress": ((i + 1) as f64 / total as f64 * 100.0).round(),
                 }),
             );
@@ -823,12 +844,17 @@ mod model_dir_migration_tests {
 
     #[test]
     fn model_dir_result_distinguishes_committed_config_from_runtime_warning() {
-        let result =
-            models_dir_update_result(false, Some("目录配置已保存，但服务启动失败".to_string()));
+        let result = models_dir_update_result(
+            false,
+            Some("Directory setting saved, but service startup failed".to_string()),
+        );
         let value = serde_json::to_value(result).expect("serialize model directory result");
 
-        assert_eq!(value["message"], "模型目录已更新");
-        assert_eq!(value["runtimeWarning"], "目录配置已保存，但服务启动失败");
+        assert_eq!(value["message"], "Model directory updated");
+        assert_eq!(
+            value["runtimeWarning"],
+            "Directory setting saved, but service startup failed"
+        );
     }
 
     #[test]
@@ -901,7 +927,7 @@ mod model_dir_migration_tests {
         let error = migrate_model_dirs(&source, &target, None)
             .expect_err("nested migration target must be rejected");
 
-        assert!(error.contains("不能位于"));
+        assert!(error.contains("cannot be inside"));
         assert!(model_source.join("weights.bin").is_file());
         let _ = std::fs::remove_dir_all(root);
     }

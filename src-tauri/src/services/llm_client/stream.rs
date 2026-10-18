@@ -24,9 +24,12 @@ pub(crate) fn stream_read_budget_at(
     progress_timeout: Option<Duration>,
 ) -> Result<Duration, String> {
     let elapsed = now.duration_since(started_at);
-    let remaining = total_timeout
-        .checked_sub(elapsed)
-        .ok_or_else(|| format!("流式读取超过总预算（{} 秒）", total_timeout.as_secs()))?;
+    let remaining = total_timeout.checked_sub(elapsed).ok_or_else(|| {
+        format!(
+            "Stream reading exceeded total budget ({} seconds)",
+            total_timeout.as_secs()
+        )
+    })?;
 
     let mut budget = event_timeout.min(remaining);
     if let Some(progress_timeout) = progress_timeout {
@@ -59,7 +62,7 @@ fn stream_read_budget(
 
 fn stream_progress_timeout_error(progress_timeout: Duration) -> String {
     format!(
-        "流式输出停滞（{} 秒无新增内容）",
+        "Stream output stalled (no new content for {} seconds)",
         progress_timeout.as_secs()
     )
 }
@@ -72,15 +75,24 @@ fn stream_timeout_error(
 ) -> String {
     let now = tokio::time::Instant::now();
     if now.duration_since(started_at) >= total_timeout {
-        format!("流式读取超过总预算（{} 秒）", total_timeout.as_secs())
+        format!(
+            "Stream reading exceeded total budget ({} seconds)",
+            total_timeout.as_secs()
+        )
     } else if let Some(progress_timeout) = progress_timeout {
         if now.duration_since(last_progress_at) >= progress_timeout {
             stream_progress_timeout_error(progress_timeout)
         } else {
-            format!("流式读取超时（{} 秒无数据）", STREAM_EVENT_TIMEOUT_SECS)
+            format!(
+                "Stream reading timed out (no data for {} seconds)",
+                STREAM_EVENT_TIMEOUT_SECS
+            )
         }
     } else {
-        format!("流式读取超时（{} 秒无数据）", STREAM_EVENT_TIMEOUT_SECS)
+        format!(
+            "Stream reading timed out (no data for {} seconds)",
+            STREAM_EVENT_TIMEOUT_SECS
+        )
     }
 }
 
@@ -151,7 +163,7 @@ pub async fn read_sse_stream(
                 if let Ok(json) = serde_json::from_str::<Value>(data) {
                     emit_stream_citations(app_handle, event_name, session_id, &json);
                     if let Some(message) = json["error"]["message"].as_str() {
-                        let message = format!("OpenAI 流式错误: {}", message);
+                        let message = format!("OpenAI streaming error: {}", message);
                         emit_stream_error_event(app_handle, event_name, session_id, &message);
                         return Err(message);
                     }
@@ -173,7 +185,7 @@ pub async fn read_sse_stream(
                 }
             }
             Ok(Some(Err(e))) => {
-                let message = format!("流式读取失败: {}", e);
+                let message = format!("Failed to read stream: {}", e);
                 emit_stream_error_event(app_handle, event_name, session_id, &message);
                 return Err(message);
             }
@@ -217,7 +229,8 @@ pub async fn read_openai_responses_sse_stream(
     let mut stream = response.bytes_stream().eventsource();
     let incomplete_error = || {
         let message =
-            "CHATGPT_PLAN_ERROR: Responses 响应未完成，未收到 response.completed。".to_string();
+            "CHATGPT_PLAN_ERROR: Responses stream incomplete; response.completed not received."
+                .to_string();
         emit_stream_error_event(app_handle, event_name, session_id, &message);
         message
     };
@@ -324,14 +337,17 @@ pub async fn read_openai_responses_sse_stream(
                                 .or_else(|| extract_openai_compat_error_message(data));
                         let message = response_error.unwrap_or_else(|| {
                             let reason = json["response"]["incomplete_details"]["reason"].as_str();
-                            reason.map_or_else(|| data.to_string(), |r| format!("响应未完成: {r}"))
+                            reason.map_or_else(
+                                || data.to_string(),
+                                |r| format!("Response incomplete: {r}"),
+                            )
                         });
                         let prefix = if require_completed {
                             "CHATGPT_PLAN_ERROR: "
                         } else {
                             ""
                         };
-                        let message = format!("{prefix}Responses 流式错误: {message}");
+                        let message = format!("{prefix}Responses streaming error: {message}");
                         emit_stream_error_event(app_handle, event_name, session_id, &message);
                         return Err(message);
                     }
@@ -339,7 +355,7 @@ pub async fn read_openai_responses_sse_stream(
                 }
             }
             Ok(Some(Err(e))) => {
-                let message = format!("流式读取失败: {}", e);
+                let message = format!("Failed to read stream: {}", e);
                 emit_stream_error_event(app_handle, event_name, session_id, &message);
                 return Err(message);
             }
@@ -454,14 +470,14 @@ pub async fn read_anthropic_sse_stream(
                         .ok()
                         .and_then(|json| json["error"]["message"].as_str().map(String::from))
                         .unwrap_or_else(|| event.data.clone());
-                    let message = format!("Anthropic 流式错误: {}", message);
+                    let message = format!("Anthropic streaming error: {}", message);
                     emit_stream_error_event(app_handle, event_name, session_id, &message);
                     return Err(message);
                 }
                 _ => {}
             },
             Ok(Some(Err(e))) => {
-                let message = format!("流式读取失败: {}", e);
+                let message = format!("Failed to read stream: {}", e);
                 emit_stream_error_event(app_handle, event_name, session_id, &message);
                 return Err(message);
             }

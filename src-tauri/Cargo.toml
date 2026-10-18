@@ -1,7 +1,7 @@
 [package]
 name = "speak-flow"
 version = "1.0.5"
-description = "轻语 - 本地与云端语音转文字桌面应用"
+description = "SpeakFlow - Local and cloud speech-to-text desktop app"
 authors = ["sun"]
 license = "GPL-3.0-only"
 edition = "2021"

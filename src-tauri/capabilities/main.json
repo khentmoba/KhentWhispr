@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "主窗口：设置、录音、剪贴板、开机启动与密钥管理",
+  "description": "Main window: settings, recording, clipboard, startup, and key management",
   "windows": ["main"],
   "permissions": [
     "core:default",

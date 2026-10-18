@@ -203,7 +203,7 @@ def _download_file(
             downloaded = 0
             if attempt == 0:
                 continue
-            raise RuntimeError(f"{filename} 服务器拒绝完整下载请求")
+            raise RuntimeError(f"{filename}: server rejected the full download request")
 
         try:
             resp.raise_for_status()
@@ -235,7 +235,7 @@ def _download_file(
                 downloaded = 0
                 if attempt == 0:
                     continue
-                raise RuntimeError(f"{filename} 服务器返回了无效的 Content-Range")
+                raise RuntimeError(f"{filename}: server returned an invalid Content-Range")
             mode = "ab" if downloaded > 0 else "wb"
         elif resp.status_code == 200:
             # 服务器忽略 Range 时从零覆盖，不能把完整响应追加到 partial。
@@ -251,7 +251,7 @@ def _download_file(
                     total_size = parsed_content_length
         else:
             getattr(resp, "close", lambda: None)()
-            raise RuntimeError(f"{filename} 下载返回异常状态码: {resp.status_code}")
+            raise RuntimeError(f"{filename}: download returned unexpected status code {resp.status_code}")
 
         current = downloaded
         last_pct = -1
@@ -280,18 +280,18 @@ def _download_file(
             if attempt == 0:
                 continue
             raise RuntimeError(
-                f"{filename} Content-Range 与响应长度不一致: "
+                f"{filename}: Content-Range does not match response length: "
                 f"end={expected_range_end}, received_end={current - 1}"
             )
         if expected_size is not None and current != expected_size:
-            raise RuntimeError(f"{filename} 下载不完整: got={current}, expected={expected_size}")
+            raise RuntimeError(f"{filename}: incomplete download: got={current}, expected={expected_size}")
         if total_size > 0 and current != total_size:
-            raise RuntimeError(f"{filename} 下载不完整: got={current}, expected={total_size}")
+            raise RuntimeError(f"{filename}: incomplete download: got={current}, expected={total_size}")
 
         os.replace(tmp_path, dest_path)
         return
 
-    raise RuntimeError(f"{filename} 下载失败")
+    raise RuntimeError(f"{filename}: download failed")
 
 
 def _sha256_file(path):
@@ -313,7 +313,7 @@ def _write_completion_manifest(snapshot_dir, repo_id, commit_hash, files):
         actual_size = os.path.getsize(path)
         if actual_size != size:
             os.replace(path, path + ".invalid-" + uuid.uuid4().hex)
-            raise RuntimeError(f"{filename} 文件大小校验失败: got={actual_size}, expected={size}")
+            raise RuntimeError(f"{filename}: file size validation failed: got={actual_size}, expected={size}")
         manifest_item = {"path": filename, "size": size}
         expected_sha256 = item.get("sha256")
         if expected_sha256:
@@ -321,7 +321,7 @@ def _write_completion_manifest(snapshot_dir, repo_id, commit_hash, files):
             if actual_sha256.lower() != expected_sha256.lower():
                 os.replace(path, path + ".invalid-" + uuid.uuid4().hex)
                 raise RuntimeError(
-                    f"{filename} SHA256 校验失败: got={actual_sha256}, expected={expected_sha256}"
+                    f"{filename}: SHA256 checksum mismatch: got={actual_sha256}, expected={expected_sha256}"
                 )
             manifest_item["sha256"] = expected_sha256
         manifest_files.append(manifest_item)
@@ -384,7 +384,7 @@ def download_model(model_config):
                 pass
     if files_ready or (not required_files and is_hf_repo_ready(model_name)):
         _emit(model_type, "completed", 100,
-              message=f"{model_name} 已缓存，跳过下载")
+              message=f"{model_name} is already cached; skipping download")
         return {"success": True, "model": model_type}
 
     last_error = None
@@ -396,10 +396,10 @@ def download_model(model_config):
                 model_type,
                 "downloading",
                 0,
-                message=f"主站不可用，正在切换镜像 {endpoint} ..."
+                message=f"Main endpoint unavailable; switching to mirror {endpoint} ..."
             )
         else:
-            _emit(model_type, "downloading", 0, message=f"正在获取 {model_name} 文件列表...")
+            _emit(model_type, "downloading", 0, message=f"Fetching file list for {model_name}...")
 
         try:
             if required_files:
@@ -439,13 +439,13 @@ def download_model(model_config):
                 )
 
             _write_completion_manifest(snapshot_dir, model_name, commit_hash, files)
-            _emit(model_type, "completed", 100, message=f"{model_name} 下载完成")
+            _emit(model_type, "completed", 100, message=f"{model_name} download complete")
             return {"success": True, "model": model_type, "endpoint": endpoint}
         except Exception as e:
             last_error = e
 
-    error_message = str(last_error) if last_error else "模型下载失败"
-    _emit(model_type, "error", 0, error_message, message=f"{model_name} 下载失败: {error_message}")
+    error_message = str(last_error) if last_error else "Model download failed"
+    _emit(model_type, "error", 0, error_message, message=f"{model_name} download failed: {error_message}")
     return {"success": False, "model": model_type, "error": error_message}
 
 
@@ -480,7 +480,7 @@ def main(engine=None):
             }
         ]
     else:
-        raise ValueError(f"不支持的本地 ASR 引擎: {engine}")
+        raise ValueError(f"Unsupported local ASR engine: {engine}")
 
     _total_count = len(models)
     for m in models:
@@ -498,14 +498,14 @@ def main(engine=None):
     if failed:
         final_result = {
             "success": False,
-            "error": f"以下模型下载失败: {', '.join(failed)}",
+            "error": f"Failed to download the following models: {', '.join(failed)}",
             "failed_models": failed,
             "results": results,
         }
     else:
         final_result = {
             "success": True,
-            "message": "所有模型下载完成",
+            "message": "All models downloaded successfully",
             "results": results,
         }
 

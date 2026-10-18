@@ -170,24 +170,24 @@ pub async fn open_app_release_page(url: Option<String>) -> Result<String, AppErr
         .transpose()?
         .unwrap_or_else(|| GITHUB_RELEASES_URL.to_string());
     open_external_url(&target)?;
-    Ok("已打开 GitHub Release 页面".to_string())
+    Ok("Opened GitHub Releases page".to_string())
 }
 
 /// 仅允许 https + GitHub host 通过。前端理应只传 `check_app_update` 返回的
 /// `release_url`，但既然命令暴露在 IPC，就在后端把这条假设固化下来。
 fn validate_release_url(value: &str) -> Result<(), AppError> {
     let parsed = reqwest::Url::parse(value)
-        .map_err(|err| AppError::Other(format!("非法 Release URL: {}", err)))?;
+        .map_err(|err| AppError::Other(format!("Invalid release URL: {}", err)))?;
     if parsed.scheme() != "https" {
         return Err(AppError::Other(format!(
-            "Release URL 仅支持 https，收到 scheme: {}",
+            "Release URL only supports https, got scheme: {}",
             parsed.scheme()
         )));
     }
     let host = parsed.host_str().unwrap_or("");
     if !ALLOWED_RELEASE_HOSTS.contains(&host) {
         return Err(AppError::Other(format!(
-            "Release URL host 不在白名单内: {}",
+            "Release URL host is not in the allowlist: {}",
             host
         )));
     }
@@ -198,14 +198,14 @@ async fn fetch_latest_release() -> Result<Option<GitHubRelease>, AppError> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(UPDATER_REQUEST_TIMEOUT_SECS))
         .build()
-        .map_err(|err| AppError::Download(format!("构建 HTTP 客户端失败: {}", err)))?;
+        .map_err(|err| AppError::Download(format!("Failed to build HTTP client: {}", err)))?;
     let response = client
         .get(GITHUB_RELEASE_API)
         .header(reqwest::header::USER_AGENT, UPDATER_USER_AGENT)
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .send()
         .await
-        .map_err(|err| AppError::Download(format!("请求 GitHub Release 失败: {}", err)))?;
+        .map_err(|err| AppError::Download(format!("Failed to request GitHub release: {}", err)))?;
 
     // GitHub returns 404 when this repository has no published releases.
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -213,7 +213,7 @@ async fn fetch_latest_release() -> Result<Option<GitHubRelease>, AppError> {
     }
     if !response.status().is_success() {
         return Err(AppError::Download(format!(
-            "GitHub Release 检查失败: HTTP {}",
+            "GitHub release check failed: HTTP {}",
             response.status()
         )));
     }
@@ -222,7 +222,9 @@ async fn fetch_latest_release() -> Result<Option<GitHubRelease>, AppError> {
         .json::<GitHubRelease>()
         .await
         .map(Some)
-        .map_err(|err| AppError::Download(format!("解析 GitHub Release 数据失败: {}", err)))
+        .map_err(|err| {
+            AppError::Download(format!("Failed to parse GitHub release response: {}", err))
+        })
 }
 
 fn normalize_version(version: &str) -> String {
@@ -264,7 +266,7 @@ fn open_external_url(url: &str) -> Result<(), AppError> {
         .arg("url.dll,FileProtocolHandler")
         .arg(url)
         .spawn()
-        .map_err(|err| AppError::Other(format!("打开下载页面失败: {}", err)))?;
+        .map_err(|err| AppError::Other(format!("Failed to open download page: {}", err)))?;
     Ok(())
 }
 
@@ -273,7 +275,7 @@ fn open_external_url(url: &str) -> Result<(), AppError> {
     std::process::Command::new("open")
         .arg(url)
         .spawn()
-        .map_err(|err| AppError::Other(format!("打开下载页面失败: {}", err)))?;
+        .map_err(|err| AppError::Other(format!("Failed to open download page: {}", err)))?;
     Ok(())
 }
 
@@ -282,7 +284,7 @@ fn open_external_url(url: &str) -> Result<(), AppError> {
     std::process::Command::new("xdg-open")
         .arg(url)
         .spawn()
-        .map_err(|err| AppError::Other(format!("打开下载页面失败: {}", err)))?;
+        .map_err(|err| AppError::Other(format!("Failed to open download page: {}", err)))?;
     Ok(())
 }
 

@@ -52,7 +52,7 @@ def ensure_safe_cuda_env() -> None:
     if not _has_nvidia_gpu():
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
         logging.getLogger(__name__).info(
-            "未检测到 NVIDIA GPU，已设置 CUDA_VISIBLE_DEVICES='' 禁用 CUDA"
+            "NVIDIA GPU not detected; set CUDA_VISIBLE_DEVICES='' to disable CUDA"
         )
 
 
@@ -90,7 +90,7 @@ def setup_rotating_logger(module_name: str, log_filename: str, service_name: str
         ],
     )
     logger = logging.getLogger(module_name)
-    logger.info(f"{service_name}日志文件: {log_file_path}")
+    logger.info(f"{service_name} log file: {log_file_path}")
     return logger
 
 
@@ -130,16 +130,16 @@ def get_wav_duration_seconds(audio_path: str, logger: logging.Logger) -> float:
         with open(audio_path, "rb") as f:
             riff = f.read(4)
             if riff != b"RIFF":
-                raise ValueError("非 WAV 格式")
+                raise ValueError("Not a WAV file")
             f.seek(28)
             byte_rate = struct.unpack("<I", f.read(4))[0]
             f.seek(40)
             data_size = struct.unpack("<I", f.read(4))[0]
         if byte_rate <= 0:
-            raise ValueError(f"无效的 byte rate: {byte_rate}")
+            raise ValueError(f"Invalid byte rate: {byte_rate}")
         return data_size / byte_rate
     except Exception as e:
-        logger.warning(f"从 WAV header 获取音频时长失败: {e}")
+        logger.warning(f"Failed to get audio duration from WAV header: {e}")
         return 0.0
 
 
@@ -150,19 +150,19 @@ def decode_inline_audio(
 ) -> Tuple["object", float]:
     """Decode inline audio payload into an in-memory input accepted by ASR backends."""
     if not audio_base64:
-        raise ValueError("缺少内存音频数据")
+        raise ValueError("Missing in-memory audio data")
 
     try:
         audio_bytes = base64.b64decode(audio_base64, validate=True)
     except (ValueError, base64.binascii.Error) as exc:
-        raise ValueError(f"音频 base64 解码失败: {exc}") from exc
+        raise ValueError(f"Failed to decode audio base64: {exc}") from exc
     fmt = (audio_format or "pcm_s16le").lower()
 
     if fmt == "pcm_s16le":
         if not sample_rate or sample_rate <= 0:
-            raise ValueError("PCM 内存音频缺少有效采样率")
+            raise ValueError("PCM in-memory audio requires a valid sample rate")
         if len(audio_bytes) % 2 != 0:
-            raise ValueError("PCM s16le 数据字节数必须为偶数")
+            raise ValueError("PCM s16le data must contain an even number of bytes")
         import numpy as np
 
         samples = np.frombuffer(audio_bytes, dtype="<i2")
@@ -185,7 +185,7 @@ def decode_inline_audio(
             duration = 0.0
         return io.BytesIO(audio_bytes), duration
 
-    raise ValueError(f"不支持的内存音频格式: {fmt}")
+    raise ValueError(f"Unsupported in-memory audio format: {fmt}")
 
 
 def wave_open(buffer: io.BytesIO):
@@ -247,16 +247,16 @@ class BaseASRServer:
             if torch.cuda.is_available():
                 gpu_name = torch.cuda.get_device_name(0)
                 gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-                self.logger.info(f"检测到 NVIDIA GPU: {gpu_name} ({gpu_mem:.1f}GB)，使用 CUDA 加速")
+                self.logger.info(f"Detected NVIDIA GPU: {gpu_name} ({gpu_mem:.1f}GB); using CUDA acceleration")
                 return "cuda"
             else:
-                self.logger.info("CUDA 不可用，使用 CPU 推理")
+                self.logger.info("CUDA unavailable; using CPU inference")
                 return "cpu"
         except ImportError as e:
-            self.logger.warning(f"PyTorch 导入失败: {e}，使用 CPU 推理")
+            self.logger.warning(f"Failed to import PyTorch: {e}; using CPU inference")
             return "cpu"
         except Exception as e:
-            self.logger.warning(f"GPU 检测失败: {e}，回退到 CPU 推理")
+            self.logger.warning(f"GPU detection failed: {e}; falling back to CPU inference")
             return "cpu"
 
     def _setup_runtime_environment(self) -> None:
@@ -266,13 +266,13 @@ class BaseASRServer:
             thread_count = max(4, cpu_count - 2)
             os.environ["OMP_NUM_THREADS"] = str(thread_count)
             self.logger.info(
-                f"运行时环境变量设置完成，HF_HUB_OFFLINE=1, OMP_NUM_THREADS={thread_count} (CPU核心数: {cpu_count})"
+                f"Runtime environment configured: HF_HUB_OFFLINE=1, OMP_NUM_THREADS={thread_count} (CPU cores: {cpu_count})"
             )
         except Exception as e:
-            self.logger.warning(f"环境设置失败: {e}")
+            self.logger.warning(f"Failed to configure the environment: {e}")
 
     def _signal_handler(self, signum, frame) -> None:
-        self.logger.info(f"收到信号 {signum}，准备退出...")
+        self.logger.info(f"Received signal {signum}; shutting down...")
         self.running = False
 
     def _get_audio_duration(self, audio_path: str) -> float:
@@ -287,16 +287,16 @@ class BaseASRServer:
             if self.device == "cuda":
                 import torch
                 torch.cuda.empty_cache()
-            self.logger.info("内存清理完成")
+            self.logger.info("Memory cleanup completed")
         except Exception as e:
-            self.logger.warning(f"内存清理失败: {e}")
+            self.logger.warning(f"Memory cleanup failed: {e}")
 
     def _maybe_cleanup(self, duration: float) -> None:
         """Run periodic memory cleanup after transcription (in background thread)."""
         if self.transcription_count % CLEANUP_EVERY_N == 0 or duration > 120:
             import threading
             threading.Thread(target=self._cleanup_memory, daemon=True).start()
-            self.logger.info(f"已完成 {self.transcription_count} 次转录，后台执行内存清理")
+            self.logger.info(f"Completed {self.transcription_count} transcriptions; running background memory cleanup")
 
     def _get_gpu_device_info(self) -> dict:
         """Return device/gpu_name/gpu_memory_total dict for status responses."""
@@ -344,7 +344,7 @@ class BaseASRServer:
         """Handle a stream command in subclasses that provide streaming."""
         return {
             "success": False,
-            "error": f"不支持流式命令: {command.get('action')}",
+            "error": f"Unsupported streaming command: {command.get('action')}",
         }
 
 
@@ -376,13 +376,13 @@ class BaseASRServer:
         self._gpu_idle_seconds = seconds
         self._last_activity_at = time.monotonic()
         self._ensure_gpu_idle_thread()
-        self.logger.info("GPU 空闲卸载已启用，超时 %s 秒", seconds)
+        self.logger.info("GPU idle unload enabled; timeout: %s seconds", seconds)
 
     def _handle_set_gpu_idle(self, command) -> dict:
         from gpu_idle import parse_gpu_idle_seconds
 
         if not isinstance(command, dict) or "seconds" not in command:
-            return {"success": False, "error": "缺少 seconds"}
+            return {"success": False, "error": "Missing seconds"}
         seconds = parse_gpu_idle_seconds(command.get("seconds"))
         with self._gpu_idle_lock:
             if seconds > 0 and self._gpu_idle_seconds <= 0:
@@ -394,7 +394,7 @@ class BaseASRServer:
             self._ensure_gpu_idle_thread()
         else:
             self._stop_gpu_idle_thread()
-        self.logger.info("GPU 空闲卸载设置已更新: %s 秒（0 表示关闭）", seconds)
+        self.logger.info("GPU idle unload setting updated: %s seconds (0 disables it)", seconds)
         return {
             "success": True,
             "gpu_idle_seconds": seconds,
@@ -436,7 +436,7 @@ class BaseASRServer:
             try:
                 self._gpu_idle_tick()
             except Exception:
-                self.logger.warning("GPU 空闲卸载检查失败", exc_info=True)
+                self.logger.warning("GPU idle unload check failed", exc_info=True)
 
     def _gpu_idle_tick(self, now: float | None = None) -> bool:
         from gpu_idle import gpu_idle_should_unload
@@ -476,7 +476,7 @@ class BaseASRServer:
             return {"success": True, "stats": self.get_performance_stats()}
         if action == "cleanup":
             self._cleanup_memory()
-            return {"success": True, "message": "内存清理完成"}
+            return {"success": True, "message": "Memory cleanup completed"}
         if action in (
             "stream_start",
             "stream_feed",
@@ -484,31 +484,31 @@ class BaseASRServer:
             "stream_cancel",
         ):
             return self.handle_stream_command(command)
-        return {"success": False, "error": f"未知命令: {action}"}
+        return {"success": False, "error": f"Unknown command: {action}"}
 
     # ------------------------------------------------------------------
     # Command dispatch loop
     # ------------------------------------------------------------------
 
     def run(self) -> None:
-        self.logger.info(f"{self.engine} 服务器启动")
+        self.logger.info(f"{self.engine} server started")
 
         from hf_cache_utils import get_hf_cache_root, is_hf_repo_ready
 
         hf_cache = get_hf_cache_root()
-        self.logger.info(f"HuggingFace 缓存根目录: {hf_cache}")
+        self.logger.info(f"HuggingFace cache root: {hf_cache}")
 
         model_repos = self._get_model_repos()
         missing = [r for r in model_repos if not is_hf_repo_ready(r)]
 
         if not missing:
-            self.logger.info("模型文件存在，开始初始化")
+            self.logger.info("Model files found; initializing")
             init_result = self.initialize()
         else:
-            self.logger.info(f"模型文件不存在或不完整：{', '.join(missing)}，跳过初始化")
+            self.logger.info(f"Model files are missing or incomplete: {', '.join(missing)}; skipping initialization")
             init_result = {
                 "success": False,
-                "error": "模型文件未下载，请先下载模型",
+                "error": "Model files have not been downloaded; download the models first",
                 "type": "models_not_downloaded",
                 "engine": self.engine,
             }
@@ -533,7 +533,7 @@ class BaseASRServer:
                     command = json.loads(line)
                 except json.JSONDecodeError:
                     # 无 request_id 可回传——JSON 解析就失败了。Rust 端按旧协议兼容。
-                    result = {"success": False, "error": "无效的JSON命令"}
+                    result = {"success": False, "error": "Invalid JSON command"}
                     print(json.dumps(result, ensure_ascii=False))
                     sys.stdout.flush()
                     continue
@@ -549,7 +549,7 @@ class BaseASRServer:
                 if action == "exit":
                     if self._gpu_idle_thread is not None:
                         self._stop_gpu_idle_thread()
-                    result = {"success": True, "message": "服务器退出"}
+                    result = {"success": True, "message": "Server exited"}
                     if request_id is not None and isinstance(result, dict):
                         result["request_id"] = request_id
                     print(json.dumps(result, ensure_ascii=False))
@@ -594,4 +594,4 @@ class BaseASRServer:
                 print(json.dumps(error_result, ensure_ascii=False))
                 sys.stdout.flush()
 
-        self.logger.info(f"{self.engine} 服务器退出")
+        self.logger.info(f"{self.engine} server exited")

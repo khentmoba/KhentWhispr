@@ -314,7 +314,7 @@ export function useModelStatus(): UseModelStatusReturn {
             setStage("loading");
             setDownloadMessage(message ?? null);
           } else if (status === "error") {
-            if (message?.includes("模型文件未下载")) {
+            if (message?.includes("Model files have not been downloaded")) {
               enterNeedDownloadState();
               return;
             }

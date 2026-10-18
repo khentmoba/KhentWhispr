@@ -68,8 +68,8 @@ impl NativeRecording {
         }
         self.task
             .await
-            .map_err(|_| AppError::Asr("R2T2 录音任务异常结束".into()))??
-            .ok_or_else(|| AppError::Asr("R2T2 录音已取消".into()))
+            .map_err(|_| AppError::Asr("R2T2 recording task ended abnormally".into()))??
+            .ok_or_else(|| AppError::Asr("R2T2 recording was cancelled".into()))
     }
 
     pub(crate) async fn cancel(mut self) -> Result<(), AppError> {
@@ -78,7 +78,7 @@ impl NativeRecording {
         }
         self.task
             .await
-            .map_err(|_| AppError::Asr("R2T2 录音任务异常结束".into()))??;
+            .map_err(|_| AppError::Asr("R2T2 recording task ended abnormally".into()))??;
         Ok(())
     }
 }

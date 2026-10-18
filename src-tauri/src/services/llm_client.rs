@@ -364,7 +364,7 @@ mod tests {
         );
 
         let err = result.expect_err("stalled visible output must trip progress timeout");
-        assert!(err.contains("流式输出停滞"));
+        assert!(err.contains("Stream output stalled"));
     }
 
     #[test]
@@ -827,7 +827,7 @@ mod tests {
             },
         );
 
-        // json_object 优先于 stream：保留 response_format，放弃流式
+        // json_object takes precedence over stream: retain response_format, omit stream
         assert_eq!(
             body["response_format"],
             serde_json::json!({"type": "json_object"})
@@ -1160,9 +1160,7 @@ mod tests {
 
     // --- is_empty_llm_response_error tests --------------------------------
     //
-    // 这条识别函数是 polish/assistant fallback 决定是否短路重试的依据。
-    // 如果识别失稳（漏判 → 多花 3 次请求；误判 → 把无关错误当空响应丢弃），
-    // 就退回到原始浪费/错失的状态。
+    // Recognizer used by polish/assistant fallback to decide whether to short-circuit.
 
     #[test]
     fn is_empty_llm_response_error_matches_fresh_helper_output() {
@@ -1178,8 +1176,7 @@ mod tests {
 
     #[test]
     fn is_empty_llm_response_error_matches_each_documented_source() {
-        // 每个 callsite 都要被识别——任何一个漏掉就意味着那条路径上的空
-        // 响应仍会触发 polish 4 段 fallback 全跑。
+        // Every callsite must be recognized so that empty responses short-circuit fallback.
         let endpoint = make_test_endpoint();
         for source in [
             "non_stream",
@@ -1188,10 +1185,6 @@ mod tests {
             "anthropic_sse_message_stop",
             "anthropic_sse_eos",
             "openai_responses_sse_completed",
-            // 新增的 Responses SSE finalize 路径：done 事件结束流，
-            // eos 是流意外终止后由 finalize 兜底。两条分支都必须被
-            // recognizer 识别，否则 polish/assistant fallback 链路会
-            // 误以为是真正的 transport 错误而连跑 4 段。
             "openai_responses_sse_done",
             "openai_responses_sse_eos",
         ] {
@@ -1208,15 +1201,13 @@ mod tests {
 
     #[test]
     fn is_empty_llm_response_error_rejects_unrelated_errors() {
-        // 未来加新错误时不应该误命中。这里也防止前缀被改成"空响应"等更通用
-        // 的措辞导致与 anthropic / openai 自带的错误文案撞车。
         for unrelated in [
             "HTTP 500: internal server error",
-            "流式读取失败: connection reset",
-            "Anthropic 流式错误: rate_limit_exceeded",
-            "Responses 流式错误: invalid_request",
-            "API 返回错误 401: invalid api key",
-            "响应解析失败: expected ident at column 5",
+            "Failed to read stream: connection reset",
+            "Anthropic streaming error: rate_limit_exceeded",
+            "Responses streaming error: invalid_request",
+            "API returned error 401: invalid api key",
+            "Failed to parse response: expected ident at column 5",
             "",
         ] {
             assert!(
@@ -1229,30 +1220,16 @@ mod tests {
 
     #[test]
     fn is_empty_llm_response_error_prefix_constant_is_load_bearing() {
-        // EMPTY_LLM_RESPONSE_ERROR_PREFIX 是 helper 与 recognizer 共用的契约
-        // 字符串。把它改了就要同步改两边——这条断言是个 wake-up，提醒读者
-        // 这个常量不是装饰品。
-        assert_eq!(super::EMPTY_LLM_RESPONSE_ERROR_PREFIX, "LLM 响应为空（");
+        assert_eq!(
+            super::EMPTY_LLM_RESPONSE_ERROR_PREFIX,
+            "LLM response was empty ("
+        );
     }
 
     // --- finalize_responses_sse_accumulated tests --------------------------
-    //
-    // OpenAI Responses SSE 在 stream 结束（done）或意外断流（eos）时，
-    // 我们手里同时握有：
-    //   - accumulated：从 delta 事件里逐段拼起来的正文
-    //   - fallback_content：completed/done 事件里附带的最终 content（可选）
-    // finalizer 的合同是：
-    //   1) accumulated 优先（含义最权威，且包含逐 token 流出的内容），
-    //      非空就直接返回，且**不** trim——和 ensure_non_empty_llm_content
-    //      对齐：只校验 trim 后是否为空，但返回原始字符串以保留前后空白。
-    //   2) accumulated 为空才退回到事件里挂的 fallback_content；同样要求非空。
-    //   3) 两者皆空再走 ensure_non_empty_llm_content，借它统一拼出
-    //      EMPTY_LLM_RESPONSE_ERROR_PREFIX 起头的错误，让 recognizer 能识别。
 
     #[test]
     fn finalize_responses_sse_accumulated_returns_accumulated_when_non_empty() {
-        // accumulated 存在就赢——即使 fallback 也非空也要被忽略。否则会出现
-        // 流式内容被 done 事件的截断 fallback 覆盖，丢字。
         let endpoint = make_test_endpoint();
         let result = finalize_responses_sse_accumulated(
             "hello".to_string(),
@@ -1264,14 +1241,12 @@ mod tests {
         assert_eq!(
             result.as_deref(),
             Ok("hello"),
-            "accumulated 非空时必须直接返回 accumulated 原值，忽略 fallback"
+            "when accumulated is non-empty it must be returned directly, ignoring fallback"
         );
     }
 
     #[test]
     fn finalize_responses_sse_accumulated_preserves_accumulated_whitespace() {
-        // 与 ensure_non_empty_llm_content 行为一致：判空用 trim，但返回原字符串。
-        // 流式拼接出来的前后空白可能是有意义的（例如续写场景）。
         let endpoint = make_test_endpoint();
         let result = finalize_responses_sse_accumulated(
             "  hi  ".to_string(),
@@ -1283,14 +1258,12 @@ mod tests {
         assert_eq!(
             result.as_deref(),
             Ok("  hi  "),
-            "accumulated 必须 verbatim 返回，不允许被 trim 改写"
+            "accumulated must be returned verbatim without trim"
         );
     }
 
     #[test]
     fn finalize_responses_sse_accumulated_falls_back_when_accumulated_empty() {
-        // 部分 provider 在 delta 里只丢 reasoning，正文只在 completed/done
-        // 事件里给一次。accumulated 为空时必须用 fallback 兜底。
         let endpoint = make_test_endpoint();
         let result = finalize_responses_sse_accumulated(
             String::new(),
@@ -1302,14 +1275,12 @@ mod tests {
         assert_eq!(
             result.as_deref(),
             Ok("from_event"),
-            "accumulated 为空、fallback 非空时必须返回 fallback 原值"
+            "when accumulated is empty and fallback is non-empty, return fallback"
         );
     }
 
     #[test]
     fn finalize_responses_sse_accumulated_ignores_empty_fallback() {
-        // fallback 是 Some 但内容为空，等价于没有 fallback。要走空响应错误，
-        // 而不是返回 Ok("")——后者会让上游误以为模型给了空字符串答案。
         let endpoint = make_test_endpoint();
         let result = finalize_responses_sse_accumulated(
             String::new(),
@@ -1318,17 +1289,16 @@ mod tests {
             "openai_responses_sse_done",
         );
 
-        let err = result.expect_err("accumulated 与 fallback 都为空时必须 Err");
+        let err = result.expect_err("must Err when accumulated and fallback are both empty");
         assert!(
             super::is_empty_llm_response_error(&err),
-            "错误必须能被 is_empty_llm_response_error 识别，否则 polish fallback 短路失效；got {:?}",
+            "error must be recognized by is_empty_llm_response_error; got {:?}",
             err
         );
     }
 
     #[test]
     fn finalize_responses_sse_accumulated_ignores_none_fallback() {
-        // 完全没有 fallback 也是常见场景（流被中断、只能用 eos 兜底）。
         let endpoint = make_test_endpoint();
         let result = finalize_responses_sse_accumulated(
             String::new(),
@@ -1337,19 +1307,16 @@ mod tests {
             "openai_responses_sse_eos",
         );
 
-        let err = result.expect_err("accumulated 空、fallback None 时必须 Err");
+        let err = result.expect_err("must Err when accumulated is empty and fallback is None");
         assert!(
             super::is_empty_llm_response_error(&err),
-            "错误必须能被 is_empty_llm_response_error 识别；got {:?}",
+            "error must be recognized by is_empty_llm_response_error; got {:?}",
             err
         );
     }
 
     #[test]
     fn finalize_responses_sse_accumulated_error_carries_provider_model_and_source() {
-        // 错误信息要能在日志里直接定位是哪个 provider/model/调用点出问题的。
-        // 这条断言把三段都钉死，避免有人把 source 标签替换成更"通用"的措辞
-        // 而让 grep 失效。
         let endpoint = make_test_endpoint();
         let err = finalize_responses_sse_accumulated(
             String::new(),
@@ -1357,23 +1324,23 @@ mod tests {
             &endpoint,
             "openai_responses_sse_done",
         )
-        .expect_err("空响应必须 Err");
+        .expect_err("empty response must Err");
 
         assert!(
             err.contains(&endpoint.provider),
-            "错误必须包含 provider {:?}; got {:?}",
+            "error must contain provider {:?}; got {:?}",
             endpoint.provider,
             err
         );
         assert!(
             err.contains(&endpoint.model),
-            "错误必须包含 model {:?}; got {:?}",
+            "error must contain model {:?}; got {:?}",
             endpoint.model,
             err
         );
         assert!(
             err.contains("openai_responses_sse_done"),
-            "错误必须包含 source 标签 verbatim，方便日志/grep 定位; got {:?}",
+            "error must contain source label verbatim; got {:?}",
             err
         );
     }

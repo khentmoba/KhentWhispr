@@ -22,7 +22,7 @@ from server_common import (
 )
 
 
-logger = setup_rotating_logger(__name__, "r2t2_asr_server.log", "R2T2服务器")
+logger = setup_rotating_logger(__name__, "r2t2_asr_server.log", "R2T2 server")
 
 
 class R2T2ASRServer(BaseASRServer):
@@ -124,7 +124,7 @@ class R2T2ASRServer(BaseASRServer):
         self.initialized = False
         self._gpu_suspended = True
         self.vad_model = vad
-        self.logger.info("R2T2 空闲超时，已卸载 GPU 模型；FireRedVAD 仍留在 CPU")
+        self.logger.info("R2T2 idle timeout reached; unloaded the GPU model; FireRedVAD remains on CPU")
         return True
 
     def _close_runtime(self):
@@ -144,7 +144,7 @@ class R2T2ASRServer(BaseASRServer):
         for backend in preferred:
             candidate = None
             try:
-                logger.info("R2T2 %s 后端开始加载与预热", backend)
+                logger.info("R2T2 %s backend loading and warmup started", backend)
                 backend_root = runtime_root / backend
                 candidate = NativeRuntime(
                     model_path,
@@ -174,7 +174,7 @@ class R2T2ASRServer(BaseASRServer):
                 return
             except Exception as exc:
                 logger.warning(
-                    "R2T2 %s 后端加载或预热失败 (%s)", backend, type(exc).__name__
+                    "R2T2 %s backend loading or warmup failed (%s)", backend, type(exc).__name__
                 )
                 if candidate is not None:
                     try:
@@ -189,7 +189,7 @@ class R2T2ASRServer(BaseASRServer):
         if getattr(self, "initialized", False):
             return {
                 "success": True,
-                "message": "模型已初始化",
+                "message": "Model is initialized",
                 "engine": self.engine,
                 "backend": self.backend,
                 **self._get_gpu_device_info(),
@@ -197,7 +197,7 @@ class R2T2ASRServer(BaseASRServer):
 
         started = time.perf_counter()
         resuming = getattr(self, "_gpu_suspended", False)
-        self.logger.info("R2T2 %s开始", "空闲恢复" if resuming else "初始化")
+        self.logger.info("R2T2 %s started", "idle resume" if resuming else "initialization")
         if getattr(self, "native", None) is not None:
             self._close_runtime()
         self.native = None
@@ -208,7 +208,7 @@ class R2T2ASRServer(BaseASRServer):
             self.initialized = False
             return {
                 "success": False,
-                "error": "R2T2 Q8 模型未下载或校验失败",
+                "error": "R2T2 Q8 model not downloaded or failed validation",
                 "type": "models_not_downloaded",
                 "engine": self.engine,
             }
@@ -229,14 +229,14 @@ class R2T2ASRServer(BaseASRServer):
             self._gpu_suspended = False
             self._last_load_error = None
             self.logger.info(
-                "R2T2 %s完成，后端: %s，耗时 %.3f 秒",
-                "空闲恢复" if resuming else "初始化",
+                "R2T2 %s completed; backend: %s; elapsed: %.3f seconds",
+                "idle resume" if resuming else "initialization",
                 self.backend,
                 time.perf_counter() - started,
             )
             return {
                 "success": True,
-                "message": "R2T2 初始化成功",
+                "message": "R2T2 initialized successfully",
                 "model_loaded": True,
                 "engine": self.engine,
                 "backend": self.backend,
@@ -249,10 +249,10 @@ class R2T2ASRServer(BaseASRServer):
             self.stream = None
             self.initialized = False
             self._last_load_error = "R2T2 initialization failed"
-            self.logger.error("R2T2 初始化失败")
+            self.logger.error("R2T2 initialization failed")
             return {
                 "success": False,
-                "error": "R2T2 初始化失败",
+                "error": "R2T2 initialization failed",
                 "type": "init_error",
                 "engine": self.engine,
             }
@@ -296,7 +296,7 @@ class R2T2ASRServer(BaseASRServer):
         return {
             "success": False,
             "type": "stream_error",
-            "error": "R2T2 流式命令失败",
+            "error": "R2T2 streaming command failed",
             "engine": self.engine,
             "backend": getattr(self, "backend", "unknown"),
         }
@@ -378,7 +378,7 @@ class R2T2ASRServer(BaseASRServer):
                 self._stream_inference_ms = 0.0
             return self._stream_response(response)
         except Exception:
-            self.logger.error("R2T2 流式命令失败")
+            self.logger.error("R2T2 streaming command failed")
             return self._stream_error()
 
     @staticmethod
@@ -450,7 +450,7 @@ class R2T2ASRServer(BaseASRServer):
         if self._stream_is_active():
             return {
                 "success": False,
-                "error": "R2T2 流式会话正在进行",
+                "error": "An R2T2 streaming session is already in progress",
                 "type": "stream_busy",
                 "engine": self.engine,
                 "backend": self.backend,
@@ -511,10 +511,10 @@ class R2T2ASRServer(BaseASRServer):
                     segmented.reset()
                 except Exception:
                     pass
-            self.logger.error("R2T2 离线转录失败")
+            self.logger.error("R2T2 offline transcription failed")
             return {
                 "success": False,
-                "error": "R2T2 离线转录失败",
+                "error": "R2T2 offline transcription failed",
                 "type": "transcription_error",
                 "engine": self.engine,
                 "backend": self.backend,

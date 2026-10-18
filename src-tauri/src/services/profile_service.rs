@@ -60,6 +60,21 @@ pub fn normalize_profile(profile: &mut UserProfile) -> ProfileCleanupStats {
     profile.ai_polish_screen_context_enabled = false;
     profile.assistant_screen_context_enabled = false;
     profile.selection_assistant.enabled = false;
+    let legacy_translation_target = match profile.selection_assistant.translation_target.as_str() {
+        "简体中文" => Some("Chinese (Simplified)"),
+        "繁體中文" => Some("Chinese (Traditional)"),
+        "日本語" => Some("Japanese"),
+        "한국어" => Some("Korean"),
+        "Français" => Some("French"),
+        "Deutsch" => Some("German"),
+        "Español" => Some("Spanish"),
+        "Русский" => Some("Russian"),
+        "Português" => Some("Portuguese"),
+        _ => None,
+    };
+    if let Some(target) = legacy_translation_target {
+        profile.selection_assistant.translation_target = target.to_string();
+    }
     profile.web_search.enabled = false;
     profile.jev = Default::default();
     for rule in &mut profile.app_profile_rules {
@@ -97,7 +112,7 @@ fn migrate_custom_provider(profile: &mut UserProfile) {
     }
     let provider = CustomProvider {
         id: "custom_migrated".to_string(),
-        name: "自定义兼容".to_string(),
+        name: "Custom Compatible".to_string(),
         base_url,
         model,
         api_format: ApiFormat::default(),
@@ -110,7 +125,7 @@ fn migrate_custom_provider(profile: &mut UserProfile) {
 }
 
 fn serialize_profile(profile: &UserProfile) -> Result<String, String> {
-    serde_json::to_string_pretty(profile).map_err(|e| format!("序列化失败: {}", e))
+    serde_json::to_string_pretty(profile).map_err(|e| format!("Failed to serialize profile: {}", e))
 }
 
 struct PendingProfileSave {
@@ -149,8 +164,8 @@ async fn write_profile_async(profile: &UserProfile) -> Result<(), String> {
     let data = serialize_profile(profile)?;
     tokio::task::spawn_blocking(move || paths::atomic_write(&path, data.as_bytes()))
         .await
-        .map_err(|e| format!("写入任务异常: {}", e))?
-        .map_err(|e| format!("写入失败: {}", e))
+        .map_err(|e| format!("Write task failed: {}", e))?
+        .map_err(|e| format!("Write failed: {}", e))
 }
 
 pub fn schedule_profile_save(profile: UserProfile) {
@@ -891,6 +906,36 @@ mod tests {
         assert!(!profile.selection_assistant.enabled);
         assert!(!profile.web_search.enabled);
         assert!(!profile.jev.enabled);
+    }
+
+    #[test]
+    fn migration_only_relabels_known_built_in_translation_targets() {
+        for (stored, expected) in [
+            ("简体中文", "Chinese (Simplified)"),
+            ("繁體中文", "Chinese (Traditional)"),
+            ("日本語", "Japanese"),
+            ("한국어", "Korean"),
+            ("Français", "French"),
+            ("Deutsch", "German"),
+            ("Español", "Spanish"),
+            ("Русский", "Russian"),
+            ("Português", "Portuguese"),
+        ] {
+            let mut profile = UserProfile::default();
+            profile.selection_assistant.translation_target = stored.to_string();
+            profile.custom_prompt = Some("用户编写的自定义提示词".to_string());
+            normalize_profile(&mut profile);
+            assert_eq!(profile.selection_assistant.translation_target, expected);
+            assert_eq!(
+                profile.custom_prompt.as_deref(),
+                Some("用户编写的自定义提示词")
+            );
+        }
+
+        let mut profile = UserProfile::default();
+        profile.selection_assistant.translation_target = "Klingon".to_string();
+        normalize_profile(&mut profile);
+        assert_eq!(profile.selection_assistant.translation_target, "Klingon");
     }
 
     #[test]

@@ -30,7 +30,7 @@ pub fn select_engine_archive(
         if !placeholder.exists() {
             fs::File::create(placeholder).map_err(|error| {
                 format!(
-                    "无法创建开发用引擎占位文件 {}: {error}",
+                    "Failed to create engine placeholder file for development {}: {error}",
                     placeholder.display()
                 )
             })?;
@@ -44,7 +44,7 @@ pub fn select_engine_archive(
     }
 
     Err(format!(
-        "正式构建需要非空的 {}。请先运行 `uv run --locked python scripts/build_engine.py`，或复用已经验证过的归档。",
+        "A non-empty {} is required for release builds. Run `uv run --locked python scripts/build_engine.py` first, or reuse a previously verified archive.",
         release_archive.display()
     ))
 }

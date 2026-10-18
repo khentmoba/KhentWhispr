@@ -12,9 +12,10 @@ use crate::state::{
 };
 use crate::utils::AppError;
 
-pub(crate) const RECORDING_NOT_READY_ERROR: &str = "语音识别服务尚未就绪，请等待初始化完成";
-pub(crate) const RECORDING_ALREADY_ACTIVE_ERROR: &str = "已有录音正在进行中";
-pub(crate) const RECORDING_START_CANCELLED_ERROR: &str = "录音启动已取消";
+pub(crate) const RECORDING_NOT_READY_ERROR: &str =
+    "Speech recognition service is not ready yet; please wait for initialization to finish";
+pub(crate) const RECORDING_ALREADY_ACTIVE_ERROR: &str = "A recording is already in progress";
+pub(crate) const RECORDING_START_CANCELLED_ERROR: &str = "Recording startup was cancelled";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CaptureStartErrorResolution {
@@ -192,7 +193,10 @@ pub(crate) async fn start_recording_with_start_owner(
     }
     let capture_result = match capture_task.await {
         Ok(result) => result,
-        Err(err) => Err(AppError::Audio(format!("录音启动任务异常结束: {}", err))),
+        Err(err) => Err(AppError::Audio(format!(
+            "Recording startup task terminated unexpectedly: {}",
+            err
+        ))),
     };
 
     // Cancellation wins over a simultaneous capture error. This keeps a
@@ -509,7 +513,7 @@ pub async fn test_microphone(state: tauri::State<'_, AppState>) -> Result<String
     let name = state.selected_input_device_name();
     tokio::task::spawn_blocking(move || audio_service::test_microphone_sync(name))
         .await
-        .map_err(|e| AppError::Audio(format!("麦克风测试任务失败: {}", e)))?
+        .map_err(|e| AppError::Audio(format!("Microphone test task failed: {}", e)))?
 }
 
 #[tauri::command]
@@ -519,7 +523,7 @@ pub async fn list_input_devices(
     let name = state.selected_input_device_name();
     tokio::task::spawn_blocking(move || audio_service::list_input_devices_sync(name))
         .await
-        .map_err(|e| AppError::Audio(format!("设备枚举任务失败: {}", e)))?
+        .map_err(|e| AppError::Audio(format!("Device enumeration task failed: {}", e)))?
 }
 
 #[tauri::command]
@@ -570,7 +574,7 @@ pub async fn set_input_method(
             Ok(())
         }
         other => Err(AppError::Other(format!(
-            "未知的输入方式: {}，可选值: sendInput, clipboard",
+            "Unknown input method: {}. Valid values: sendInput, clipboard",
             other
         ))),
     }

@@ -165,7 +165,7 @@ fn probe_system_hotkey_conflict(spec: &HotkeySpec) -> Option<String> {
         None
     } else {
         Some(format!(
-            "快捷键 {} 可能已被其他程序占用，部分情况下可能同时触发两个程序的功能",
+            "Shortcut {} may already be used by another application and could trigger both actions",
             spec.label()
         ))
     }
@@ -326,7 +326,7 @@ impl ShortcutModifiers {
             existing.family() == key.family() && (existing.is_generic() || key.is_generic())
         }) {
             return Err(AppError::Other(format!(
-                "快捷键格式无效：{} 不能与同类左右修饰键同时使用",
+                "Invalid shortcut format: {} cannot be combined with left/right modifiers of the same family",
                 key.label()
             )));
         }
@@ -459,19 +459,22 @@ fn emit_recording_error(app_handle: &tauri::AppHandle, message: &str) {
 
 fn hotkey_warning_message(shortcut_label: &str) -> Option<String> {
     if shortcut_label.contains("Win") {
-        return Some("部分 Win 组合键可能被系统或其他软件保留。".to_string());
+        return Some(
+            "Some Win key combinations may be reserved by Windows or other applications."
+                .to_string(),
+        );
     }
     if shortcut_label == "Alt" {
-        return Some("独立 Alt 热键会阻止菜单栏激活。".to_string());
+        return Some("Using Alt alone prevents menu bar activation.".to_string());
     }
     None
 }
 
 fn hotkey_kind_label(kind: HotkeyKind) -> &'static str {
     match kind {
-        HotkeyKind::Dictation => "说话",
-        HotkeyKind::Translation => "翻译",
-        HotkeyKind::Assistant => "助手",
+        HotkeyKind::Dictation => "dictation",
+        HotkeyKind::Translation => "translation",
+        HotkeyKind::Assistant => "assistant",
     }
 }
 
@@ -497,7 +500,7 @@ fn ensure_hotkey_not_conflicting(
             if let Some(state) = state {
                 if state.spec.label() == candidate_label {
                     return Err(AppError::Other(format!(
-                        "快捷键 {} 已被{}热键占用，请使用不同的组合键",
+                        "Shortcut {} is already assigned to the {} hotkey; please choose a different combination",
                         candidate_label,
                         hotkey_kind_label(other_kind)
                     )));
@@ -1127,7 +1130,9 @@ fn ensure_reg_hotkey_backend() -> Result<(), AppError> {
                                     result_tx,
                                 } => {
                                     if !state.gate.registered.load(Ordering::Acquire) {
-                                        let _ = result_tx.send(Err("热键注册已失效".into()));
+                                        let _ = result_tx.send(Err(
+                                            "Hotkey registration is no longer valid".into(),
+                                        ));
                                         continue;
                                     }
                                     let ok = unsafe {
@@ -1139,7 +1144,7 @@ fn ensure_reg_hotkey_backend() -> Result<(), AppError> {
                                     } else {
                                         let err = std::io::Error::last_os_error();
                                         let _ = result_tx
-                                            .send(Err(format!("RegisterHotKey 失败: {}", err)));
+                                            .send(Err(format!("RegisterHotKey failed: {}", err)));
                                     }
                                 }
                                 RegHotkeyCmd::Unregister { id } => {
@@ -1164,11 +1169,16 @@ fn ensure_reg_hotkey_backend() -> Result<(), AppError> {
                 unsafe { UnregisterHotKey(std::ptr::null_mut(), id) };
             }
         })
-        .map_err(|e| AppError::Other(format!("启动 RegisterHotKey 线程失败: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Failed to start RegisterHotKey thread: {}", e)))?;
 
     let thread_id = ready_rx
         .recv_timeout(std::time::Duration::from_secs(2))
-        .map_err(|e| AppError::Other(format!("等待 RegisterHotKey 就绪超时: {}", e)))?
+        .map_err(|e| {
+            AppError::Other(format!(
+                "Timed out waiting for RegisterHotKey thread: {}",
+                e
+            ))
+        })?
         .map_err(AppError::Other)?;
 
     let mut guard = match reg_backend_slot().lock() {
@@ -1189,9 +1199,11 @@ fn register_via_reg_hotkey(
 ) -> Result<(), AppError> {
     ensure_reg_hotkey_backend()?;
 
-    let id = state
-        .reg_hotkey_id
-        .ok_or_else(|| AppError::Other("RegisterHotKey ID 已用尽，使用低层键盘钩子".into()))?;
+    let id = state.reg_hotkey_id.ok_or_else(|| {
+        AppError::Other(
+            "RegisterHotKey IDs exhausted; falling back to low-level keyboard hook".into(),
+        )
+    })?;
     let win_mods = shortcut_mods_to_reg_mods(mods);
     let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
 
@@ -1204,7 +1216,7 @@ fn register_via_reg_hotkey(
             state,
             result_tx,
         })
-        .map_err(|_| AppError::Other("RegisterHotKey 命令通道已关闭".into()))?;
+        .map_err(|_| AppError::Other("RegisterHotKey command channel closed".into()))?;
 
     // Wake the backend thread
     let tid = {
@@ -1220,7 +1232,7 @@ fn register_via_reg_hotkey(
 
     result_rx
         .recv_timeout(std::time::Duration::from_secs(2))
-        .map_err(|_| AppError::Other("RegisterHotKey 注册超时".into()))?
+        .map_err(|_| AppError::Other("RegisterHotKey registration timed out".into()))?
         .map_err(AppError::Other)
 }
 
@@ -1323,7 +1335,7 @@ fn install_hook_on_thread() -> Result<HookHandle, String> {
     };
     if hook.is_null() {
         Err(format!(
-            "安装键盘钩子失败: {}",
+            "Failed to install keyboard hook: {}",
             std::io::Error::last_os_error()
         ))
     } else {
@@ -1386,11 +1398,11 @@ fn ensure_unified_hotkey_monitor(_app_handle: tauri::AppHandle) -> Result<(), Ap
 
             unsafe { UnhookWindowsHookEx(hook_handle) };
         })
-        .map_err(|e| AppError::Other(format!("启动热键监听线程失败: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("Failed to start hotkey listener thread: {}", e)))?;
 
     let thread_id = ready_rx
         .recv_timeout(std::time::Duration::from_secs(2))
-        .map_err(|e| AppError::Other(format!("等待热键监听就绪超时: {}", e)))?
+        .map_err(|e| AppError::Other(format!("Timed out waiting for hotkey listener: {}", e)))?
         .map_err(AppError::Other)?;
 
     let mut guard = match monitor_slot().lock() {
@@ -1423,7 +1435,7 @@ fn force_release_hotkey(state: &UnifiedHookState) {
 #[cfg(not(target_os = "windows"))]
 fn ensure_unified_hotkey_monitor(_app_handle: tauri::AppHandle) -> Result<(), AppError> {
     Err(AppError::Other(
-        "当前系统暂不支持低层键盘钩子热键".to_string(),
+        "Low-level keyboard hook hotkeys are not supported on this OS".to_string(),
     ))
 }
 
@@ -1558,7 +1570,8 @@ fn normalize_shortcut(raw: &str) -> Result<HotkeySpec, AppError> {
     for token in raw.split('+').map(str::trim) {
         if token.is_empty() {
             return Err(AppError::Other(
-                "快捷键格式无效：存在空白项，请重新设置".to_string(),
+                "Invalid shortcut format: contains an empty key token; please set it again"
+                    .to_string(),
             ));
         }
 
@@ -1583,7 +1596,7 @@ fn normalize_shortcut(raw: &str) -> Result<HotkeySpec, AppError> {
         } else {
             if main_key.is_some() {
                 return Err(AppError::Other(
-                    "快捷键格式无效：只能包含一个主键（例如 Ctrl+Win+R）".to_string(),
+                    "Invalid shortcut format: only one main key is allowed (for example Ctrl+Win+R)".to_string(),
                 ));
             }
             main_key = Some(token.to_string());
@@ -1603,7 +1616,7 @@ fn normalize_shortcut(raw: &str) -> Result<HotkeySpec, AppError> {
 
         #[cfg(target_os = "windows")]
         let main_vk = parse_main_key_to_vk(mk)
-            .ok_or_else(|| AppError::Other(format!("无法识别的按键：{}", mk)))?;
+            .ok_or_else(|| AppError::Other(format!("Unrecognized key: {}", mk)))?;
         #[cfg(not(target_os = "windows"))]
         let main_vk = 0u16;
 
@@ -1621,7 +1634,7 @@ fn normalize_shortcut(raw: &str) -> Result<HotkeySpec, AppError> {
         // Pure modifier-only hotkey
         if modifiers.is_empty() {
             return Err(AppError::Other(
-                "快捷键格式无效：请至少指定一个按键".to_string(),
+                "Invalid shortcut format: please specify at least one key".to_string(),
             ));
         }
 
@@ -1678,9 +1691,9 @@ fn rollback_hotkey_error(
 ) -> AppError {
     match restore_hotkey_registrations(app_handle, previous) {
         Ok(()) => error,
-        Err(restore_error) => {
-            AppError::Other(format!("{error}；恢复原快捷键失败: {restore_error}"))
-        }
+        Err(restore_error) => AppError::Other(format!(
+            "{error}; failed to restore previous shortcut: {restore_error}"
+        )),
     }
 }
 
@@ -1881,7 +1894,7 @@ pub async fn register_custom_hotkey(
     });
 
     log::info!("自定义快捷键 {} 已注册（{}）", label, backend_label);
-    Ok(format!("快捷键 {} 已注册", label))
+    Ok(format!("Shortcut {} registered", label))
 }
 
 #[tauri::command]
@@ -1905,7 +1918,7 @@ pub(crate) fn register_translation_hotkey_inner(
         if shortcut.is_some() {
             ensure_unified_hotkey_monitor(app_handle)?;
         }
-        return Ok("翻译热键已更新".to_string());
+        return Ok("Translation hotkey updated".to_string());
     }
 
     #[cfg(target_os = "windows")]
@@ -1943,9 +1956,9 @@ pub(crate) fn register_translation_hotkey_inner(
         let label = next_state
             .as_ref()
             .map(|state| state.spec.label().to_string())
-            .unwrap_or_else(|| "未设置".to_string());
+            .unwrap_or_else(|| "Not set".to_string());
         log::info!("翻译热键已更新: {}", label);
-        Ok(format!("翻译热键已更新: {}", label))
+        Ok(format!("Translation hotkey updated: {}", label))
     }
 }
 
@@ -1970,7 +1983,7 @@ pub(crate) fn register_assistant_hotkey_inner(
         if shortcut.is_some() {
             ensure_unified_hotkey_monitor(app_handle)?;
         }
-        return Ok("助手热键已更新".to_string());
+        return Ok("Assistant hotkey updated".to_string());
     }
 
     #[cfg(target_os = "windows")]
@@ -2008,9 +2021,9 @@ pub(crate) fn register_assistant_hotkey_inner(
         let label = next_state
             .as_ref()
             .map(|state| state.spec.label().to_string())
-            .unwrap_or_else(|| "未设置".to_string());
+            .unwrap_or_else(|| "Not set".to_string());
         log::info!("助手热键已更新: {}", label);
-        Ok(format!("助手热键已更新: {}", label))
+        Ok(format!("Assistant hotkey updated: {}", label))
     }
 }
 
@@ -2049,7 +2062,7 @@ pub async fn unregister_all_hotkeys(app_handle: tauri::AppHandle) -> Result<Stri
     });
 
     log::info!("所有全局快捷键已注销");
-    Ok("所有全局快捷键已注销".to_string())
+    Ok("All global shortcuts unregistered".to_string())
 }
 
 #[tauri::command]
@@ -2394,6 +2407,6 @@ mod tests {
         let error = normalize_shortcut("Ctrl+LeftCtrl")
             .expect_err("generic and side-specific Ctrl should conflict")
             .to_string();
-        assert!(error.contains("同类左右修饰键"));
+        assert!(error.contains("left/right modifiers of the same family"));
     }
 }

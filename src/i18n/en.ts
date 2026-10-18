@@ -1,6 +1,4 @@
-import type { TranslationSchema } from "./zh";
-
-const en: TranslationSchema = {
+const en = {
   common: {
     copy: "Copy",
     copied: "Copied",

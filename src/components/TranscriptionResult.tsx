@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Copy, Check } from "lucide-react";
+import { Loader2, Copy, Check, Zap } from "lucide-react";
 import type { EditGrabStatus, TranscriptionTiming } from "@/types";
 
 interface TranscriptionResultProps {
@@ -135,7 +135,7 @@ export default function TranscriptionResult({
                   <span className="result-lang-tag">{detectedLanguage}</span>
                 )}
                 {hasStats && paceDisplay && (
-                  <span className="result-pace-tag">⚡ {paceDisplay}</span>
+                  <span className="result-pace-tag"><Zap size={11} aria-hidden="true" /> {paceDisplay}</span>
                 )}
                 {hasStats && t("result.stats", { chars: charCount, duration: durationSec.toFixed(1), cpm: Math.round((charCount / durationSec) * 60) })}
                 {latencyParts.length > 0 && (
