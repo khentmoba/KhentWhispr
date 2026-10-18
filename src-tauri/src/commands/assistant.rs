@@ -1,0 +1,566 @@
+use std::future::Future;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+use tauri_plugin_keyring::KeyringExt;
+
+use crate::services::{assistant_service, llm_provider, profile_service};
+use crate::state::app_state::AssistantChatTask;
+use crate::state::user_profile::WebSearchProvider;
+use crate::state::AppState;
+use crate::utils::AppError;
+
+const MAX_CHAT_TURNS: usize = 12;
+const MAX_CHAT_MESSAGE_CHARS: usize = 6_000;
+const MAX_CHAT_INITIAL_RESPONSE_CHARS: usize = 12_000;
+const MAX_CHAT_CONTEXT_CHARS: usize = 24_000;
+const ASSISTANT_RETRY_TIMEOUT_SECS: u64 = 180;
+
+#[tauri::command]
+pub async fn set_assistant_hotkey(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    shortcut: Option<String>,
+) -> Result<(), String> {
+    let normalized = shortcut
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    crate::commands::hotkey::register_assistant_hotkey_inner(app_handle, normalized.clone())
+        .map_err(|err| err.to_string())?;
+
+    profile_service::update_profile_and_schedule(state.inner(), |profile| {
+        profile.assistant_hotkey = normalized;
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_assistant_system_prompt(
+    state: tauri::State<'_, AppState>,
+    prompt: Option<String>,
+) -> Result<(), String> {
+    let prompt = prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    profile_service::update_profile_and_schedule(state.inner(), |profile| {
+        profile.assistant_system_prompt = prompt;
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_assistant_screen_context_enabled(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    profile_service::update_profile_and_schedule(state.inner(), |profile| {
+        profile.assistant_screen_context_enabled = enabled;
+        profile.ai_polish_screen_context_enabled = enabled;
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn continue_assistant_conversation(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    session_id: u64,
+    initial_request: String,
+    initial_response: String,
+    history: Vec<assistant_service::AssistantConversationTurn>,
+    message: String,
+) -> Result<String, AppError> {
+    let initial_request =
+        validate_chat_text("Initial request", initial_request, MAX_CHAT_MESSAGE_CHARS)?;
+    let initial_response = validate_chat_text(
+        "Initial response",
+        initial_response,
+        MAX_CHAT_INITIAL_RESPONSE_CHARS,
+    )?;
+    let message = validate_chat_text("Message", message, MAX_CHAT_MESSAGE_CHARS)?;
+    let history = validate_chat_history(history)?;
+    if session_id == 0 {
+        return Err(AppError::Other("Invalid assistant session ID".to_string()));
+    }
+
+    let (generation, cancel_rx) = begin_assistant_chat_task(state.inner());
+    let result = tokio::select! {
+        result = assistant_service::continue_conversation(
+        state.inner(),
+        &initial_request,
+        &initial_response,
+        &history,
+        &message,
+        &app_handle,
+        session_id,
+        ) => result,
+        _ = cancel_rx => Err(AppError::Other("Assistant conversation was canceled".to_string())),
+    };
+    clear_assistant_chat_task(state.inner(), generation);
+    result
+}
+
+#[tauri::command]
+pub fn cancel_assistant_conversation(state: tauri::State<'_, AppState>) -> bool {
+    cancel_assistant_chat_task(state.inner())
+}
+
+#[tauri::command]
+pub async fn retry_assistant_request(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    session_id: u64,
+    request: String,
+) -> Result<String, AppError> {
+    if session_id == 0 {
+        return Err(AppError::Other("Invalid assistant session ID".to_string()));
+    }
+    let request = validate_chat_text("Assistant request", request, MAX_CHAT_MESSAGE_CHARS)?;
+    let (generation, cancel_rx) = begin_assistant_chat_task(state.inner());
+    let timeout_message = format!(
+        "Assistant retry timed out after {} seconds",
+        ASSISTANT_RETRY_TIMEOUT_SECS
+    );
+    let result = run_cancellable_assistant_task(
+        assistant_service::generate_content(state.inner(), &request, None, &app_handle, session_id),
+        cancel_rx,
+        Duration::from_secs(ASSISTANT_RETRY_TIMEOUT_SECS),
+        &timeout_message,
+        "Assistant request was canceled",
+    )
+    .await;
+    clear_assistant_chat_task(state.inner(), generation);
+    result
+}
+
+pub(crate) async fn run_cancellable_assistant_task<T, F>(
+    future: F,
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    timeout: Duration,
+    timeout_message: &str,
+    cancel_message: &str,
+) -> Result<T, AppError>
+where
+    F: Future<Output = Result<T, AppError>>,
+{
+    tokio::select! {
+        result = future => result,
+        _ = tokio::time::sleep(timeout) => Err(AppError::Other(timeout_message.to_string())),
+        _ = cancel_rx => Err(AppError::Other(cancel_message.to_string())),
+    }
+}
+
+#[tauri::command]
+pub async fn open_assistant_source(url: String) -> Result<String, AppError> {
+    let target = validate_assistant_source_url(&url)?;
+    webbrowser::open(target.as_str())
+        .map_err(|err| AppError::Other(format!("Failed to open source: {err}")))?;
+    Ok("Opened source in the browser".to_string())
+}
+
+fn validate_chat_text(label: &str, value: String, max_chars: usize) -> Result<String, AppError> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Err(AppError::Other(format!("{label} cannot be empty")));
+    }
+    if value.chars().count() > max_chars {
+        return Err(AppError::Other(format!(
+            "{label} is too long (maximum {max_chars} characters)"
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_chat_history(
+    history: Vec<assistant_service::AssistantConversationTurn>,
+) -> Result<Vec<assistant_service::AssistantConversationTurn>, AppError> {
+    if history.len() > MAX_CHAT_TURNS {
+        return Err(AppError::Other(format!(
+            "Conversation history is too long (maximum {MAX_CHAT_TURNS} turns)"
+        )));
+    }
+    let mut total_chars = 0;
+    let mut validated = Vec::with_capacity(history.len());
+    for mut turn in history {
+        if !matches!(turn.role.as_str(), "user" | "assistant") {
+            return Err(AppError::Other(
+                "Conversation roles must be either user or assistant".to_string(),
+            ));
+        }
+        turn.content = validate_chat_text("History message", turn.content, MAX_CHAT_MESSAGE_CHARS)?;
+        total_chars += turn.content.chars().count();
+        validated.push(turn);
+    }
+    while total_chars > MAX_CHAT_CONTEXT_CHARS && validated.len() > 1 {
+        total_chars -= validated[0].content.chars().count();
+        validated.remove(0);
+    }
+    Ok(validated)
+}
+
+pub(crate) fn begin_assistant_chat_task(
+    state: &AppState,
+) -> (u64, tokio::sync::oneshot::Receiver<()>) {
+    let mut current = state.ui.assistant_chat_cancel.lock();
+    let generation = state
+        .ui
+        .assistant_chat_generation
+        .fetch_add(1, Ordering::AcqRel)
+        + 1;
+    let (cancel, cancel_rx) = tokio::sync::oneshot::channel();
+    let previous = current.replace(AssistantChatTask { generation, cancel });
+    drop(current);
+    if let Some(previous) = previous {
+        let _ = previous.cancel.send(());
+    }
+    (generation, cancel_rx)
+}
+
+pub(crate) fn clear_assistant_chat_task(state: &AppState, generation: u64) {
+    let mut task = state.ui.assistant_chat_cancel.lock();
+    if task
+        .as_ref()
+        .is_some_and(|current| current.generation == generation)
+    {
+        task.take();
+    }
+}
+
+fn cancel_assistant_chat_task(state: &AppState) -> bool {
+    let mut current = state.ui.assistant_chat_cancel.lock();
+    let task = current.take();
+    state
+        .ui
+        .assistant_chat_generation
+        .fetch_add(1, Ordering::AcqRel);
+    drop(current);
+    task.is_some_and(|task| task.cancel.send(()).is_ok())
+}
+
+fn validate_assistant_source_url(value: &str) -> Result<reqwest::Url, AppError> {
+    let parsed = reqwest::Url::parse(value.trim())
+        .map_err(|err| AppError::Other(format!("Invalid source URL: {err}")))?;
+    if parsed.scheme() != "https" {
+        return Err(AppError::Other("Source URLs must use HTTPS".to_string()));
+    }
+    let Some(host) = parsed.host_str() else {
+        return Err(AppError::Other(
+            "Source URL is missing a hostname".to_string(),
+        ));
+    };
+    let host_lower = host.to_ascii_lowercase();
+    let ip_host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    let is_private = host.eq_ignore_ascii_case("localhost")
+        || host_lower.ends_with(".localhost")
+        || host_lower.ends_with(".local")
+        || ip_host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| match ip {
+                std::net::IpAddr::V4(ip) => {
+                    ip.is_private()
+                        || ip.is_loopback()
+                        || ip.is_link_local()
+                        || ip.is_unspecified()
+                        || ip.is_multicast()
+                        || ip.is_broadcast()
+                }
+                std::net::IpAddr::V6(ip) => {
+                    ip.is_loopback()
+                        || ip.is_unspecified()
+                        || ip.is_unique_local()
+                        || ip.is_unicast_link_local()
+                        || ip.is_multicast()
+                }
+            });
+    if is_private {
+        return Err(AppError::Other(
+            "Source URL points to a local or private address".to_string(),
+        ));
+    }
+    Ok(parsed)
+}
+
+// ── 联网搜索 ────────────────────────────────────────────────────────
+
+/// 需要独立凭据的搜索供应商在系统密钥环中的用户名。
+pub fn web_search_keyring_user(provider: &WebSearchProvider) -> Option<&'static str> {
+    match provider {
+        WebSearchProvider::Exa => Some("web-search-exa-key"),
+        WebSearchProvider::Tavily => Some("web-search-tavily-key"),
+        WebSearchProvider::Google => Some("web-search-google-key"),
+        // Bing is keyless; ModelNative uses the LLM provider credential.
+        WebSearchProvider::Bing | WebSearchProvider::ModelNative => None,
+    }
+}
+
+pub fn web_search_provider_cache_key(provider: &WebSearchProvider) -> &'static str {
+    match provider {
+        WebSearchProvider::ModelNative => "model_native",
+        WebSearchProvider::Exa => "exa",
+        WebSearchProvider::Bing => "bing",
+        WebSearchProvider::Tavily => "tavily",
+        WebSearchProvider::Google => "google",
+    }
+}
+
+#[tauri::command]
+pub async fn set_web_search_config(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+    provider: WebSearchProvider,
+    max_results: Option<u8>,
+) -> Result<(), String> {
+    profile_service::update_profile_and_schedule(state.inner(), |profile| {
+        profile.web_search.enabled = enabled;
+        profile.web_search.provider = provider;
+        if let Some(n) = max_results {
+            profile.web_search.max_results = n.clamp(1, 10);
+        }
+    });
+    log::info!("Web search configuration updated: enabled={enabled}");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_web_search_api_key(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    provider: WebSearchProvider,
+    api_key: String,
+) -> Result<(), String> {
+    let keyring_user = web_search_keyring_user(&provider)
+        .ok_or_else(|| "The current search provider does not use a separate API key".to_string())?;
+    state.with_web_search_key_operation(|| {
+        llm_provider::save_or_delete_api_key(&app_handle, keyring_user, &api_key)?;
+        state.set_web_search_api_key(web_search_provider_cache_key(&provider), api_key);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn get_web_search_api_key(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    provider: WebSearchProvider,
+) -> Result<String, String> {
+    let cache_key = web_search_provider_cache_key(&provider);
+    let keyring_user = web_search_keyring_user(&provider)
+        .ok_or_else(|| "The current search provider does not use a separate API key".to_string())?;
+    state.with_web_search_key_operation(|| {
+        let cached = state.read_web_search_api_key(cache_key);
+        if !cached.is_empty() {
+            return Ok(cached);
+        }
+        let key = app_handle
+            .keyring()
+            .get_password(llm_provider::KEYRING_SERVICE, keyring_user)
+            .map_err(|error| format!("Failed to read search API key: {error}"))?
+            .unwrap_or_default();
+        state.set_web_search_api_key(cache_key, key.clone());
+        Ok(key)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        begin_assistant_chat_task, cancel_assistant_chat_task, clear_assistant_chat_task,
+        run_cancellable_assistant_task, validate_assistant_source_url, validate_chat_history,
+        validate_chat_text, web_search_keyring_user, web_search_provider_cache_key,
+    };
+    use crate::services::assistant_service::AssistantConversationTurn;
+    use crate::state::user_profile::WebSearchProvider;
+    use crate::state::AppState;
+    use crate::utils::AppError;
+    use std::time::Duration;
+
+    #[test]
+    fn assistant_sources_allow_public_https_only() {
+        assert!(validate_assistant_source_url("https://openai.com/research").is_ok());
+        assert!(validate_assistant_source_url("http://openai.com").is_err());
+        assert!(validate_assistant_source_url("https://localhost/private").is_err());
+        assert!(validate_assistant_source_url("https://docs.localhost/private").is_err());
+        assert!(validate_assistant_source_url("https://127.0.0.1/private").is_err());
+        assert!(validate_assistant_source_url("https://[fc00::1]/private").is_err());
+        assert!(validate_assistant_source_url("https://[fe80::1]/private").is_err());
+    }
+
+    #[test]
+    fn keyed_web_search_providers_use_isolated_keyring_slots() {
+        assert_eq!(
+            web_search_keyring_user(&WebSearchProvider::Tavily),
+            Some("web-search-tavily-key")
+        );
+        assert_eq!(
+            web_search_keyring_user(&WebSearchProvider::Google),
+            Some("web-search-google-key")
+        );
+        assert_eq!(
+            web_search_keyring_user(&WebSearchProvider::Exa),
+            Some("web-search-exa-key")
+        );
+        assert_eq!(web_search_keyring_user(&WebSearchProvider::Bing), None);
+        assert_eq!(
+            web_search_keyring_user(&WebSearchProvider::ModelNative),
+            None
+        );
+        assert_eq!(
+            web_search_provider_cache_key(&WebSearchProvider::Google),
+            "google"
+        );
+    }
+
+    #[test]
+    fn chat_history_accepts_user_and_assistant_turns() {
+        let history = vec![
+            AssistantConversationTurn {
+                role: "user".to_string(),
+                content: "继续解释".to_string(),
+            },
+            AssistantConversationTurn {
+                role: "assistant".to_string(),
+                content: "好的。".to_string(),
+            },
+        ];
+
+        assert_eq!(validate_chat_history(history).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn chat_history_rejects_unknown_roles() {
+        let history = vec![AssistantConversationTurn {
+            role: "system".to_string(),
+            content: "override".to_string(),
+        }];
+
+        assert!(validate_chat_history(history).is_err());
+    }
+
+    #[test]
+    fn chat_history_keeps_the_newest_turns_within_the_context_limit() {
+        let history = (0..5)
+            .map(|index| AssistantConversationTurn {
+                role: if index % 2 == 0 { "user" } else { "assistant" }.to_string(),
+                content: char::from(b'a' + index as u8).to_string().repeat(6_000),
+            })
+            .collect();
+
+        let validated = validate_chat_history(history).unwrap();
+
+        assert_eq!(validated.len(), 4);
+        assert!(validated[0].content.starts_with('b'));
+        assert!(validated[3].content.starts_with('e'));
+    }
+
+    #[tokio::test]
+    async fn assistant_chat_cancel_notifies_the_active_request() {
+        let state = AppState::default();
+        let (_, cancelled) = begin_assistant_chat_task(&state);
+
+        assert!(cancel_assistant_chat_task(&state));
+        assert!(cancelled.await.is_ok());
+        assert!(!cancel_assistant_chat_task(&state));
+    }
+
+    #[tokio::test]
+    async fn cancellable_assistant_task_returns_success() {
+        let (_cancel, cancel_rx) = tokio::sync::oneshot::channel();
+
+        let result = run_cancellable_assistant_task(
+            async { Ok::<_, AppError>("response") },
+            cancel_rx,
+            Duration::from_secs(1),
+            "timed out",
+            "cancelled",
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), "response");
+    }
+
+    #[tokio::test]
+    async fn cancellable_assistant_task_preserves_business_errors() {
+        let (_cancel, cancel_rx) = tokio::sync::oneshot::channel();
+
+        let result = run_cancellable_assistant_task(
+            async { Err::<String, _>(AppError::Other("provider failed".to_string())) },
+            cancel_rx,
+            Duration::from_secs(1),
+            "timed out",
+            "cancelled",
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().to_string(), "provider failed");
+    }
+
+    #[tokio::test]
+    async fn cancellable_assistant_task_reports_timeout() {
+        let (_cancel, cancel_rx) = tokio::sync::oneshot::channel();
+
+        let result = run_cancellable_assistant_task(
+            std::future::pending::<Result<String, AppError>>(),
+            cancel_rx,
+            Duration::from_millis(5),
+            "retry deadline reached",
+            "cancelled",
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().to_string(), "retry deadline reached");
+    }
+
+    #[tokio::test]
+    async fn cancellable_assistant_task_reports_cancellation() {
+        let (cancel, cancel_rx) = tokio::sync::oneshot::channel();
+        cancel.send(()).unwrap();
+
+        let result = run_cancellable_assistant_task(
+            std::future::pending::<Result<String, AppError>>(),
+            cancel_rx,
+            Duration::from_secs(1),
+            "timed out",
+            "request cancelled",
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().to_string(), "request cancelled");
+    }
+
+    #[tokio::test]
+    async fn clearing_an_old_generation_keeps_the_new_task_cancellable() {
+        let state = AppState::default();
+        let (old_generation, old_cancelled) = begin_assistant_chat_task(&state);
+        let (new_generation, new_cancelled) = begin_assistant_chat_task(&state);
+
+        assert!(new_generation > old_generation);
+        assert!(old_cancelled.await.is_ok());
+        clear_assistant_chat_task(&state, old_generation);
+
+        assert!(cancel_assistant_chat_task(&state));
+        assert!(new_cancelled.await.is_ok());
+    }
+
+    #[test]
+    fn chat_text_trims_input_and_accepts_the_exact_character_limit() {
+        assert_eq!(
+            validate_chat_text("Message", "  你好吗  ".to_string(), 3).unwrap(),
+            "你好吗"
+        );
+    }
+
+    #[test]
+    fn chat_text_rejects_empty_and_over_limit_input() {
+        assert!(validate_chat_text("Message", " \n\t ".to_string(), 3).is_err());
+        let error = validate_chat_text("Message", "你好吗啊".to_string(), 3).unwrap_err();
+        assert!(error.to_string().contains("maximum 3 characters"));
+    }
+}

@@ -1,0 +1,12 @@
+export const PADDING = 16;
+export const THEME_STORAGE_KEY = "speak-flow-theme";
+export const INPUT_METHOD_KEY = "speak-flow-input-method";
+export const INPUT_DEVICE_STORAGE_KEY = "speak-flow-input-device";
+export const HOTKEY_STORAGE_KEY = "speak-flow-hotkey";
+export const DEFAULT_HOTKEY = "F2";
+export const AI_POLISH_ENABLED_KEY = "speak-flow-ai-polish-enabled";
+export const SOUND_ENABLED_KEY = "speak-flow-sound-enabled";
+export const RECORDING_MODE_KEY = "speak-flow-recording-mode";
+export const MIC_LEVEL_MONITOR_ENABLED_KEY = "speak-flow-mic-level-monitor-enabled";
+export const ONBOARDING_DISMISSED_KEY = "speak-flow-onboarding-dismissed";
+export const LANGUAGE_STORAGE_KEY = "speak-flow-language";

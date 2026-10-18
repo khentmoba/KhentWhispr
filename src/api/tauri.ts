@@ -1,0 +1,719 @@
+import { Channel, invoke } from "@tauri-apps/api/core";
+import i18n from "@/i18n";
+import {
+  disable as disableAutostart,
+  enable as enableAutostart,
+  isEnabled as isAutostartEnabled,
+} from "@tauri-apps/plugin-autostart";
+import type {
+  ApiFormat,
+  ContextMode,
+  AppProfileRule,
+  AppUpdateInfo,
+  AiModelListPayload,
+  FunASRStatus,
+  HotkeyDiagnostic,
+  InputDeviceListPayload,
+  JevProvider,
+  JevFeatures,
+  LlmReasoningMode,
+  LlmReasoningSupport,
+  ModelCheckResult,
+  GrokBuildOauthDeviceCodeChallenge,
+  GrokBuildOauthStatus,
+  OpenaiAuthMode,
+  OpenaiCodexOauthDeviceCodeChallenge,
+  OpenaiCodexOauthStatus,
+  XaiAuthMode,
+  PersistentHistoryFilter,
+  PersistentHistoryPage,
+  PersistentHistoryRecord,
+  PersistentHistoryStats,
+  PolishStructureLevel,
+  TranscriptionResult,
+  UserProfile,
+  WebSearchProvider,
+} from "@/types";
+import type { RecordingSnapshot } from "@/types/generated/ipc";
+
+type InvokeArgs = Record<string, unknown>;
+
+export type { RecordingOutcomeKind, RecordingSnapshot } from "@/types/generated/ipc";
+
+export class IpcError extends Error {
+  readonly code: string;
+  readonly category: string;
+  readonly details: unknown;
+  constructor(message: string, code: string, category: string, details?: unknown) {
+    super(message);
+    this.name = "IpcError";
+    this.code = code;
+    this.category = category;
+    this.details = details;
+  }
+}
+
+function normalizeInvokeError(command: string, err: unknown): Error {
+  if (err instanceof Error) {
+    return err;
+  }
+  if (typeof err === "string" && err.trim()) {
+    return new Error(err);
+  }
+  if (typeof err === "object" && err !== null) {
+    const message = Reflect.get(err, "message");
+    const code = Reflect.get(err, "code");
+    const category = Reflect.get(err, "category");
+    const details = Reflect.get(err, "details");
+    if (typeof message === "string" && message.trim()) {
+      if (typeof code === "string" && code.trim() && typeof category === "string" && category.trim()) {
+        return new IpcError(message, code, category, details);
+      }
+      return new Error(message);
+    }
+    const error = Reflect.get(err, "error");
+    if (typeof error === "string" && error.trim()) {
+      return new Error(error);
+    }
+    try {
+      return new Error(JSON.stringify(err));
+    } catch {
+      // Fall through to generic message.
+    }
+  }
+  return new Error(i18n.t("toast.invokeFailed", { command }));
+}
+
+function invokeCommand<T>(
+  command: string,
+  args?: InvokeArgs
+): Promise<T> {
+  const task = args ? invoke<T>(command, args) : invoke<T>(command);
+  return task.catch((err) => {
+    throw normalizeInvokeError(command, err);
+  });
+}
+
+function createNoArgCommand<T = string>(
+  command: string
+): () => Promise<T> {
+  return () => invokeCommand<T>(command);
+}
+
+export const startFunASR = createNoArgCommand<string>("start_funasr");
+export const checkAppUpdate = createNoArgCommand<AppUpdateInfo>("check_app_update");
+
+export interface AppUpdateProgress {
+  phase: "downloading" | "installing";
+  downloaded: number;
+  total: number | null;
+}
+
+export function installAppUpdate(expectedVersion: string, onProgress: (progress: AppUpdateProgress) => void): Promise<void> {
+  const channel = new Channel<AppUpdateProgress>();
+  channel.onmessage = onProgress;
+  return invokeCommand<void>("install_app_update", { expectedVersion, onProgress: channel });
+}
+
+
+export function transcribeAudio(audioBase64: string): Promise<TranscriptionResult> {
+  return invokeCommand<TranscriptionResult>("transcribe_audio", { audioBase64 });
+}
+
+export function openAppReleasePage(url?: string | null): Promise<string> {
+  return invokeCommand<string>("open_app_release_page", { url: url ?? null });
+}
+
+export const checkFunASRStatus = createNoArgCommand<FunASRStatus>("check_funasr_status");
+export const checkModelFiles = createNoArgCommand<ModelCheckResult>("check_model_files");
+export const downloadModels = createNoArgCommand<string>("download_models");
+export const cancelModelDownload = createNoArgCommand<string>("cancel_model_download");
+export const restartFunASR = createNoArgCommand<string>("restart_funasr");
+export const getEngine = createNoArgCommand<string>("get_engine");
+
+export function setEngine(engine: string): Promise<string> {
+  return invokeCommand<string>("set_engine", { engine });
+}
+
+export function getGpuIdleSeconds(includeDisabled = false): Promise<number> {
+  return invokeCommand<number>("get_gpu_idle_seconds", includeDisabled ? { includeDisabled } : undefined);
+}
+
+export function setGpuIdleSeconds(seconds: number, timeoutSeconds?: number): Promise<number> {
+  return invokeCommand<number>("set_gpu_idle_seconds", timeoutSeconds === undefined ? { seconds } : { seconds, timeoutSeconds });
+}
+
+export function copyToClipboard(text: string): Promise<string> {
+  return invokeCommand<string>("copy_to_clipboard", { text });
+}
+
+export function pasteText(
+  text: string,
+  method?: "sendInput" | "clipboard"
+): Promise<string> {
+  return invokeCommand<string>("paste_text", { text, method });
+}
+
+export const hideMainWindow = createNoArgCommand<string>("hide_main_window");
+export const showSubtitleWindow = createNoArgCommand<string>("show_subtitle_window");
+export const hideSubtitleWindow = createNoArgCommand<string>("hide_subtitle_window");
+export const getOpenaiCodexOauthStatus = createNoArgCommand<OpenaiCodexOauthStatus>("get_openai_codex_oauth_status");
+export function loginOpenaiCodexOauth(clientId?: string, newAccount = false): Promise<OpenaiCodexOauthStatus> {
+  return invokeCommand<OpenaiCodexOauthStatus>("login_openai_codex_oauth", { clientId: clientId ?? null, newAccount });
+}
+export function removeChatgptAccount(clientId: string): Promise<OpenaiCodexOauthStatus> {
+  return invokeCommand<OpenaiCodexOauthStatus>("remove_chatgpt_account", { clientId });
+}
+export const startOpenaiCodexOauthDeviceCode = createNoArgCommand<OpenaiCodexOauthDeviceCodeChallenge>("start_openai_codex_oauth_device_code");
+export function completeOpenaiCodexOauthDeviceCode(
+  challenge: OpenaiCodexOauthDeviceCodeChallenge
+): Promise<OpenaiCodexOauthStatus> {
+  return invokeCommand<OpenaiCodexOauthStatus>("complete_openai_codex_oauth_device_code", { challenge });
+}
+export const logoutOpenaiCodexOauth = createNoArgCommand<void>("logout_openai_codex_oauth");
+export const getGrokBuildOauthStatus = createNoArgCommand<GrokBuildOauthStatus>("get_grok_build_oauth_status");
+export const loginGrokBuildOauth = createNoArgCommand<GrokBuildOauthStatus>("login_grok_build_oauth");
+export const startGrokBuildOauthDeviceCode = createNoArgCommand<GrokBuildOauthDeviceCodeChallenge>("start_grok_build_oauth_device_code");
+export function completeGrokBuildOauthDeviceCode(
+  challenge: GrokBuildOauthDeviceCodeChallenge
+): Promise<GrokBuildOauthStatus> {
+  return invokeCommand<GrokBuildOauthStatus>("complete_grok_build_oauth_device_code", { challenge });
+}
+export const logoutGrokBuildOauth = createNoArgCommand<void>("logout_grok_build_oauth");
+
+export const unregisterAllHotkeys = createNoArgCommand<string>("unregister_all_hotkeys");
+
+export function registerCustomHotkey(shortcut: string): Promise<string> {
+  return invokeCommand<string>("register_custom_hotkey", { shortcut });
+}
+
+export function registerAssistantHotkey(shortcut: string): Promise<string> {
+  return invokeCommand<string>("register_assistant_hotkey", { shortcut });
+}
+
+export const startRecording = createNoArgCommand<number>("start_recording");
+export const stopRecording = createNoArgCommand<void>("stop_recording");
+export const getRecordingSnapshot = createNoArgCommand<RecordingSnapshot | null>("get_recording_snapshot");
+export const testMicrophone = createNoArgCommand<string>("test_microphone");
+export const listInputDevices = createNoArgCommand<InputDeviceListPayload>("list_input_devices");
+export const startMicrophoneLevelMonitor = createNoArgCommand<string>("start_microphone_level_monitor");
+export const stopMicrophoneLevelMonitor = createNoArgCommand<void>("stop_microphone_level_monitor");
+
+export function setInputDevice(name?: string | null): Promise<void> {
+  return invokeCommand<void>("set_input_device", { name: name ?? null });
+}
+
+export function setInputMethodCommand(method: string): Promise<void> {
+  return invokeCommand<void>("set_input_method", { method });
+}
+
+export function setSoundEnabled(enabled: boolean): Promise<void> {
+  return invokeCommand<void>("set_sound_enabled", { enabled });
+}
+
+export function setAiPolishConfig(enabled: boolean, apiKey: string): Promise<void> {
+  return invokeCommand<void>("set_ai_polish_config", { enabled, apiKey });
+}
+
+export function getAiPolishApiKey(): Promise<string> {
+  return invokeCommand<string>("get_ai_polish_api_key");
+}
+
+export function setJevConfig(enabled: boolean, provider: JevProvider): Promise<void> {
+  return invokeCommand<void>("set_jev_config", { enabled, provider });
+}
+
+export function saveAiPolishApiKey(apiKey: string): Promise<void> {
+  return invokeCommand<void>("set_ai_polish_api_key", { apiKey });
+}
+
+export function setJevProvider(provider: JevProvider): Promise<void> {
+  return invokeCommand<void>("set_jev_provider", { provider });
+}
+
+export function setJevFeatures(features: JevFeatures): Promise<void> {
+  return invokeCommand<void>("set_jev_features", {
+    correctionReview: features.correction_review, polishAudit: features.polish_audit,
+  });
+}
+
+export function setScreenContextMode(mode: ContextMode): Promise<void> {
+  return invokeCommand<void>("set_screen_context_mode", { mode });
+}
+
+export function setPolishMode(mode: ContextMode): Promise<void> {
+  return invokeCommand<void>("set_polish_mode", { mode });
+}
+
+export function setWebSearchMode(mode: ContextMode): Promise<void> {
+  return invokeCommand<void>("set_web_search_mode", { mode });
+}
+
+export function setR2T2Config(context: string, language: string | null): Promise<void> {
+  return invokeCommand<void>("set_r2t2_config", { context, language });
+}
+
+export function getJevApiKey(provider: JevProvider): Promise<string> {
+  return invokeCommand<string>("get_jev_api_key", { provider });
+}
+
+export function setJevApiKey(provider: JevProvider, apiKey: string): Promise<void> {
+  return invokeCommand<void>("set_jev_api_key", { provider, apiKey });
+}
+
+export function setAiPolishScreenContextEnabled(enabled: boolean): Promise<void> {
+  return invokeCommand<void>("set_ai_polish_screen_context_enabled", { enabled });
+}
+
+export function setScreenContextEnabled(enabled: boolean): Promise<void> {
+  return invokeCommand<void>("set_screen_context_enabled", { enabled });
+}
+
+export function listAiModels(
+  provider: string,
+  baseUrl: string | undefined,
+  apiKey: string,
+  forceRefresh = false,
+  openaiAuthMode?: OpenaiAuthMode,
+  xaiAuthMode?: XaiAuthMode,
+): Promise<AiModelListPayload> {
+  return invokeCommand<AiModelListPayload>("list_ai_models", {
+    provider,
+    baseUrl: baseUrl ?? null,
+    apiKey,
+    forceRefresh,
+    openaiAuthMode: openaiAuthMode ?? null,
+    xaiAuthMode: xaiAuthMode ?? null,
+  });
+}
+
+export interface AssistantConversationTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+// Profile commands
+export const getUserProfile = createNoArgCommand<UserProfile>("get_user_profile");
+
+export function setAutostartMinimized(enabled: boolean): Promise<void> {
+  return invokeCommand<void>("set_autostart_minimized", { enabled });
+}
+
+export function setHistorySettings(
+  enabled: boolean,
+  saveAudio: boolean,
+  retentionDays: number,
+): Promise<void> {
+  return invokeCommand<void>("set_history_settings", { enabled, saveAudio, retentionDays });
+}
+
+export function setAppProfileRules(rules: AppProfileRule[]): Promise<void> {
+  return invokeCommand<void>("set_app_profile_rules", { rules });
+}
+
+export function listTranscriptionHistory(
+  filter: PersistentHistoryFilter,
+): Promise<PersistentHistoryPage> {
+  return invokeCommand<PersistentHistoryPage>("list_transcription_history", { filter });
+}
+
+export const getTranscriptionHistoryStats = createNoArgCommand<PersistentHistoryStats>(
+  "get_transcription_history_stats",
+);
+
+export function deleteTranscriptionHistory(id: number): Promise<boolean> {
+  return invokeCommand<boolean>("delete_transcription_history", { id });
+}
+
+export function exportTranscriptionHistory(format: "json" | "markdown"): Promise<string | null> {
+  return invokeCommand<string | null>("export_transcription_history", { format });
+}
+
+export function reprocessTranscriptionHistory(
+  id: number,
+  kind: "polish" | "asr",
+): Promise<PersistentHistoryRecord> {
+  return invokeCommand<PersistentHistoryRecord>("reprocess_transcription_history", { id, kind });
+}
+
+export function addHotWord(text: string, weight: number): Promise<void> {
+  return invokeCommand<void>("add_hot_word", { text, weight });
+}
+
+export function removeHotWord(text: string): Promise<void> {
+  return invokeCommand<void>("remove_hot_word", { text });
+}
+
+export function setLlmProviderConfig(
+  active: string,
+  customBaseUrl?: string,
+  customModel?: string,
+  polishReasoningMode?: LlmReasoningMode,
+  assistantReasoningMode?: LlmReasoningMode,
+  assistantUseSeparateModel?: boolean,
+  assistantModel?: string,
+  assistantProvider?: string | null,
+  openaiAuthMode?: OpenaiAuthMode | null,
+  xaiAuthMode?: XaiAuthMode | null,
+): Promise<void> {
+  const args: InvokeArgs = {
+    active,
+    customBaseUrl: customBaseUrl ?? null,
+    customModel: customModel ?? null,
+    polishReasoningMode: polishReasoningMode ?? null,
+    assistantReasoningMode: assistantReasoningMode ?? null,
+    assistantUseSeparateModel: assistantUseSeparateModel ?? null,
+    assistantModel: assistantModel ?? null,
+    openaiAuthMode: openaiAuthMode ?? null,
+    xaiAuthMode: xaiAuthMode ?? null,
+  };
+  if (assistantProvider !== undefined) {
+    args.assistantProvider = assistantProvider;
+    args.assistantProviderSet = true;
+  }
+  return invokeCommand<void>("set_llm_provider_config", args);
+}
+
+export function setScreenVisionConfig(
+  enabled: boolean,
+  provider: string,
+  model: string,
+): Promise<void> {
+  return invokeCommand<void>("set_screen_vision_config", {
+    enabled,
+    provider,
+    model,
+  });
+}
+
+export function getScreenVisionApiKey(provider: string): Promise<string> {
+  return invokeCommand<string>("get_screen_vision_api_key", { provider });
+}
+
+export function setScreenVisionApiKey(provider: string, apiKey: string): Promise<void> {
+  return invokeCommand<void>("set_screen_vision_api_key", { provider, apiKey });
+}
+
+export function setAssistantApiKey(apiKey: string, provider?: string): Promise<void> {
+  return invokeCommand<void>("set_assistant_api_key", { apiKey, provider });
+}
+
+export function getAssistantApiKey(provider?: string): Promise<string> {
+  return invokeCommand<string>("get_assistant_api_key", { provider });
+}
+
+export function getLlmReasoningSupport(
+  provider: string,
+  baseUrl?: string,
+  model?: string,
+  apiFormat?: ApiFormat,
+  reasoningMode?: LlmReasoningMode,
+): Promise<LlmReasoningSupport> {
+  return invokeCommand<LlmReasoningSupport>("get_llm_reasoning_support", {
+    provider,
+    baseUrl: baseUrl ?? null,
+    model: model ?? null,
+    apiFormat: apiFormat ?? null,
+    reasoningMode: reasoningMode ?? null,
+  });
+}
+
+export const exportUserProfile = createNoArgCommand<string | null>("export_user_profile");
+export const getHotkeyDiagnostic = createNoArgCommand<HotkeyDiagnostic>("get_hotkey_diagnostic");
+
+export function importUserProfile(jsonData: string): Promise<void> {
+  return invokeCommand<void>("import_user_profile", { jsonData });
+}
+
+export function submitUserCorrection(original: string, corrected: string, rawOriginal?: string | null): Promise<void> {
+  return invokeCommand<void>("submit_user_correction", {
+    original,
+    corrected,
+    rawOriginal: rawOriginal ?? null,
+  });
+}
+
+export function setRecordingMode(toggle: boolean): Promise<void> {
+  return invokeCommand<void>("set_recording_mode", { toggle });
+}
+
+/** 设置翻译目标语言。返回是否自动开启了 AI 润色。 */
+export function setTranslationTarget(target: string | null): Promise<boolean> {
+  return invokeCommand<boolean>("set_translation_target", { target });
+}
+
+export function setTranslationHotkey(shortcut: string | null): Promise<void> {
+  return invokeCommand<void>("set_translation_hotkey", { shortcut });
+}
+
+export function setCustomPrompt(prompt: string | null): Promise<void> {
+  return invokeCommand<void>("set_custom_prompt", { prompt });
+}
+
+export function setPolishStructureLevel(level: PolishStructureLevel): Promise<void> {
+  return invokeCommand<void>("set_polish_structure_level", { level });
+}
+
+export function setOpenaiFastMode(enabled: boolean): Promise<void> {
+  return invokeCommand<void>("set_openai_fast_mode", { enabled });
+}
+
+export function setAssistantHotkey(shortcut: string | null): Promise<void> {
+  return invokeCommand<void>("set_assistant_hotkey", { shortcut });
+}
+
+export function setAssistantSystemPrompt(prompt: string | null): Promise<void> {
+  return invokeCommand<void>("set_assistant_system_prompt", { prompt });
+}
+
+export function setAssistantScreenContextEnabled(enabled: boolean): Promise<void> {
+  return invokeCommand<void>("set_assistant_screen_context_enabled", { enabled });
+}
+
+export function setSelectionAssistantConfig(params: {
+  enabled: boolean;
+  autoScreenshot: boolean;
+  screenshotRouting: boolean;
+  customPrompt: string | null;
+  translationTarget: string;
+  excludedApps: string[];
+  useSeparateModel: boolean;
+  provider?: string | null;
+  model?: string | null;
+  reasoningMode: LlmReasoningMode;
+}): Promise<void> {
+  return invokeCommand<void>("set_selection_assistant_config", params);
+}
+
+export function setSelectionApiKey(provider: string, apiKey: string): Promise<void> {
+  return invokeCommand<void>("set_selection_api_key", { provider, apiKey });
+}
+
+export function getSelectionApiKey(provider: string): Promise<string> {
+  return invokeCommand<string>("get_selection_api_key", { provider });
+}
+
+export function resizeSelectionWindow(expanded: boolean): Promise<void> {
+  return invokeCommand<void>("resize_selection_window", { expanded });
+}
+
+export function hideSelectionAssistant(): Promise<void> {
+  return invokeCommand<void>("hide_selection_assistant", {});
+}
+
+export function startSelectionWindowDrag(): Promise<void> {
+  return invokeCommand<void>("start_selection_window_drag", {});
+}
+
+export interface SelectionOverlayState {
+  version: number;
+  text: string;
+  characterCount: number;
+}
+
+export function getSelectionOverlayState(): Promise<SelectionOverlayState | null> {
+  return invokeCommand<SelectionOverlayState | null>("get_selection_overlay_state", {});
+}
+
+export function copySelection(text: string): Promise<void> {
+  return invokeCommand<void>("copy_selection", { text });
+}
+
+export function replaceSelection(params: {
+  replacementText: string;
+  sourceText: string;
+  version: number;
+}): Promise<void> {
+  return invokeCommand<void>("replace_selection", params);
+}
+
+export function searchSelection(text: string): Promise<void> {
+  return invokeCommand<void>("search_selection", { text });
+}
+
+export function runSelectionAction(
+  action: "translate" | "explain" | "optimize",
+  text: string,
+  requestId: number,
+): Promise<string> {
+  return invokeCommand<string>("run_selection_action", { action, text, requestId });
+}
+
+export function cancelSelectionAction(): Promise<boolean> {
+  return invokeCommand<boolean>("cancel_selection_action", {});
+}
+
+export function continueAssistantConversation(params: {
+  sessionId: number;
+  initialRequest: string;
+  initialResponse: string;
+  history: AssistantConversationTurn[];
+  message: string;
+}): Promise<string> {
+  return invokeCommand<string>("continue_assistant_conversation", params);
+}
+
+export function cancelAssistantConversation(): Promise<boolean> {
+  return invokeCommand<boolean>("cancel_assistant_conversation");
+}
+
+export function retryAssistantRequest(params: {
+  sessionId: number;
+  request: string;
+}): Promise<string> {
+  return invokeCommand<string>("retry_assistant_request", params);
+}
+
+export function openAssistantSource(url: string): Promise<string> {
+  return invokeCommand<string>("open_assistant_source", { url });
+}
+
+export function setWebSearchConfig(
+  enabled: boolean,
+  provider: WebSearchProvider,
+  maxResults?: number,
+): Promise<void> {
+  return invokeCommand<void>("set_web_search_config", {
+    enabled,
+    provider,
+    maxResults: maxResults ?? null,
+  });
+}
+
+export function setWebSearchApiKey(provider: WebSearchProvider, apiKey: string): Promise<void> {
+  return invokeCommand<void>("set_web_search_api_key", { provider, apiKey });
+}
+
+export function getWebSearchApiKey(provider: WebSearchProvider): Promise<string> {
+  return invokeCommand<string>("get_web_search_api_key", { provider });
+}
+
+export function addCustomProvider(
+  name: string,
+  baseUrl: string,
+  model: string,
+  apiFormat: "openai_compat" | "anthropic",
+): Promise<string> {
+  return invokeCommand<string>("add_custom_provider", { name, baseUrl, model, apiFormat });
+}
+
+export function updateCustomProvider(
+  id: string,
+  name?: string,
+  baseUrl?: string,
+  model?: string,
+  apiFormat?: "openai_compat" | "anthropic",
+): Promise<void> {
+  return invokeCommand<void>("update_custom_provider", {
+    id,
+    name: name ?? null,
+    baseUrl: baseUrl ?? null,
+    model: model ?? null,
+    apiFormat: apiFormat ?? null,
+  });
+}
+
+export function removeCustomProvider(id: string): Promise<void> {
+  return invokeCommand<void>("remove_custom_provider", { id });
+}
+
+export function removeCorrection(original: string, corrected: string): Promise<void> {
+  return invokeCommand<void>("remove_correction", { original, corrected });
+}
+
+export function setExternalCorrectionLearning(enabled: boolean): Promise<void> {
+  return invokeCommand<void>("set_external_correction_learning", { enabled });
+}
+
+export function validateCorrections(): Promise<number> {
+  return invokeCommand<number>("validate_corrections");
+}
+
+export function setCorrectionValidationConfig(params: {
+  enabled: boolean;
+  useSeparateModel?: boolean;
+  provider?: string | null;
+  model?: string | null;
+}): Promise<void> {
+  const args: InvokeArgs = {
+    enabled: params.enabled,
+  };
+  if (params.useSeparateModel !== undefined) {
+    args.useSeparateModel = params.useSeparateModel;
+  }
+  if (params.provider !== undefined) {
+    args.provider = params.provider;
+    args.providerSet = true;
+  }
+  if (params.model !== undefined) {
+    args.model = params.model;
+    args.modelSet = true;
+  }
+  return invokeCommand<void>("set_correction_validation_config", args);
+}
+
+/**
+ * 保存在线 ASR 的 API Key。`keyringUser` 由调用方在用户键入瞬间就锁定，
+ * 避免 debounce 与 engine/region 切换产生的 race。
+ */
+export function setOnlineAsrApiKey(apiKey: string, keyringUser?: string): Promise<void> {
+  return invokeCommand<void>("set_online_asr_api_key", {
+    apiKey,
+    keyringUser: keyringUser ?? null,
+  });
+}
+
+export function getOnlineAsrApiKey(): Promise<string> {
+  return invokeCommand<string>("get_online_asr_api_key");
+}
+
+export function getOnlineAsrEndpoint(): Promise<{ region: string; url: string }> {
+  return invokeCommand<{ region: string; url: string }>("get_online_asr_endpoint");
+}
+
+export function setOnlineAsrEndpoint(region: string): Promise<{ region: string; url: string }> {
+  return invokeCommand<{ region: string; url: string }>("set_online_asr_endpoint", { region });
+}
+
+export interface AlibabaAsrConfig {
+  region: string;
+  url: string;
+  model: string;
+  models: readonly string[];
+}
+
+export function getAlibabaAsrConfig(): Promise<AlibabaAsrConfig> {
+  return invokeCommand<AlibabaAsrConfig>("get_alibaba_asr_config");
+}
+
+export function setAlibabaAsrModel(model: string): Promise<{ model: string }> {
+  return invokeCommand<{ model: string }>("set_alibaba_asr_model", { model });
+}
+
+export interface AlibabaModelsPayload {
+  models: string[];
+  source: "live" | "fallback";
+}
+
+export function listAlibabaAsrModels(): Promise<AlibabaModelsPayload> {
+  return invokeCommand<AlibabaModelsPayload>("list_alibaba_asr_models");
+}
+
+export function getModelsDir(): Promise<{ path: string; is_custom: boolean }> {
+  return invokeCommand<{ path: string; is_custom: boolean }>("get_models_dir");
+}
+
+export function pickFolder(): Promise<string | null> {
+  return invokeCommand<string | null>("pick_folder");
+}
+
+export interface ModelsDirUpdateResult {
+  message: string;
+  runtimeWarning: string | null;
+}
+
+export function setModelsDir(path: string | null, migrate: boolean): Promise<ModelsDirUpdateResult> {
+  return invokeCommand<ModelsDirUpdateResult>("set_models_dir", { path, migrate });
+}
+
+export { enableAutostart, disableAutostart, isAutostartEnabled };

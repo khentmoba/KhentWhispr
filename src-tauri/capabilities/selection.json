@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "selection",
+  "description": "Text selection toolbar: uses only validated application commands and does not access keys or system plugins",
+  "windows": ["selection-toolbar"],
+  "permissions": [
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-hide",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging"
+  ]
+}

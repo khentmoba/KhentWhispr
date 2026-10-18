@@ -1,0 +1,791 @@
+/**
+ * TDD red-state tests for structured IPC error normalization in
+ * `src/api/tauri.ts`.
+ *
+ * Contract (to be implemented):
+ *   - `IpcError` is a named export class extending `Error` with
+ *     readonly `code`, `category`, `details` fields.
+ *   - When `invoke(...)` rejects with a structured object shaped
+ *     `{ code, category, message, details? }`, `invokeCommand` must
+ *     produce an `IpcError` instance carrying those fields.
+ *   - String rejections, plain objects without `code`, and Error
+ *     instances continue to flow through `normalizeInvokeError` as
+ *     plain `Error` (not `IpcError`).
+ *
+ * All tests drive through the public `transcribeAudio` wrapper, which
+ * calls `invoke("transcribe_audio", { audioBase64 })`. We mock
+ * `@tauri-apps/api/core` so we can deterministically reject `invoke`
+ * and inspect the wrapped error.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const invokeMock = vi.hoisted(() => ({
+  invoke: vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => invokeMock);
+
+// Autostart plugin is imported eagerly by tauri.ts; stub it out so jsdom
+// doesn't blow up on the missing plugin.
+vi.mock("@tauri-apps/plugin-autostart", () => ({
+  disable: vi.fn(),
+  enable: vi.fn(),
+  isEnabled: vi.fn(),
+}));
+
+beforeEach(() => {
+  invokeMock.invoke.mockReset();
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("assistant credential provider ownership", () => {
+  it("passes the captured provider through reads and delayed saves", async () => {
+    const { getAssistantApiKey, setAssistantApiKey } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValue(undefined);
+    await setAssistantApiKey("provider-a-key", "openai");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_assistant_api_key", {
+      apiKey: "provider-a-key", provider: "openai",
+    });
+    await getAssistantApiKey("xai");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("get_assistant_api_key", { provider: "xai" });
+    await setAssistantApiKey("provider-a-retry", "openai");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_assistant_api_key", {
+      apiKey: "provider-a-retry", provider: "openai",
+    });
+  });
+
+  it("retains current-provider compatibility for callers without an explicit owner", async () => {
+    const { getAssistantApiKey, setAssistantApiKey } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValue(undefined);
+    await getAssistantApiKey();
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("get_assistant_api_key", { provider: undefined });
+    await setAssistantApiKey("current-provider-key");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_assistant_api_key", {
+      apiKey: "current-provider-key", provider: undefined,
+    });
+  });
+});
+
+describe("external correction learning IPC", () => {
+  it("passes the explicit opt-in and opt-out values", async () => {
+    const { setExternalCorrectionLearning } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValue(undefined);
+    await setExternalCorrectionLearning(true);
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_external_correction_learning", { enabled: true });
+    await setExternalCorrectionLearning(false);
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_external_correction_learning", { enabled: false });
+  });
+});
+
+describe("GPU idle persistence IPC", () => {
+  it("distinguishes the effective timer from its remembered timeout", async () => {
+    const { getGpuIdleSeconds, setGpuIdleSeconds } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValue(0);
+    await getGpuIdleSeconds();
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("get_gpu_idle_seconds");
+    await getGpuIdleSeconds(true);
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("get_gpu_idle_seconds", { includeDisabled: true });
+    await setGpuIdleSeconds(0, 60);
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("set_gpu_idle_seconds", { seconds: 0, timeoutSeconds: 60 });
+  });
+});
+
+describe("ChatGPT registration IPC", () => {
+  it("distinguishes returning sign-in from explicit new registration", async () => {
+    const { loginOpenaiCodexOauth, removeChatgptAccount } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValue({ loggedIn: false });
+    await loginOpenaiCodexOauth();
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("login_openai_codex_oauth", { clientId: null, newAccount: false });
+    await loginOpenaiCodexOauth("oaiapp_saved");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("login_openai_codex_oauth", { clientId: "oaiapp_saved", newAccount: false });
+    await loginOpenaiCodexOauth(undefined, true);
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("login_openai_codex_oauth", { clientId: null, newAccount: true });
+    await removeChatgptAccount("oaiapp_saved");
+    expect(invokeMock.invoke).toHaveBeenLastCalledWith("remove_chatgpt_account", { clientId: "oaiapp_saved" });
+  });
+});
+
+describe("normalizeInvokeError -> IpcError", () => {
+  it("structured_error_object_becomes_IpcError", async () => {
+    const mod = await import("@/api/tauri");
+    const { transcribeAudio, IpcError } = mod as {
+      transcribeAudio: (audioBase64: string) => Promise<unknown>;
+      IpcError: new (
+        message: string,
+        code: string,
+        category: string,
+        details?: unknown,
+      ) => Error;
+    };
+
+    invokeMock.invoke.mockRejectedValueOnce({
+      code: "ASR_ERROR",
+      category: "asr",
+      message: "foo",
+      details: null,
+    });
+
+    let caught: unknown;
+    try {
+      await transcribeAudio("base64");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(IpcError);
+    expect(caught).toBeInstanceOf(Error);
+    const err = caught as Error & {
+      code: string;
+      category: string;
+    };
+    expect(err.code).toBe("ASR_ERROR");
+    expect(err.category).toBe("asr");
+    expect(err.message).toBe("foo");
+  });
+
+  it("IpcError_carries_details_field", async () => {
+    const mod = await import("@/api/tauri");
+    const { transcribeAudio, IpcError } = mod as {
+      transcribeAudio: (audioBase64: string) => Promise<unknown>;
+      IpcError: new (
+        message: string,
+        code: string,
+        category: string,
+        details?: unknown,
+      ) => Error;
+    };
+
+    invokeMock.invoke.mockRejectedValueOnce({
+      code: "X",
+      category: "y",
+      message: "m",
+      details: { nested: 1 },
+    });
+
+    let caught: unknown;
+    try {
+      await transcribeAudio("base64");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(IpcError);
+    const err = caught as Error & { details: unknown };
+    expect(err.details).toEqual({ nested: 1 });
+  });
+
+  it("plain_string_rejection_produces_plain_Error_not_IpcError", async () => {
+    const mod = await import("@/api/tauri");
+    const { transcribeAudio, IpcError } = mod as {
+      transcribeAudio: (audioBase64: string) => Promise<unknown>;
+      IpcError: new (
+        message: string,
+        code: string,
+        category: string,
+        details?: unknown,
+      ) => Error;
+    };
+
+    invokeMock.invoke.mockRejectedValueOnce("plain string error");
+
+    let caught: unknown;
+    try {
+      await transcribeAudio("base64");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(IpcError);
+    expect((caught as Error).message).toBe("plain string error");
+  });
+
+  it("object_without_code_falls_back_to_plain_Error", async () => {
+    const mod = await import("@/api/tauri");
+    const { transcribeAudio, IpcError } = mod as {
+      transcribeAudio: (audioBase64: string) => Promise<unknown>;
+      IpcError: new (
+        message: string,
+        code: string,
+        category: string,
+        details?: unknown,
+      ) => Error;
+    };
+
+    invokeMock.invoke.mockRejectedValueOnce({
+      message: "no code",
+      error: "x",
+    });
+
+    let caught: unknown;
+    try {
+      await transcribeAudio("base64");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(IpcError);
+    expect((caught as Error).message).toBe("no code");
+  });
+
+  it("Error_instance_passes_through", async () => {
+    const mod = await import("@/api/tauri");
+    const { transcribeAudio } = mod as {
+      transcribeAudio: (audioBase64: string) => Promise<unknown>;
+    };
+
+    const native = new Error("native");
+    invokeMock.invoke.mockRejectedValueOnce(native);
+
+    let caught: unknown;
+    try {
+      await transcribeAudio("base64");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("native");
+  });
+});
+
+describe("getRecordingSnapshot", () => {
+  it("invokes the session snapshot command without arguments", async () => {
+    const snapshot = {
+      sessionId: 42,
+      revision: 3,
+      phase: "processing",
+      mode: "dictation",
+    };
+    invokeMock.invoke.mockResolvedValueOnce(snapshot);
+
+    const { getRecordingSnapshot } = await import("@/api/tauri");
+    await expect(getRecordingSnapshot()).resolves.toEqual(snapshot);
+    expect(invokeMock.invoke).toHaveBeenCalledWith("get_recording_snapshot");
+  });
+});
+
+describe("history and per-app profile IPC", () => {
+  it("uses camel-case Tauri arguments for history settings", async () => {
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+    const { setHistorySettings } = await import("@/api/tauri");
+
+    await setHistorySettings(true, false, 90);
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("set_history_settings", {
+      enabled: true,
+      saveAudio: false,
+      retentionDays: 90,
+    });
+  });
+
+  it("forwards history filters and reprocessing kind", async () => {
+    invokeMock.invoke.mockResolvedValue(undefined);
+    const { listTranscriptionHistory, reprocessTranscriptionHistory } = await import("@/api/tauri");
+    const filter = {
+      query: "Code",
+      mode: "dictation" as const,
+      status: "success" as const,
+      limit: 50,
+      offset: 0,
+    };
+
+    await listTranscriptionHistory(filter);
+    await reprocessTranscriptionHistory(17, "asr");
+
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(1, "list_transcription_history", { filter });
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(2, "reprocess_transcription_history", {
+      id: 17,
+      kind: "asr",
+    });
+  });
+});
+
+describe("web search provider IPC", () => {
+  it("keeps Google and Tavily API keys in provider-specific slots", async () => {
+    const { getWebSearchApiKey, setWebSearchApiKey } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValue(undefined);
+
+    await setWebSearchApiKey("google", "google-key");
+    await getWebSearchApiKey("google");
+
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(
+      1,
+      "set_web_search_api_key",
+      { provider: "google", apiKey: "google-key" },
+    );
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(
+      2,
+      "get_web_search_api_key",
+      { provider: "google" },
+    );
+  });
+});
+
+describe("selection window drag IPC", () => {
+  it("uses a dedicated backend command instead of dragging the non-focus window directly", async () => {
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    const { startSelectionWindowDrag } = await import("@/api/tauri");
+    await startSelectionWindowDrag();
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith(
+      "start_selection_window_drag",
+      {},
+    );
+  });
+});
+
+describe("selection replacement IPC", () => {
+  it("forwards the generated text with its exact source selection context", async () => {
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    const { replaceSelection } = await import("@/api/tauri");
+    await replaceSelection({
+      replacementText: "Improved result",
+      sourceText: "Original selection",
+      version: 17,
+    });
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("replace_selection", {
+      replacementText: "Improved result",
+      sourceText: "Original selection",
+      version: 17,
+    });
+  });
+});
+
+describe("retryAssistantRequest payload", () => {
+  it("invokes the retry command with the session and original request", async () => {
+    invokeMock.invoke.mockResolvedValueOnce("fresh assistant response");
+
+    const { retryAssistantRequest } = await import("@/api/tauri");
+    await expect(
+      retryAssistantRequest({
+        sessionId: 42,
+        request: "查一下今天的发布状态",
+      }),
+    ).resolves.toBe("fresh assistant response");
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("retry_assistant_request", {
+      sessionId: 42,
+      request: "查一下今天的发布状态",
+    });
+  });
+});
+
+describe("listAiModels payload", () => {
+  it("forwards an explicit cache-bypassing refresh", async () => {
+    invokeMock.invoke.mockResolvedValueOnce({ models: [], sourceUrl: "" });
+
+    const { listAiModels } = await import("@/api/tauri");
+    await listAiModels("openai", undefined, "", true, "api_key");
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("list_ai_models", {
+      provider: "openai",
+      baseUrl: null,
+      apiKey: "",
+      forceRefresh: true,
+      openaiAuthMode: "api_key",
+      xaiAuthMode: null,
+    });
+  });
+
+  it("forwards an explicit xAI auth mode as the optional sixth argument", async () => {
+    invokeMock.invoke.mockResolvedValueOnce({ models: [], sourceUrl: "" });
+
+    const { listAiModels } = await import("@/api/tauri");
+    await listAiModels("xai", undefined, "", true, undefined, "oauth");
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("list_ai_models", {
+      provider: "xai",
+      baseUrl: null,
+      apiKey: "",
+      forceRefresh: true,
+      openaiAuthMode: null,
+      xaiAuthMode: "oauth",
+    });
+  });
+
+  it("keeps OpenAI and xAI auth modes independent when both are provided", async () => {
+    invokeMock.invoke.mockResolvedValueOnce({ models: [], sourceUrl: "" });
+
+    const { listAiModels } = await import("@/api/tauri");
+    await listAiModels("openai", "https://api.openai.com", "sk-test", false, "oauth", "api_key");
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("list_ai_models", {
+      provider: "openai",
+      baseUrl: "https://api.openai.com",
+      apiKey: "sk-test",
+      forceRefresh: false,
+      openaiAuthMode: "oauth",
+      xaiAuthMode: "api_key",
+    });
+  });
+});
+
+describe("setLlmProviderConfig payload", () => {
+  it("omits assistantProvider when the caller does not update it", async () => {
+    const mod = await import("@/api/tauri");
+    const { setLlmProviderConfig } = mod as {
+      setLlmProviderConfig: (
+        active: string,
+        customBaseUrl?: string,
+        customModel?: string,
+        polishReasoningMode?: string,
+        assistantReasoningMode?: string,
+        assistantUseSeparateModel?: boolean,
+        assistantModel?: string,
+        assistantProvider?: string | null,
+      ) => Promise<void>;
+    };
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setLlmProviderConfig(
+      "custom",
+      "https://example.com/v1",
+      "model-a",
+      "balanced",
+      "light",
+      true,
+      "assistant-model",
+      undefined,
+    );
+
+    const [, args] = invokeMock.invoke.mock.calls[0];
+    expect(args).not.toHaveProperty("assistantProvider");
+    expect(args).not.toHaveProperty("assistantProviderSet");
+  });
+
+  it("keeps explicit assistantProvider values in the payload", async () => {
+    const mod = await import("@/api/tauri");
+    const { setLlmProviderConfig } = mod as {
+      setLlmProviderConfig: (
+        active: string,
+        customBaseUrl?: string,
+        customModel?: string,
+        polishReasoningMode?: string,
+        assistantReasoningMode?: string,
+        assistantUseSeparateModel?: boolean,
+        assistantModel?: string,
+        assistantProvider?: string | null,
+      ) => Promise<void>;
+    };
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setLlmProviderConfig(
+      "custom",
+      "https://example.com/v1",
+      "model-a",
+      "balanced",
+      "light",
+      true,
+      "assistant-model",
+      "assistant-provider",
+    );
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith(
+      "set_llm_provider_config",
+      expect.objectContaining({
+        assistantProvider: "assistant-provider",
+        assistantProviderSet: true,
+      }),
+    );
+  });
+
+  it("keeps explicit null assistantProvider so callers can clear it", async () => {
+    const mod = await import("@/api/tauri");
+    const { setLlmProviderConfig } = mod as {
+      setLlmProviderConfig: (
+        active: string,
+        customBaseUrl?: string,
+        customModel?: string,
+        polishReasoningMode?: string,
+        assistantReasoningMode?: string,
+        assistantUseSeparateModel?: boolean,
+        assistantModel?: string,
+        assistantProvider?: string | null,
+      ) => Promise<void>;
+    };
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setLlmProviderConfig(
+      "custom",
+      "https://example.com/v1",
+      "model-a",
+      "balanced",
+      "light",
+      false,
+      "model-a",
+      null,
+    );
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith(
+      "set_llm_provider_config",
+      expect.objectContaining({
+        assistantProvider: null,
+        assistantProviderSet: true,
+      }),
+    );
+  });
+
+  it("forwards xaiAuthMode as the optional last argument", async () => {
+    const mod = await import("@/api/tauri");
+    const { setLlmProviderConfig } = mod as {
+      setLlmProviderConfig: (
+        active: string,
+        customBaseUrl?: string,
+        customModel?: string,
+        polishReasoningMode?: string,
+        assistantReasoningMode?: string,
+        assistantUseSeparateModel?: boolean,
+        assistantModel?: string,
+        assistantProvider?: string | null,
+        openaiAuthMode?: string | null,
+        xaiAuthMode?: string | null,
+      ) => Promise<void>;
+    };
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setLlmProviderConfig(
+      "xai",
+      undefined,
+      "grok-4.6",
+      "provider_default",
+      "provider_default",
+      false,
+      undefined,
+      undefined,
+      null,
+      "oauth",
+    );
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith(
+      "set_llm_provider_config",
+      expect.objectContaining({
+        active: "xai",
+        openaiAuthMode: null,
+        xaiAuthMode: "oauth",
+      }),
+    );
+  });
+
+  it("sends xaiAuthMode null when the caller omits the last argument", async () => {
+    const mod = await import("@/api/tauri");
+    const { setLlmProviderConfig } = mod as {
+      setLlmProviderConfig: (
+        active: string,
+        customBaseUrl?: string,
+        customModel?: string,
+        polishReasoningMode?: string,
+        assistantReasoningMode?: string,
+        assistantUseSeparateModel?: boolean,
+        assistantModel?: string,
+        assistantProvider?: string | null,
+        openaiAuthMode?: string | null,
+        xaiAuthMode?: string | null,
+      ) => Promise<void>;
+    };
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setLlmProviderConfig(
+      "openai",
+      undefined,
+      "gpt-4.1-mini",
+      "balanced",
+      "light",
+      false,
+      undefined,
+      undefined,
+      "oauth",
+    );
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith(
+      "set_llm_provider_config",
+      expect.objectContaining({
+        openaiAuthMode: "oauth",
+        xaiAuthMode: null,
+      }),
+    );
+  });
+});
+
+describe("Grok Build OAuth IPC wrappers", () => {
+  it("invokes status, login, device-code start, and logout without arguments", async () => {
+    const {
+      getGrokBuildOauthStatus,
+      loginGrokBuildOauth,
+      startGrokBuildOauthDeviceCode,
+      logoutGrokBuildOauth,
+    } = await import("@/api/tauri");
+
+    invokeMock.invoke
+      .mockResolvedValueOnce({ loggedIn: false })
+      .mockResolvedValueOnce({
+        loggedIn: true,
+        email: "user@example.com",
+        planType: "super",
+        accountId: "acc-1",
+        expiresAtMs: 1_700_000_000_000,
+      })
+      .mockResolvedValueOnce({
+        verificationUrl: "https://auth.x.ai/device",
+        userCode: "ABCD-1234",
+        deviceCode: "device-code",
+        intervalSecs: 5,
+      })
+      .mockResolvedValueOnce(undefined);
+
+    await expect(getGrokBuildOauthStatus()).resolves.toEqual({ loggedIn: false });
+    await expect(loginGrokBuildOauth()).resolves.toEqual({
+      loggedIn: true,
+      email: "user@example.com",
+      planType: "super",
+      accountId: "acc-1",
+      expiresAtMs: 1_700_000_000_000,
+    });
+    await expect(startGrokBuildOauthDeviceCode()).resolves.toEqual({
+      verificationUrl: "https://auth.x.ai/device",
+      userCode: "ABCD-1234",
+      deviceCode: "device-code",
+      intervalSecs: 5,
+    });
+    await expect(logoutGrokBuildOauth()).resolves.toBeUndefined();
+
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(1, "get_grok_build_oauth_status");
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(2, "login_grok_build_oauth");
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(3, "start_grok_build_oauth_device_code");
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(4, "logout_grok_build_oauth");
+  });
+
+  it("forwards the device-code challenge as { challenge }", async () => {
+    const { completeGrokBuildOauthDeviceCode } = await import("@/api/tauri");
+    const challenge = {
+      verificationUrl: "https://auth.x.ai/device",
+      userCode: "ABCD-1234",
+      deviceCode: "device-code",
+      intervalSecs: 5,
+    };
+    invokeMock.invoke.mockResolvedValueOnce({ loggedIn: true, email: "user@example.com" });
+
+    await expect(completeGrokBuildOauthDeviceCode(challenge)).resolves.toEqual({
+      loggedIn: true,
+      email: "user@example.com",
+    });
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("complete_grok_build_oauth_device_code", {
+      challenge,
+    });
+  });
+});
+
+describe("setPolishStructureLevel payload", () => {
+  it("persists the selected structure level through its dedicated command", async () => {
+    const { setPolishStructureLevel } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setPolishStructureLevel("strong");
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("set_polish_structure_level", {
+      level: "strong",
+    });
+  });
+});
+
+describe("screen vision IPC payloads", () => {
+  it("persists one shared screen-context switch", async () => {
+    const { setScreenContextEnabled } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setScreenContextEnabled(true);
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("set_screen_context_enabled", {
+      enabled: true,
+    });
+  });
+
+  it("persists the fallback provider and model", async () => {
+    const { setScreenVisionConfig } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setScreenVisionConfig(true, "openai", "gpt-4.1-mini");
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith("set_screen_vision_config", {
+      enabled: true,
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+  });
+
+  it("reads and writes the key for the explicitly selected provider", async () => {
+    const { getScreenVisionApiKey, setScreenVisionApiKey } = await import("@/api/tauri");
+    invokeMock.invoke.mockResolvedValueOnce("stored-key").mockResolvedValueOnce(undefined);
+
+    await expect(getScreenVisionApiKey("openai")).resolves.toBe("stored-key");
+    await setScreenVisionApiKey("openai", "new-key");
+
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(1, "get_screen_vision_api_key", {
+      provider: "openai",
+    });
+    expect(invokeMock.invoke).toHaveBeenNthCalledWith(2, "set_screen_vision_api_key", {
+      provider: "openai",
+      apiKey: "new-key",
+    });
+  });
+});
+
+describe("setCorrectionValidationConfig payload", () => {
+  it("omits provider/model set flags when those fields are not updated", async () => {
+    const mod = await import("@/api/tauri");
+    const { setCorrectionValidationConfig } = mod as {
+      setCorrectionValidationConfig: (params: {
+        enabled: boolean;
+        useSeparateModel?: boolean;
+        provider?: string | null;
+        model?: string | null;
+      }) => Promise<void>;
+    };
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setCorrectionValidationConfig({ enabled: true, useSeparateModel: false });
+
+    const [, args] = invokeMock.invoke.mock.calls[0];
+    expect(args).not.toHaveProperty("provider");
+    expect(args).not.toHaveProperty("providerSet");
+    expect(args).not.toHaveProperty("model");
+    expect(args).not.toHaveProperty("modelSet");
+  });
+
+  it("keeps explicit null provider/model updates with set flags", async () => {
+    const mod = await import("@/api/tauri");
+    const { setCorrectionValidationConfig } = mod as {
+      setCorrectionValidationConfig: (params: {
+        enabled: boolean;
+        useSeparateModel?: boolean;
+        provider?: string | null;
+        model?: string | null;
+      }) => Promise<void>;
+    };
+    invokeMock.invoke.mockResolvedValueOnce(undefined);
+
+    await setCorrectionValidationConfig({
+      enabled: true,
+      provider: null,
+      model: null,
+    });
+
+    expect(invokeMock.invoke).toHaveBeenCalledWith(
+      "set_correction_validation_config",
+      expect.objectContaining({
+        provider: null,
+        providerSet: true,
+        model: null,
+        modelSet: true,
+      }),
+    );
+  });
+});

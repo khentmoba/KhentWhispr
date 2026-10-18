@@ -1,0 +1,847 @@
+/* ============================================================
+   Subtitle Overlay Window Styles
+   Transparent desktop, bottom-center transcript and assistant surfaces.
+   Only loaded in the subtitle window.
+   ============================================================ */
+
+/* Force fully transparent background — override theme.css body gradient */
+html,
+body,
+#root {
+  background: transparent !important;
+  background-image: none !important;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Root container — full viewport, bottom-center aligned */
+.subtitle-root {
+  --subtitle-assistant-strong: oklch(55% 0.24 293);
+  --subtitle-assistant-surface: color-mix(in srgb, var(--color-bg-overlay) 94%, var(--color-assistant) 6%);
+  --subtitle-assistant-surface-soft: color-mix(in srgb, var(--color-bg-tertiary) 90%, var(--color-assistant) 10%);
+  --subtitle-assistant-border: color-mix(in srgb, var(--color-assistant) 28%, var(--color-border));
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 64px;
+  pointer-events: none;
+  background: transparent;
+}
+
+.subtitle-root-interactive {
+  pointer-events: auto;
+}
+
+/* A readable transcript surface that expands for longer content. */
+.subtitle-capsule {
+  pointer-events: none;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  max-width: 72vw;
+  max-height: 60vh;
+  overflow: hidden;
+  transform-origin: 50% 100%;
+  will-change: transform, opacity, clip-path;
+  animation: subtitle-rise-in 200ms var(--ease-out-expo);
+  transition:
+    border-radius var(--dur-3) var(--ease-out-expo),
+    background-color var(--dur-3) var(--ease-out-expo),
+    box-shadow var(--dur-3) var(--ease-out-expo);
+}
+
+.subtitle-capsule-assistant {
+  position: relative;
+  pointer-events: auto;
+  padding: 14px 16px;
+  max-width: min(760px, 78vw);
+  max-height: min(70vh, 720px);
+  flex-wrap: wrap;
+  background: var(--subtitle-assistant-surface);
+  border-color: var(--subtitle-assistant-border);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.24);
+}
+
+.subtitle-capsule-assistant:has(.subtitle-assistant-actions) {
+  padding-top: 48px;
+}
+
+.subtitle-capsule-interactive {
+  pointer-events: auto;
+}
+
+/* Single-line capsule (status hints) reverts to pill shape */
+.subtitle-capsule:has(.subtitle-hint) {
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 8px 16px;
+  max-height: none;
+  overflow: visible;
+}
+
+/* Reset dot / waveform-indicator margins inside pill-shaped status capsule */
+.subtitle-capsule:has(.subtitle-hint) .subtitle-dot-recording,
+.subtitle-capsule:has(.subtitle-hint) .subtitle-dot-assistant,
+.subtitle-capsule:has(.subtitle-hint) .subtitle-dot-assistant-processing,
+.subtitle-capsule:has(.subtitle-hint) .subtitle-dot-polishing,
+.subtitle-capsule:has(.subtitle-hint) .subtitle-dot-processing,
+.subtitle-capsule:has(.subtitle-hint) .subtitle-waveform-indicator {
+  margin-top: 0;
+}
+
+/* Light theme capsule */
+[data-theme="light"] .subtitle-capsule {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+  box-shadow: 0 8px 28px rgba(32, 54, 46, 0.12);
+}
+
+/* subtitle-text and subtitle-hint now use CSS vars that auto-switch per theme */
+
+/* Fade-out state */
+.subtitle-capsule.subtitle-fade-out {
+  animation: subtitle-fade-out var(--dur-exit) var(--ease-out-quart) forwards;
+}
+
+/* Text content */
+.subtitle-text {
+  font-family: var(--font-sans);
+  font-size: var(--text-body-lg);
+  line-height: 24px;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+  /* Smooth the subtle size adjustments when new lines wrap in */
+  font-variant-ligatures: common-ligatures contextual;
+  font-kerning: normal;
+}
+
+.subtitle-interim-stable,
+.subtitle-interim-tentative {
+  color: inherit;
+  opacity: 1;
+}
+
+/* Per-character fade-in for streaming text.
+   Each new grapheme mounts as its own span and opacity-fades on mount,
+   so newly-arriving text genuinely eases in instead of popping. */
+.stream-char {
+  animation: stream-char-in 260ms var(--ease-out-expo) both;
+}
+
+@keyframes stream-char-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Streaming caret — inline block that follows the last character.
+   Uses ::after so it lives at the end of the text flow and wraps with it. */
+.subtitle-text-streaming::after {
+  content: "";
+  display: inline-block;
+  width: 0.42em;
+  height: 1.02em;
+  margin-left: 0.08em;
+  vertical-align: text-bottom;
+  background: currentColor;
+  border-radius: 1px;
+  animation: stream-caret-blink 1.05s var(--ease-out-quart) infinite;
+  transform: translateY(-0.08em);
+}
+
+.subtitle-capsule-assistant .subtitle-text {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: calc(min(70vh, 720px) - 44px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(in srgb, var(--color-assistant) 32%, transparent) transparent;
+  pointer-events: auto;
+}
+
+.subtitle-capsule-assistant .markdown-content {
+  --markdown-link-color: var(--color-assistant);
+}
+
+/* Status hint text */
+.subtitle-hint {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 20px;
+  color: var(--color-text-secondary);
+  animation: subtitle-fade-in-subtle var(--dur-3) var(--ease-out-expo);
+}
+
+/* Streaming token counter badge */
+.subtitle-stream-badge {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  align-self: center;
+}
+
+/* subtitle-stream-badge uses --color-text-tertiary which auto-switches */
+
+.subtitle-assistant-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  z-index: var(--z-base);
+}
+
+.subtitle-copy-status {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity 0.18s var(--ease-out-expo), transform var(--dur-3) var(--ease-out-expo);
+}
+
+.subtitle-copy-status.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* subtitle-copy-status uses --color-text-tertiary which auto-switches */
+
+.subtitle-action-button {
+  position: static;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--color-assistant) 14%, transparent);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 0.18s var(--ease-out-expo), transform var(--dur-3) var(--ease-out-expo), background 0.16s var(--ease-out-expo);
+}
+
+.subtitle-action-button.is-ready {
+  opacity: 1;
+  transform: translateY(0);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.subtitle-action-button:hover {
+  background: color-mix(in srgb, var(--color-assistant) 22%, transparent);
+}
+
+.subtitle-action-button:active {
+  transform: translateY(1px);
+}
+
+[data-theme="light"] .subtitle-action-button {
+  background: color-mix(in srgb, var(--color-assistant) 12%, transparent);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .subtitle-action-button:hover {
+  background: color-mix(in srgb, var(--color-assistant) 20%, transparent);
+}
+
+[data-theme="light"] .subtitle-capsule-assistant {
+  background: var(--subtitle-assistant-surface);
+  border-color: var(--subtitle-assistant-border);
+  box-shadow: 0 4px 8px rgba(61, 45, 90, 0.12);
+}
+
+.subtitle-action-button:focus-visible,
+.subtitle-source-link:focus-visible,
+.subtitle-conversation-close:focus-visible,
+.subtitle-conversation-send:focus-visible {
+  outline: 2px solid var(--color-assistant);
+  outline-offset: 2px;
+}
+
+.subtitle-source-list {
+  flex: 1 0 100%;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 0;
+  margin-top: 8px;
+}
+
+.subtitle-google-search-entry {
+  width: 100%;
+  min-height: 34px;
+  overflow: hidden;
+  border-radius: 8px;
+  color-scheme: light;
+}
+
+.subtitle-source-link {
+  max-width: min(260px, 100%);
+  border: 0;
+  border-radius: var(--radius-full);
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: color-mix(in srgb, var(--color-assistant) 12%, transparent);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--text-2xs);
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background-color 0.16s var(--ease-out-expo), color 0.16s var(--ease-out-expo);
+}
+
+.subtitle-source-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subtitle-source-link svg {
+  flex: 0 0 auto;
+}
+
+.subtitle-source-link:hover {
+  background: color-mix(in srgb, var(--color-assistant) 20%, transparent);
+  color: var(--color-text-primary);
+}
+
+.subtitle-search-warning {
+  flex: 1 0 100%;
+  margin: 8px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-2xs);
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.subtitle-search-warning button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.subtitle-search-meta {
+  flex: 1 0 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-2xs);
+  line-height: 1.25;
+}
+
+.subtitle-search-query {
+  min-width: 0;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subtitle-capsule-conversation {
+  display: block;
+  width: min(760px, calc(100vw - 32px));
+  max-width: min(760px, calc(100vw - 32px));
+  height: clamp(320px, 56vh, 576px);
+  max-height: calc(100vh - 64px);
+  padding: 0;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.subtitle-conversation {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--color-text-primary);
+}
+
+.subtitle-conversation-header {
+  min-height: 48px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-assistant) 5%, transparent);
+  flex: 0 0 auto;
+}
+
+.subtitle-conversation-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.subtitle-conversation-title svg {
+  color: var(--color-assistant);
+}
+
+.subtitle-conversation-close,
+.subtitle-conversation-send {
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.16s var(--ease-out-expo), color 0.16s var(--ease-out-expo), transform 0.12s var(--ease-out-expo);
+}
+
+.subtitle-conversation-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.subtitle-conversation-close:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-tertiary);
+}
+
+.subtitle-conversation-close:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.subtitle-conversation-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 16px 12px;
+  scroll-padding-block: 16px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-assistant) 32%, transparent) transparent;
+}
+
+.subtitle-conversation-messages:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-assistant) 60%, transparent);
+  outline-offset: -2px;
+}
+
+.subtitle-conversation-message {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 0;
+}
+
+.subtitle-conversation-message.is-user {
+  align-items: flex-end;
+}
+
+.subtitle-conversation-message.is-assistant + .subtitle-conversation-message.is-user {
+  margin-top: 8px;
+}
+
+.subtitle-conversation-row {
+  max-width: min(82%, 72ch);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.subtitle-conversation-message.is-user .subtitle-conversation-row {
+  justify-content: flex-end;
+}
+
+.subtitle-conversation-assistant-mark {
+  width: 24px;
+  height: 24px;
+  margin-top: 8px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--color-assistant);
+  background: color-mix(in srgb, var(--color-assistant) 12%, transparent);
+}
+
+.subtitle-conversation-bubble {
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-assistant) 14%, var(--color-border-subtle));
+  background: var(--subtitle-assistant-surface-soft);
+  color: var(--color-text-primary);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.subtitle-conversation-message.is-user .subtitle-conversation-bubble {
+  border-color: color-mix(in srgb, var(--color-assistant) 30%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-assistant) 18%, var(--color-bg-tertiary));
+  color: var(--color-text-primary);
+  border-bottom-right-radius: 4px;
+}
+
+.subtitle-conversation-message.is-assistant .subtitle-conversation-bubble {
+  border-bottom-left-radius: 4px;
+}
+
+.subtitle-conversation-message .subtitle-source-list {
+  flex: none;
+  padding-left: 32px;
+  margin-top: 8px;
+}
+
+.subtitle-conversation-message.is-streaming .subtitle-conversation-bubble {
+  color: var(--color-text-secondary);
+}
+
+.subtitle-conversation-error {
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-warning, #d97706) 10%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--text-2xs);
+  line-height: 1.35;
+  flex: 0 0 auto;
+}
+
+.subtitle-conversation-composer {
+  margin: 0 16px 16px;
+  padding: 4px 4px 4px 12px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-secondary);
+  flex: 0 0 auto;
+  transition:
+    border-color 0.16s var(--ease-out-expo),
+    background-color 0.16s var(--ease-out-expo),
+    box-shadow 0.16s var(--ease-out-expo);
+}
+
+.subtitle-conversation-composer:focus-within {
+  border-color: color-mix(in srgb, var(--color-assistant) 64%, var(--color-border));
+  background: color-mix(in srgb, var(--color-bg-primary) 96%, var(--color-assistant) 4%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-assistant) 18%, transparent);
+}
+
+.subtitle-conversation-composer textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  max-height: 96px;
+  padding: 6px 4px;
+  box-sizing: border-box;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 20px;
+}
+
+.subtitle-conversation-composer textarea::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 1;
+}
+
+.subtitle-conversation-send {
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+  background: var(--subtitle-assistant-strong);
+  color: white;
+  flex: 0 0 auto;
+}
+
+.subtitle-conversation-send:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.subtitle-conversation-send:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+.subtitle-conversation-send:disabled {
+  opacity: 1;
+  background: color-mix(in srgb, var(--color-assistant) 14%, var(--color-bg-tertiary));
+  color: var(--color-assistant);
+  cursor: default;
+}
+
+.subtitle-status-indicator {
+  width: 28px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+/* ---- Indicator dots ---- */
+
+/* Recording dot — pulsing terracotta */
+.subtitle-dot-recording {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+  margin-top: 0;
+  animation: subtitle-pulse 1.2s ease-in-out infinite;
+}
+
+.subtitle-dot-assistant,
+.subtitle-dot-polishing {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-top: 0;
+}
+
+.subtitle-dot-assistant {
+  background: var(--color-assistant);
+  animation: subtitle-sparkle 1.6s ease-in-out infinite;
+}
+
+/* Polishing dot — sparkle shimmer */
+.subtitle-dot-polishing {
+  background: var(--color-accent);
+  animation: subtitle-sparkle 1.6s ease-in-out infinite;
+}
+
+/* Processing dot — spinning with fade-in entrance */
+.subtitle-dot-processing {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: var(--color-accent);
+  box-sizing: border-box;
+  flex-shrink: 0;
+  margin-top: 0;
+  animation: subtitle-fade-in-subtle 0.15s var(--ease-out-expo), spin 0.7s linear infinite;
+}
+
+.subtitle-dot-assistant-processing {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--color-assistant) 18%, transparent);
+  border-top-color: var(--color-assistant);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--color-assistant) 28%, transparent);
+  box-sizing: border-box;
+  flex-shrink: 0;
+  margin-top: 0;
+  animation: subtitle-fade-in-subtle 0.15s var(--ease-out-expo), spin 0.7s linear infinite;
+}
+
+[data-theme="light"] .subtitle-dot-processing {
+  border-color: rgba(0, 0, 0, 0.06);
+  border-top-color: var(--color-accent);
+}
+
+[data-theme="light"] .subtitle-dot-assistant-processing {
+  border-color: color-mix(in srgb, var(--color-assistant) 14%, transparent);
+  border-top-color: var(--color-assistant);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-assistant) 18%, transparent);
+}
+
+/* ---- Waveform indicator (replaces dot during recording) ---- */
+
+.subtitle-waveform-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 28px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 0;
+  animation: subtitle-indicator-enter 0.18s var(--ease-out-expo);
+}
+
+.subtitle-waveform-indicator-bar {
+  width: 2px;
+  flex: 0 0 2px;
+  min-height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+  opacity: 0.85;
+}
+
+.subtitle-waveform-indicator.is-assistant .subtitle-waveform-indicator-bar {
+  background: var(--color-assistant);
+}
+
+/* ---- Animations ---- */
+
+/* Indicator entrance — opacity + scale (for elements without conflicting transform animations) */
+@keyframes subtitle-indicator-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Subtle opacity-only fade-in (safe to compose with transform-based animations) */
+@keyframes subtitle-fade-in-subtle {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes subtitle-rise-in {
+  from {
+    opacity: 0;
+    clip-path: inset(58% 32% 0 32% round var(--radius-full));
+    transform: translate3d(0, 8px, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes subtitle-fade-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+@keyframes subtitle-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+
+@keyframes subtitle-sparkle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* ---- Accessibility ---- */
+
+@media (prefers-reduced-motion: reduce) {
+  .subtitle-capsule,
+  .subtitle-capsule.subtitle-fade-out,
+  .subtitle-dot-recording,
+  .subtitle-dot-assistant,
+  .subtitle-dot-assistant-processing,
+  .subtitle-dot-polishing,
+  .subtitle-dot-processing,
+  .subtitle-waveform-indicator,
+  .subtitle-hint {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .stream-char {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+
+  .subtitle-text-streaming::after {
+    animation: none;
+    opacity: 0;
+  }
+
+  .subtitle-waveform-indicator-bar {
+    transition: none !important;
+  }
+
+  .subtitle-action-button,
+  .subtitle-source-link,
+  .subtitle-conversation-close,
+  .subtitle-conversation-send,
+  .subtitle-conversation-composer {
+    transition: none !important;
+  }
+}
+
+/* Keep the capsule content-sized, with the status slot stable at finalization. */
+.subtitle-status-indicator { transition: opacity var(--transition-fast); }
+.subtitle-status-indicator[data-visible="false"] { opacity: 0; }
+
+.subtitle-polish-flash { animation: subtitle-flash 0.6s var(--ease-out-expo); }
+@keyframes subtitle-flash {
+  0%, 100% { text-shadow: 0 0 0 transparent; filter: brightness(1); }
+  20% { text-shadow: 0 0 12px var(--color-accent), 0 0 24px var(--color-accent); filter: brightness(1.4); }
+}
+[data-theme="light"] .subtitle-polish-flash { animation-name: subtitle-flash-light; }
+@keyframes subtitle-flash-light {
+  0%, 100% { text-shadow: 0 0 0 transparent; filter: brightness(1); }
+  20% { text-shadow: 0 0 8px var(--color-accent), 0 0 16px rgba(0, 0, 0, 0.1); filter: brightness(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .subtitle-polish-flash { animation: none; }
+}

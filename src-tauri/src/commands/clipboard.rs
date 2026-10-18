@@ -1,0 +1,627 @@
+use crate::utils::AppError;
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+};
+
+#[cfg(target_os = "windows")]
+#[link(name = "imm32")]
+extern "system" {
+    fn ImmGetDefaultIMEWnd(
+        hwnd: windows_sys::Win32::Foundation::HWND,
+    ) -> windows_sys::Win32::Foundation::HWND;
+}
+
+#[cfg(target_os = "windows")]
+fn make_key_input(vk: u16, scan: u16, flags: u32) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: scan,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+#[cfg(target_os = "windows")]
+const CLIPBOARD_RESTORE_DELAY_MS: u64 = 200;
+
+#[cfg(any(target_os = "windows", test))]
+fn try_all_then_standard<T, E, F>(mut capture: F) -> Result<(T, Option<E>), (E, E)>
+where
+    F: FnMut(bool) -> Result<T, E>,
+{
+    match capture(true) {
+        Ok(snapshot) => Ok((snapshot, None)),
+        Err(all_formats_error) => match capture(false) {
+            Ok(snapshot) => Ok((snapshot, Some(all_formats_error))),
+            Err(standard_formats_error) => Err((all_formats_error, standard_formats_error)),
+        },
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_clipboard_snapshot() -> Result<uiautomation::clipboards::Snapshot, AppError> {
+    use uiautomation::clipboards::Clipboard;
+
+    let clipboard = Clipboard::open().map_err(|error| {
+        AppError::Other(format!(
+            "Failed to open clipboard to create snapshot: {error}"
+        ))
+    })?;
+
+    match try_all_then_standard(|try_all_formats| clipboard.snapshot(try_all_formats)) {
+        Ok((snapshot, None)) => Ok(snapshot),
+        Ok((snapshot, Some(all_formats_error))) => {
+            log::warn!(
+                "Full clipboard snapshot failed; using the standard-format snapshot instead: {all_formats_error}"
+            );
+            Ok(snapshot)
+        }
+        Err((all_formats_error, standard_formats_error)) => Err(AppError::Other(format!(
+            "Failed to create clipboard snapshot (full format: {all_formats_error}; standard format: {standard_formats_error})"
+        ))),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn send_inputs(inputs: &[INPUT]) -> Result<(), AppError> {
+    send_inputs_to_target(inputs, None)
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_paste_target(target: Option<isize>) -> Result<(), AppError> {
+    if target.is_some() && target != crate::services::selection_service::foreground_window_id() {
+        return Err(AppError::Other(
+            "The paste target changed; recover the dictation manually".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn send_inputs_to_target(inputs: &[INPUT], target: Option<isize>) -> Result<(), AppError> {
+    const SENDINPUT_CHUNK_SIZE: usize = 128;
+
+    for chunk in inputs.chunks(SENDINPUT_CHUNK_SIZE) {
+        ensure_paste_target(target)?;
+        let sent = unsafe {
+            SendInput(
+                chunk.len() as u32,
+                chunk.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+        if sent as usize != chunk.len() {
+            return Err(AppError::Other(format!(
+                "SendInput failed: sent only {}/{} input events ({})",
+                sent,
+                chunk.len(),
+                std::io::Error::last_os_error()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// 释放所有可能残留的修饰键，防止后续 SendInput 被 OS 解读为组合键
+#[cfg(target_os = "windows")]
+fn release_stuck_modifiers() -> Result<(), AppError> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    const MODIFIER_VKS: [u16; 8] = [
+        0x5B, 0x5C, // VK_LWIN, VK_RWIN
+        0xA4, 0xA5, // VK_LMENU, VK_RMENU
+        0xA0, 0xA1, // VK_LSHIFT, VK_RSHIFT
+        0xA2, 0xA3, // VK_LCONTROL, VK_RCONTROL
+    ];
+
+    let release: Vec<INPUT> = MODIFIER_VKS
+        .iter()
+        .filter(|&&vk| unsafe { GetAsyncKeyState(vk as i32) } < 0)
+        .map(|&vk| make_key_input(vk, 0, KEYEVENTF_KEYUP))
+        .collect();
+
+    if !release.is_empty() {
+        log::debug!("释放 {} 个残留修饰键", release.len());
+        send_inputs(&release)?;
+    }
+    Ok(())
+}
+
+/// 通过 UIA TextPattern 读取前台焦点控件的选中文本。零副作用。
+pub fn grab_selected_text() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        grab_selected_text_uia()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+/// Read a selection without disturbing focus. UI Automation is preferred; a
+/// conservative Ctrl+C fallback is used only when UIA exposes no TextPattern.
+/// The fallback snapshots and restores the clipboard unless another
+/// application/user changed the copied text in the meantime. If a registered
+/// clipboard format cannot be read, standard text/image formats are preserved.
+pub fn grab_selected_text_robust(app_handle: &tauri::AppHandle) -> Option<String> {
+    if let Some(text) = grab_selected_text() {
+        return Some(text);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        use uiautomation::clipboards::Clipboard;
+
+        let snapshot = match capture_clipboard_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                log::warn!("划词读取无法保存当前剪贴板，跳过 Ctrl+C 回退: {error}");
+                return None;
+            }
+        };
+        let marker = format!("__speak_flow_selection_{:016x}__", rand::random::<u64>());
+        if app_handle.clipboard().write_text(&marker).is_err() {
+            if let Ok(clipboard) = Clipboard::open() {
+                let _ = clipboard.restore(snapshot);
+            }
+            return None;
+        }
+
+        const VK_CONTROL: u16 = 0x11;
+        const VK_C: u16 = 0x43;
+        let inputs = [
+            make_key_input(VK_CONTROL, 0, 0),
+            make_key_input(VK_C, 0, 0),
+            make_key_input(VK_C, 0, KEYEVENTF_KEYUP),
+            make_key_input(VK_CONTROL, 0, KEYEVENTF_KEYUP),
+        ];
+        let copy_result = release_stuck_modifiers().and_then(|_| send_inputs(&inputs));
+        if copy_result.is_ok() {
+            std::thread::sleep(std::time::Duration::from_millis(70));
+        }
+
+        let copied = app_handle.clipboard().read_text().ok();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let current = app_handle.clipboard().read_text().ok();
+        let should_restore = current.as_deref() == Some(marker.as_str())
+            || copied
+                .as_deref()
+                .is_some_and(|temporary| current.as_deref() == Some(temporary));
+        if should_restore {
+            if let Ok(clipboard) = Clipboard::open() {
+                if let Err(error) = clipboard.restore(snapshot) {
+                    log::warn!("恢复划词读取前的剪贴板失败: {error}");
+                }
+            }
+        } else {
+            log::debug!("划词读取期间剪贴板已变化，保留新的剪贴板内容");
+        }
+
+        if copy_result.is_err() {
+            return None;
+        }
+        copied
+            .filter(|value| value != &marker)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app_handle;
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn grab_selected_text_uia() -> Option<String> {
+    use uiautomation::UIAutomation;
+
+    let automation = UIAutomation::new().ok()?;
+    let focused = automation.get_focused_element().ok()?;
+
+    if let Some(text) = try_get_selection(&focused) {
+        return Some(text);
+    }
+
+    let walker = automation.create_tree_walker().ok()?;
+    let mut current = focused;
+    for _ in 0..5 {
+        current = match walker.get_parent(&current) {
+            Ok(parent) => parent,
+            Err(_) => break,
+        };
+        if let Some(text) = try_get_selection(&current) {
+            return Some(text);
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn try_get_selection(element: &uiautomation::UIElement) -> Option<String> {
+    use uiautomation::patterns::UITextPattern;
+
+    let pattern: UITextPattern = element.get_pattern().ok()?;
+    let ranges = pattern.get_selection().ok()?;
+
+    let mut combined = String::new();
+    for range in &ranges {
+        if let Ok(text) = range.get_text(-1) {
+            combined.push_str(&text);
+        }
+    }
+
+    let trimmed = combined.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        log::info!("UIA 检测到选中文本（{} 字符）", trimmed.len());
+        Some(trimmed.to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn copy_to_clipboard(
+    app_handle: tauri::AppHandle,
+    text: String,
+) -> Result<String, AppError> {
+    write_text_to_clipboard(&app_handle, &text)?;
+    log::info!("已复制 {} 个字符到剪贴板", text.len());
+    Ok("Copied to clipboard".to_string())
+}
+
+pub fn write_text_to_clipboard(app_handle: &tauri::AppHandle, text: &str) -> Result<(), AppError> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    app_handle
+        .clipboard()
+        .write_text(text)
+        .map_err(|e| AppError::Other(format!("Failed to write clipboard: {}", e)))
+}
+
+pub fn should_restore_clipboard_after_paste(
+    current_clipboard_text: Option<&str>,
+    paste_text: &str,
+) -> bool {
+    current_clipboard_text == Some(paste_text)
+}
+
+#[tauri::command]
+pub async fn paste_text(
+    app_handle: tauri::AppHandle,
+    text: String,
+    method: Option<String>,
+) -> Result<String, AppError> {
+    let method_str = method.as_deref().unwrap_or("sendInput");
+    paste_text_impl(&app_handle, &text, method_str).await
+}
+
+pub async fn paste_text_impl(
+    app_handle: &tauri::AppHandle,
+    text: &str,
+    method: &str,
+) -> Result<String, AppError> {
+    paste_text_to_target(app_handle, text, method, None).await
+}
+
+pub(crate) async fn paste_text_to_target(
+    app_handle: &tauri::AppHandle,
+    text: &str,
+    method: &str,
+    target: Option<isize>,
+) -> Result<String, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        ensure_paste_target(target)?;
+        let use_clipboard = method == "clipboard";
+
+        if use_clipboard {
+            use tauri_plugin_clipboard_manager::ClipboardExt;
+            use uiautomation::clipboards::{Clipboard, Snapshot};
+
+            fn restore_clipboard_snapshot(snapshot: Snapshot) -> Result<(), AppError> {
+                let clipboard = Clipboard::open().map_err(|e| {
+                    AppError::Other(format!(
+                        "Failed to open clipboard to restore snapshot: {}",
+                        e
+                    ))
+                })?;
+                clipboard.restore(snapshot).map_err(|e| {
+                    AppError::Other(format!("Failed to restore clipboard snapshot: {}", e))
+                })
+            }
+
+            let clipboard_snapshot = capture_clipboard_snapshot()?;
+
+            app_handle
+                .clipboard()
+                .write_text(text)
+                .map_err(|e| AppError::Other(format!("Failed to write clipboard: {}", e)))?;
+
+            let paste_result = (|| -> Result<(), AppError> {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+
+                release_stuck_modifiers()?;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+
+                const VK_CONTROL: u16 = 0x11;
+                const VK_V: u16 = 0x56;
+                let inputs = [
+                    make_key_input(VK_CONTROL, 0, 0),
+                    make_key_input(VK_V, 0, 0),
+                    make_key_input(VK_V, 0, KEYEVENTF_KEYUP),
+                    make_key_input(VK_CONTROL, 0, KEYEVENTF_KEYUP),
+                ];
+                send_inputs_to_target(&inputs, target)
+            })();
+
+            if paste_result.is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_RESTORE_DELAY_MS));
+            }
+
+            let current_clipboard_text = app_handle.clipboard().read_text().ok();
+            if should_restore_clipboard_after_paste(current_clipboard_text.as_deref(), text) {
+                if let Err(e) = restore_clipboard_snapshot(clipboard_snapshot) {
+                    log::warn!("{}", e);
+                    if paste_result.is_ok() {
+                        return Err(e);
+                    }
+                }
+            } else {
+                log::debug!("剪贴板内容已变化，跳过恢复以保留用户的新剪贴板内容");
+            }
+
+            paste_result?;
+        } else {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SendMessageW};
+
+            const VK_RETURN: u16 = 0x0D;
+            const VK_TAB: u16 = 0x09;
+            const WM_IME_CONTROL: u32 = 0x0283;
+            const IMC_GETOPENSTATUS: usize = 0x0005;
+            const IMC_SETOPENSTATUS: usize = 0x0006;
+
+            // ① 释放残留修饰键
+            release_stuck_modifiers()?;
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            ensure_paste_target(target)?;
+
+            // ② 临时关闭前台窗口的输入法，防止 Unicode 输入被 IME 拦截
+            let hwnd = unsafe { GetForegroundWindow() };
+            let ime_wnd_ptr = unsafe { ImmGetDefaultIMEWnd(hwnd) };
+            // 将 *mut c_void 转为 usize 以跨越 await（HWND 本质是个数值句柄）
+            let ime_wnd = ime_wnd_ptr as usize;
+            let ime_was_open = if ime_wnd != 0 {
+                let open =
+                    unsafe { SendMessageW(ime_wnd as _, WM_IME_CONTROL, IMC_GETOPENSTATUS, 0) };
+                if open != 0 {
+                    unsafe {
+                        SendMessageW(ime_wnd as _, WM_IME_CONTROL, IMC_SETOPENSTATUS, 0);
+                    }
+                    log::debug!("已临时关闭前台窗口输入法");
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // ③ 构建并发送 Unicode 输入事件
+            let mut inputs: Vec<INPUT> = Vec::new();
+            for ch in text.chars() {
+                match ch {
+                    '\r' => {}
+                    '\n' => {
+                        inputs.push(make_key_input(VK_RETURN, 0, 0));
+                        inputs.push(make_key_input(VK_RETURN, 0, KEYEVENTF_KEYUP));
+                    }
+                    '\t' => {
+                        inputs.push(make_key_input(VK_TAB, 0, 0));
+                        inputs.push(make_key_input(VK_TAB, 0, KEYEVENTF_KEYUP));
+                    }
+                    _ => {
+                        for code_unit in ch.encode_utf16(&mut [0; 2]) {
+                            inputs.push(make_key_input(0, *code_unit, KEYEVENTF_UNICODE));
+                            inputs.push(make_key_input(
+                                0,
+                                *code_unit,
+                                KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                            ));
+                        }
+                    }
+                }
+            }
+            let send_result = if !inputs.is_empty() {
+                send_inputs_to_target(&inputs, target)
+            } else {
+                Ok(())
+            };
+
+            // ④ 无论发送成功与否都必须恢复输入法，否则用户 IME 会卡在关闭状态
+            if ime_was_open {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                unsafe {
+                    SendMessageW(ime_wnd as _, WM_IME_CONTROL, IMC_SETOPENSTATUS, 1);
+                }
+                log::debug!("已恢复前台窗口输入法");
+            }
+
+            send_result?;
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app_handle;
+        let _ = text;
+        let _ = method;
+        let _ = target;
+        return Err(AppError::Other(
+            "Automatic text input is currently supported only on Windows".to_string(),
+        ));
+    }
+
+    log::info!("已输入 {} 个字符", text.len());
+    Ok("Text entered".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_restore_clipboard_after_paste, try_all_then_standard};
+
+    #[test]
+    fn clipboard_snapshot_keeps_full_formats_when_they_are_readable() {
+        let mut attempts = Vec::new();
+
+        let result: Result<(&str, Option<&str>), (&str, &str)> =
+            try_all_then_standard(|try_all_formats| {
+                attempts.push(try_all_formats);
+                Ok("full snapshot")
+            });
+
+        assert_eq!(result, Ok(("full snapshot", None)));
+        assert_eq!(attempts, vec![true]);
+    }
+
+    #[test]
+    fn clipboard_snapshot_falls_back_when_a_registered_format_cannot_be_read() {
+        let mut attempts = Vec::new();
+
+        let result = try_all_then_standard(|try_all_formats| {
+            attempts.push(try_all_formats);
+            if try_all_formats {
+                Err("registered format unavailable")
+            } else {
+                Ok("standard snapshot")
+            }
+        });
+
+        assert_eq!(
+            result,
+            Ok(("standard snapshot", Some("registered format unavailable")))
+        );
+        assert_eq!(attempts, vec![true, false]);
+    }
+
+    #[test]
+    fn clipboard_snapshot_reports_both_capture_failures() {
+        let mut attempts = Vec::new();
+
+        let result: Result<(&str, Option<&str>), (&str, &str)> =
+            try_all_then_standard(|try_all_formats| {
+                attempts.push(try_all_formats);
+                if try_all_formats {
+                    Err("all formats failed")
+                } else {
+                    Err("standard formats failed")
+                }
+            });
+
+        assert_eq!(
+            result,
+            Err(("all formats failed", "standard formats failed"))
+        );
+        assert_eq!(attempts, vec![true, false]);
+    }
+
+    #[test]
+    fn sendinput_wrapper_treats_partial_sends_as_failure() {
+        let source = include_str!("clipboard.rs");
+
+        assert!(
+            source.contains("sent != inputs.len() as u32")
+                || source.contains("sent as usize != inputs.len()")
+                || source.contains("sent as usize != chunk.len()"),
+            "SendInput returning fewer events than requested must fail so text is not reported as pasted after a partial send"
+        );
+    }
+
+    #[test]
+    fn sendinput_unicode_path_chunks_long_text() {
+        let source = include_str!("clipboard.rs");
+
+        assert!(
+            source.contains("chunks(") || source.contains("SENDINPUT_CHUNK"),
+            "long Unicode paste text must be chunked before SendInput to avoid oversized input arrays"
+        );
+    }
+
+    #[test]
+    fn clipboard_restore_guard_allows_restoring_only_app_written_text() {
+        assert!(should_restore_clipboard_after_paste(
+            Some("dictated clipboard text"),
+            "dictated clipboard text"
+        ));
+    }
+
+    #[test]
+    fn clipboard_restore_guard_preserves_user_clipboard_change() {
+        assert!(!should_restore_clipboard_after_paste(
+            Some("new user clipboard text"),
+            "dictated clipboard text"
+        ));
+    }
+
+    #[test]
+    fn clipboard_restore_guard_skips_unavailable_or_non_text_clipboard() {
+        assert!(!should_restore_clipboard_after_paste(
+            None,
+            "dictated clipboard text"
+        ));
+    }
+
+    #[test]
+    fn clipboard_mode_snapshots_before_write_and_restores_after_paste_attempt() {
+        let (source, _) = include_str!("clipboard.rs")
+            .split_once("#[cfg(test)]")
+            .expect("clipboard tests should follow production code");
+        let clipboard_branch_start = source
+            .find("if use_clipboard")
+            .expect("clipboard mode branch should exist");
+        let clipboard_branch = &source[clipboard_branch_start..];
+
+        let snapshot_pos = clipboard_branch.find("capture_clipboard_snapshot").expect(
+            "clipboard mode must capture the user's clipboard snapshot before writing paste text",
+        );
+        let write_pos = clipboard_branch
+            .find("write_text(text)")
+            .expect("clipboard mode must write the dictated paste text");
+        assert!(
+            snapshot_pos < write_pos,
+            "clipboard snapshot must be captured before writing the paste text"
+        );
+
+        let paste_attempt_pos = clipboard_branch
+            .find("send_inputs_to_target(&inputs, target)")
+            .expect("clipboard mode must attempt Ctrl+V paste");
+        let restore_guard_pos = clipboard_branch
+            .find("should_restore_clipboard_after_paste")
+            .expect("clipboard mode restore must be guarded by the current clipboard value");
+        let restore_delay_pos = clipboard_branch
+            .find("CLIPBOARD_RESTORE_DELAY_MS")
+            .expect("clipboard mode must delay restore long enough for Ctrl+V to consume text");
+        let restore_pos = clipboard_branch
+            .find("restore_clipboard_snapshot(clipboard_snapshot)")
+            .expect("clipboard mode must restore the previous clipboard snapshot");
+        assert!(
+            paste_attempt_pos < restore_delay_pos
+                && restore_delay_pos < restore_guard_pos
+                && restore_guard_pos < restore_pos,
+            "clipboard restore must wait after the Ctrl+V paste attempt, then run through the restore guard"
+        );
+    }
+}

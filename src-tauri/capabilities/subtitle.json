@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "subtitle",
+  "description": "Subtitle window: receives only application events; system operations are handled by validated Rust commands",
+  "windows": ["subtitle"],
+  "permissions": [
+    "core:event:default"
+  ]
+}

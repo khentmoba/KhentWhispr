@@ -1,0 +1,220 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  formal:
+    name: Application formal contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Set up Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Check inventory, TLA models, Lean proofs and counterexamples
+        shell: bash
+        run: |
+          python scripts/test_check_formal.py
+          python scripts/test_async_ownership_traces.py
+          python scripts/test_async_output_wiring.py
+          curl -fsSL --retry 3 https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar -o "$RUNNER_TEMP/tla2tools.jar"
+          echo '936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  '"$RUNNER_TEMP/tla2tools.jar" | sha256sum --check
+          curl -fsSL --retry 3 https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-linux.tar.zst -o "$RUNNER_TEMP/lean.tar.zst"
+          echo '47bf4bbd78f70c2e9670598ab7124d92b6efb7330ff33e5fbb4030f6fd72e4e4  '"$RUNNER_TEMP/lean.tar.zst" | sha256sum --check
+          tar --zstd -xf "$RUNNER_TEMP/lean.tar.zst" -C "$RUNNER_TEMP"
+          python scripts/check_formal.py \
+            --tlc-jar "$RUNNER_TEMP/tla2tools.jar" \
+            --lean "$RUNNER_TEMP/lean-4.34.1-linux/bin/lean" \
+            --logs "$RUNNER_TEMP/formal-results"
+
+      - name: Upload formal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: formal-contract-results
+          path: |
+            ${{ runner.temp }}/formal-results/**/tlc.log
+            ${{ runner.temp }}/formal-results/**/result.json
+            ${{ runner.temp }}/formal-results/summary.json
+            ${{ runner.temp }}/formal-results/lean.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CI: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check changed lines
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if (-not $env:BASE_SHA -or $env:BASE_SHA -match '^0+$') {
+            git show --check --format= $env:HEAD_SHA
+          } else {
+            git diff --check "$env:BASE_SHA...$env:HEAD_SHA"
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.14.0
+          package-manager-cache: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.28.2
+          run_install: false
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run frontend checks
+        run: pnpm check
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+
+      - name: Verify tracked files are unchanged
+        run: git diff --exit-code
+
+  python:
+    name: Python
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: 0.11.30
+
+      - name: Verify Python lockfile
+        run: uv lock --check
+
+      - name: Install Python dependencies
+        run: uv sync --frozen
+
+      - name: Compile and test Python sources
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          uv run --no-sync python -m compileall -q scripts src-tauri/resources
+          uv run --no-sync python -m unittest discover -s src-tauri/resources -p "test_*.py"
+          uv run --no-sync python scripts/test_build_engine_atomicity.py
+          uv run --no-sync python scripts/test_release_ci.py
+          uv run --no-sync python scripts/test_generate_update_manifest.py
+          uv run --no-sync python scripts/test_ci_fail_fast.py
+
+      - name: Verify tracked files are unchanged
+        run: git diff --exit-code
+
+  rust:
+    name: Rust
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustup toolchain install 1.93.0 --profile minimal --component rustfmt,clippy
+          rustup default 1.93.0
+          rustc --version
+
+      - name: Cache Rust dependencies and build outputs
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+            !src-tauri/target/**/incremental/**
+          key: rust-${{ github.repository }}-${{ runner.os }}-1.93.0-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ hashFiles('src-tauri/src/**/*.rs', 'src-tauri/build.rs', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}
+          restore-keys: |
+            rust-${{ github.repository }}-${{ runner.os }}-1.93.0-${{ hashFiles('src-tauri/Cargo.lock') }}-
+
+      - name: Check Rust formatting and lints
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Run Rust tests
+        run: >-
+          cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked --
+          --skip services::qwen_hotword_service::tests::hotword_correction_p95_stays_below_one_millisecond
+
+      - name: Measure hotword correction performance
+        continue-on-error: true
+        run: >-
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
+          services::qwen_hotword_service::tests::hotword_correction_p95_stays_below_one_millisecond --
+          --exact --nocapture --test-threads=1
+
+      - name: Verify tracked files are unchanged
+        run: git diff --exit-code

@@ -1,0 +1,2412 @@
+#[cfg(test)]
+use crate::commands::audio::{
+    RECORDING_ALREADY_ACTIVE_ERROR, RECORDING_NOT_READY_ERROR, RECORDING_START_CANCELLED_ERROR,
+};
+use crate::state::{AppState, RecordingTrigger};
+use crate::utils::AppError;
+#[cfg(target_os = "windows")]
+use std::sync::atomic::AtomicU32;
+#[cfg(target_os = "windows")]
+use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc, OnceLock,
+};
+#[cfg(target_os = "windows")]
+use std::thread::JoinHandle;
+use tauri::{Emitter, Manager};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
+    VK_BACK, VK_CAPITAL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_HOME, VK_INSERT,
+    VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN,
+    VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SPACE, VK_TAB, VK_UP,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, DispatchMessageW, GetMessageW, PeekMessageW, PostThreadMessageW,
+    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, KBDLLHOOKSTRUCT, MSG,
+    PM_NOREMOVE, WH_KEYBOARD_LL, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_NULL, WM_QUIT, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
+};
+
+mod dispatch;
+mod start_owner;
+#[cfg(test)]
+use dispatch::is_ignorable_start_audio_error;
+use dispatch::{dispatch_hotkey_press, dispatch_hotkey_release, handle_hotkey_stop};
+pub(crate) use start_owner::HotkeyStartOwner;
+
+const HOTKEY_REPRESS_DEBOUNCE_MS: u64 = 180;
+
+/// RegisterHotKey probe uses this atom ID
+#[cfg(target_os = "windows")]
+const PROBE_HOTKEY_ID: i32 = 0x4C57; // "LW"
+
+/// Counter for injected events ignored by the LLKH filter
+#[cfg(target_os = "windows")]
+static IGNORED_INJECTED_COUNT: AtomicU64 = AtomicU64::new(0);
+
+// ---------------------------------------------------------------------------
+// HotkeyBackend — selects between RegisterHotKey and low-level hook
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HotkeyBackend {
+    /// Standard Windows RegisterHotKey — most stable, toggle-only
+    RegisterHotKey,
+    /// WH_KEYBOARD_LL — for hold mode, modifier-only, Win combos
+    LowLevelHook,
+}
+
+fn classify_backend(spec: &HotkeySpec) -> HotkeyBackend {
+    if is_toggle_mode() {
+        match spec {
+            HotkeySpec::ModifierOnly { .. } => HotkeyBackend::LowLevelHook,
+            HotkeySpec::Standard {
+                force_low_level_hook: true,
+                ..
+            } => HotkeyBackend::LowLevelHook,
+            HotkeySpec::Standard { .. } => HotkeyBackend::RegisterHotKey,
+        }
+    } else {
+        // Hold mode always needs LLKH for key-up detection
+        HotkeyBackend::LowLevelHook
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch channel — moves heavy work off the hook thread
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+enum DispatchEvent {
+    Press(Arc<UnifiedHookState>, String),
+    Release(Arc<UnifiedHookState>, String),
+}
+
+#[cfg(target_os = "windows")]
+fn dispatch_channel() -> &'static std::sync::mpsc::Sender<DispatchEvent> {
+    static TX: OnceLock<std::sync::mpsc::Sender<DispatchEvent>> = OnceLock::new();
+    TX.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<DispatchEvent>();
+        std::thread::Builder::new()
+            .name("hotkey-dispatch".into())
+            .spawn(move || {
+                for event in rx {
+                    match event {
+                        DispatchEvent::Press(state, msg) => {
+                            dispatch_hotkey_press(
+                                &state.app_handle,
+                                &state.gate,
+                                state.trigger,
+                                &msg,
+                                state.spec.label(),
+                            );
+                        }
+                        DispatchEvent::Release(state, msg) => {
+                            dispatch_hotkey_release(
+                                &state.app_handle,
+                                &state.gate,
+                                state.trigger,
+                                &msg,
+                                state.spec.label(),
+                            );
+                        }
+                    }
+                }
+            })
+            .expect("failed to start hotkey dispatch worker");
+        tx
+    })
+}
+
+/// Send dispatch event from hook callback — never blocks.
+#[cfg(target_os = "windows")]
+fn send_dispatch(event: DispatchEvent) {
+    let _ = dispatch_channel().send(event);
+}
+
+/// Probe whether a hotkey is already registered system-wide via RegisterHotKey.
+/// Returns a human-readable warning if conflicting, None otherwise.
+#[cfg(target_os = "windows")]
+fn probe_system_hotkey_conflict(spec: &HotkeySpec) -> Option<String> {
+    let (win_mods, vk) = match spec {
+        HotkeySpec::Standard {
+            modifiers, main_vk, ..
+        } if !spec.force_low_level_hook() => {
+            let mut m = 0u32;
+            if modifiers.has_ctrl() {
+                m |= MOD_CONTROL;
+            }
+            if modifiers.has_alt() {
+                m |= MOD_ALT;
+            }
+            if modifiers.has_shift() {
+                m |= MOD_SHIFT;
+            }
+            if modifiers.has_super() {
+                m |= MOD_WIN;
+            }
+            (m, *main_vk as u32)
+        }
+        // Modifier-only, side-specific, and consumed lock keys require LLKH.
+        _ => return None,
+    };
+
+    // Attempt to register — success means no conflict
+    let ok = unsafe { RegisterHotKey(std::ptr::null_mut(), PROBE_HOTKEY_ID, win_mods, vk) };
+    if ok != 0 {
+        unsafe { UnregisterHotKey(std::ptr::null_mut(), PROBE_HOTKEY_ID) };
+        None
+    } else {
+        Some(format!(
+            "Shortcut {} may already be used by another application and could trigger both actions",
+            spec.label()
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HotkeySpec — describes what key combination triggers the hotkey
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+enum HotkeySpec {
+    /// Pure modifier-key combination (e.g. Ctrl+Win, Alt alone)
+    ModifierOnly {
+        label: String,
+        required_modifiers: Vec<ModifierKey>,
+    },
+    /// Modifier(s) + a main key (e.g. F2, Ctrl+Space)
+    Standard {
+        label: String,
+        modifiers: ShortcutModifiers,
+        main_vk: u16,
+        /// Side-specific modifiers and lock keys cannot use RegisterHotKey.
+        force_low_level_hook: bool,
+        /// Consume both key-down and key-up so lock keys do not change OS state.
+        consume_main_key: bool,
+    },
+}
+
+impl HotkeySpec {
+    fn label(&self) -> &str {
+        match self {
+            Self::ModifierOnly { label, .. } => label,
+            Self::Standard { label, .. } => label,
+        }
+    }
+
+    fn force_low_level_hook(&self) -> bool {
+        matches!(
+            self,
+            Self::ModifierOnly { .. }
+                | Self::Standard {
+                    force_low_level_hook: true,
+                    ..
+                }
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModifierKey {
+    Ctrl,
+    LeftCtrl,
+    RightCtrl,
+    Alt,
+    LeftAlt,
+    RightAlt,
+    Shift,
+    Super,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModifierFamily {
+    Ctrl,
+    Alt,
+    Shift,
+    Super,
+}
+
+const MODIFIER_ORDER: [ModifierKey; 8] = [
+    ModifierKey::Ctrl,
+    ModifierKey::LeftCtrl,
+    ModifierKey::RightCtrl,
+    ModifierKey::Alt,
+    ModifierKey::LeftAlt,
+    ModifierKey::RightAlt,
+    ModifierKey::Shift,
+    ModifierKey::Super,
+];
+
+impl ModifierKey {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Ctrl => "Ctrl",
+            Self::LeftCtrl => "Left Ctrl",
+            Self::RightCtrl => "Right Ctrl",
+            Self::Alt => "Alt",
+            Self::LeftAlt => "Left Alt",
+            Self::RightAlt => "Right Alt",
+            Self::Shift => "Shift",
+            Self::Super => "Win",
+        }
+    }
+
+    fn family(self) -> ModifierFamily {
+        match self {
+            Self::Ctrl | Self::LeftCtrl | Self::RightCtrl => ModifierFamily::Ctrl,
+            Self::Alt | Self::LeftAlt | Self::RightAlt => ModifierFamily::Alt,
+            Self::Shift => ModifierFamily::Shift,
+            Self::Super => ModifierFamily::Super,
+        }
+    }
+
+    fn is_generic(self) -> bool {
+        matches!(self, Self::Ctrl | Self::Alt | Self::Shift | Self::Super)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn matches_vk(self, physical_vk: u32) -> bool {
+        let vk = physical_vk as u16;
+        match self {
+            Self::Ctrl => vk == VK_LCONTROL || vk == VK_RCONTROL,
+            Self::LeftCtrl => vk == VK_LCONTROL,
+            Self::RightCtrl => vk == VK_RCONTROL,
+            Self::Alt => vk == VK_LMENU || vk == VK_RMENU,
+            Self::LeftAlt => vk == VK_LMENU,
+            Self::RightAlt => vk == VK_RMENU,
+            Self::Shift => vk == VK_LSHIFT || vk == VK_RSHIFT,
+            Self::Super => vk == VK_LWIN || vk == VK_RWIN,
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn is_physically_down(self) -> bool {
+        match self {
+            Self::Ctrl => {
+                is_key_physically_down(VK_LCONTROL) || is_key_physically_down(VK_RCONTROL)
+            }
+            Self::LeftCtrl => is_key_physically_down(VK_LCONTROL),
+            Self::RightCtrl => is_key_physically_down(VK_RCONTROL),
+            Self::Alt => is_key_physically_down(VK_LMENU) || is_key_physically_down(VK_RMENU),
+            Self::LeftAlt => is_key_physically_down(VK_LMENU),
+            Self::RightAlt => is_key_physically_down(VK_RMENU),
+            Self::Shift => is_key_physically_down(VK_LSHIFT) || is_key_physically_down(VK_RSHIFT),
+            Self::Super => is_key_physically_down(VK_LWIN) || is_key_physically_down(VK_RWIN),
+        }
+    }
+
+    fn is_alt(self) -> bool {
+        matches!(self, Self::Alt | Self::LeftAlt | Self::RightAlt)
+    }
+
+    fn is_super(self) -> bool {
+        self == Self::Super
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+struct ShortcutModifiers {
+    keys: Vec<ModifierKey>,
+}
+
+impl ShortcutModifiers {
+    fn insert(&mut self, key: ModifierKey) -> Result<(), AppError> {
+        if self.keys.contains(&key) {
+            return Ok(());
+        }
+        if self.keys.iter().any(|existing| {
+            existing.family() == key.family() && (existing.is_generic() || key.is_generic())
+        }) {
+            return Err(AppError::Other(format!(
+                "Invalid shortcut format: {} cannot be combined with left/right modifiers of the same family",
+                key.label()
+            )));
+        }
+        self.keys.push(key);
+        Ok(())
+    }
+
+    fn ordered_keys(&self) -> impl Iterator<Item = ModifierKey> + '_ {
+        MODIFIER_ORDER
+            .into_iter()
+            .filter(|key| self.keys.contains(key))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    fn has_ctrl(&self) -> bool {
+        self.keys
+            .iter()
+            .any(|key| key.family() == ModifierFamily::Ctrl)
+    }
+
+    fn has_alt(&self) -> bool {
+        self.keys
+            .iter()
+            .any(|key| key.family() == ModifierFamily::Alt)
+    }
+
+    fn has_shift(&self) -> bool {
+        self.keys.contains(&ModifierKey::Shift)
+    }
+
+    fn has_super(&self) -> bool {
+        self.keys.contains(&ModifierKey::Super)
+    }
+
+    fn has_side_specific(&self) -> bool {
+        self.keys.iter().any(|key| !key.is_generic())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Event gate — deduplicates press/release across rapid repeats
+// ---------------------------------------------------------------------------
+
+struct HotkeyEventGate {
+    is_pressed: AtomicBool,
+    last_release_ms: AtomicU64,
+    toggle_active: AtomicBool,
+    start_owner: Arc<HotkeyStartOwner>,
+    transition: parking_lot::Mutex<()>,
+    registered: AtomicBool,
+}
+
+impl Default for HotkeyEventGate {
+    fn default() -> Self {
+        Self {
+            is_pressed: AtomicBool::new(false),
+            last_release_ms: AtomicU64::new(0),
+            toggle_active: AtomicBool::new(false),
+            start_owner: Arc::new(HotkeyStartOwner::default()),
+            transition: parking_lot::Mutex::new(()),
+            registered: AtomicBool::new(true),
+        }
+    }
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn reset_hotkey_event_gate(gate: &HotkeyEventGate) {
+    gate.start_owner.release();
+    gate.is_pressed.store(false, Ordering::Release);
+    gate.last_release_ms.store(0, Ordering::Release);
+    gate.toggle_active.store(false, Ordering::Release);
+}
+
+#[cfg(target_os = "windows")]
+fn hotkey_gate_is_current(trigger: RecordingTrigger, gate: &Arc<HotkeyEventGate>) -> bool {
+    let guard = unified_hook_state_snapshot().load_full();
+    let state = match trigger {
+        RecordingTrigger::DictationOriginal => guard.dictation.as_ref(),
+        RecordingTrigger::DictationTranslated => guard.translation.as_ref(),
+        RecordingTrigger::Assistant => guard.assistant.as_ref(),
+    };
+    state.is_some_and(|state| Arc::ptr_eq(&state.gate, gate))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hotkey_gate_is_current(_trigger: RecordingTrigger, _gate: &Arc<HotkeyEventGate>) -> bool {
+    true
+}
+
+// Configuration publication and dispatch must see one mode/registration pair.
+fn hotkey_configuration_lock() -> &'static parking_lot::Mutex<()> {
+    static LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    &LOCK
+}
+
+// ---------------------------------------------------------------------------
+// Toggle mode — persisted as a static AtomicBool
+// ---------------------------------------------------------------------------
+
+fn toggle_mode_flag() -> &'static AtomicBool {
+    static FLAG: OnceLock<AtomicBool> = OnceLock::new();
+    FLAG.get_or_init(|| AtomicBool::new(false))
+}
+
+fn is_toggle_mode() -> bool {
+    toggle_mode_flag().load(Ordering::Acquire)
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic & error helpers
+// ---------------------------------------------------------------------------
+
+fn emit_recording_error(app_handle: &tauri::AppHandle, message: &str) {
+    let _ = app_handle.emit(
+        "recording-error",
+        serde_json::json!({
+            "message": message,
+        }),
+    );
+}
+
+fn hotkey_warning_message(shortcut_label: &str) -> Option<String> {
+    if shortcut_label.contains("Win") {
+        return Some(
+            "Some Win key combinations may be reserved by Windows or other applications."
+                .to_string(),
+        );
+    }
+    if shortcut_label == "Alt" {
+        return Some("Using Alt alone prevents menu bar activation.".to_string());
+    }
+    None
+}
+
+fn hotkey_kind_label(kind: HotkeyKind) -> &'static str {
+    match kind {
+        HotkeyKind::Dictation => "dictation",
+        HotkeyKind::Translation => "translation",
+        HotkeyKind::Assistant => "assistant",
+    }
+}
+
+fn ensure_hotkey_not_conflicting(
+    _app_handle: &tauri::AppHandle,
+    kind: HotkeyKind,
+    candidate_label: &str,
+) -> Result<(), AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        let guard = match unified_hook_state_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        for (other_kind, state) in [
+            (HotkeyKind::Dictation, guard.dictation.as_ref()),
+            (HotkeyKind::Translation, guard.translation.as_ref()),
+            (HotkeyKind::Assistant, guard.assistant.as_ref()),
+        ] {
+            if other_kind == kind {
+                continue;
+            }
+            if let Some(state) = state {
+                if state.spec.label() == candidate_label {
+                    return Err(AppError::Other(format!(
+                        "Shortcut {} is already assigned to the {} hotkey; please choose a different combination",
+                        candidate_label,
+                        hotkey_kind_label(other_kind)
+                    )));
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = kind;
+        let _ = candidate_label;
+    }
+
+    Ok(())
+}
+
+fn update_hotkey_diagnostic<F>(app_handle: &tauri::AppHandle, update: F)
+where
+    F: FnOnce(&mut crate::state::HotkeyDiagnosticState),
+{
+    let state = app_handle.state::<AppState>();
+    let (_, snapshot) = state.update_hotkey_diagnostic(|diagnostic| {
+        update(diagnostic);
+    });
+    let _ = app_handle.emit("hotkey-diagnostic", snapshot);
+}
+
+// ---------------------------------------------------------------------------
+// Recording start/stop business logic
+// ---------------------------------------------------------------------------
+
+fn update_hotkey_diagnostic_for_trigger<F>(
+    app_handle: &tauri::AppHandle,
+    trigger: RecordingTrigger,
+    update: F,
+) where
+    F: FnOnce(&mut crate::state::HotkeyDiagnosticState),
+{
+    if trigger == RecordingTrigger::DictationOriginal {
+        update_hotkey_diagnostic(app_handle, update);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unified low-level keyboard hook (Windows)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+struct UnifiedHookState {
+    app_handle: tauri::AppHandle,
+    spec: HotkeySpec,
+    trigger: RecordingTrigger,
+    gate: Arc<HotkeyEventGate>,
+    backend: HotkeyBackend,
+    reg_hotkey_id: Option<i32>,
+    /// Per-VK key-down tracking for modifier-only mode
+    key_down: Vec<AtomicBool>,
+    /// Hotkey combination currently active
+    activated: AtomicBool,
+    /// A non-hotkey key was pressed during modifier-only hold → taint (cancel)
+    tainted: AtomicBool,
+    /// A modifier key leaked to OS before the combo was complete
+    modifier_leaked: AtomicBool,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Default, Clone)]
+struct UnifiedHookBundle {
+    dictation: Option<Arc<UnifiedHookState>>,
+    translation: Option<Arc<UnifiedHookState>>,
+    assistant: Option<Arc<UnifiedHookState>>,
+}
+
+#[cfg(target_os = "windows")]
+impl UnifiedHookBundle {
+    fn is_empty(&self) -> bool {
+        self.dictation.is_none() && self.translation.is_none() && self.assistant.is_none()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HotkeyKind {
+    Dictation,
+    Translation,
+    Assistant,
+}
+
+#[cfg(target_os = "windows")]
+fn unified_hook_state_slot() -> &'static Mutex<UnifiedHookBundle> {
+    static SLOT: OnceLock<Mutex<UnifiedHookBundle>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(UnifiedHookBundle::default()))
+}
+
+#[cfg(target_os = "windows")]
+fn unified_hook_state_snapshot() -> &'static arc_swap::ArcSwap<UnifiedHookBundle> {
+    static SNAPSHOT: OnceLock<arc_swap::ArcSwap<UnifiedHookBundle>> = OnceLock::new();
+    SNAPSHOT.get_or_init(|| arc_swap::ArcSwap::from_pointee(UnifiedHookBundle::default()))
+}
+
+#[cfg(target_os = "windows")]
+fn publish_unified_hook_state_snapshot(bundle: &UnifiedHookBundle) {
+    unified_hook_state_snapshot().store(Arc::new(bundle.clone()));
+}
+
+#[cfg(target_os = "windows")]
+fn set_unified_hook_state(
+    kind: HotkeyKind,
+    state: Option<Arc<UnifiedHookState>>,
+) -> Option<Arc<UnifiedHookState>> {
+    let mut guard = match unified_hook_state_slot().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    let slot = match kind {
+        HotkeyKind::Dictation => &mut guard.dictation,
+        HotkeyKind::Translation => &mut guard.translation,
+        HotkeyKind::Assistant => &mut guard.assistant,
+    };
+    let previous = std::mem::replace(slot, state);
+    publish_unified_hook_state_snapshot(&guard);
+    previous
+}
+
+#[cfg(target_os = "windows")]
+fn get_unified_hook_states() -> UnifiedHookBundle {
+    let guard = match unified_hook_state_slot().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    guard.clone()
+}
+
+#[cfg(target_os = "windows")]
+const SYNTHETIC_KEY_MARKER: usize = 0x4C575F53; // "LW_S"
+
+#[cfg(target_os = "windows")]
+fn send_synthetic_key_up(vk: u16) {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    };
+
+    let input = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: SYNTHETIC_KEY_MARKER,
+            },
+        },
+    };
+
+    unsafe {
+        SendInput(1, &input, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_modifier_vk(vk: u32) -> bool {
+    matches!(
+        vk as u16,
+        x if x == VK_LCONTROL
+            || x == VK_RCONTROL
+            || x == VK_LMENU
+            || x == VK_RMENU
+            || x == VK_LSHIFT
+            || x == VK_RSHIFT
+            || x == VK_LWIN
+            || x == VK_RWIN
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn is_win_vk(vk: u32) -> bool {
+    vk as u16 == VK_LWIN || vk as u16 == VK_RWIN
+}
+
+#[cfg(target_os = "windows")]
+fn is_alt_vk(vk: u32) -> bool {
+    vk as u16 == VK_LMENU || vk as u16 == VK_RMENU
+}
+
+/// Map a VK code to an index in UnifiedHookState::key_down for ModifierOnly specs.
+/// Returns None if the physical key is not one of the required modifiers.
+#[cfg(target_os = "windows")]
+fn vk_to_required_index(spec: &HotkeySpec, vk: u32) -> Option<usize> {
+    if let HotkeySpec::ModifierOnly {
+        required_modifiers, ..
+    } = spec
+    {
+        required_modifiers
+            .iter()
+            .position(|required| required.matches_vk(vk))
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn accepts_right_alt(required_modifiers: &[ModifierKey]) -> bool {
+    required_modifiers
+        .iter()
+        .any(|required| required.matches_vk(VK_RMENU as u32))
+}
+
+// --- Standard mode helpers ---
+
+#[cfg(target_os = "windows")]
+fn is_key_physically_down(vk: u16) -> bool {
+    unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(vk as i32) < 0 }
+}
+
+#[cfg(target_os = "windows")]
+fn all_modifiers_down(mods: &ShortcutModifiers) -> bool {
+    mods.keys.iter().all(|key| key.is_physically_down())
+}
+
+// ---------------------------------------------------------------------------
+// The unified hook callback
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn unified_low_level_keyboard_proc(
+    n_code: i32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
+    let pass_through = || unsafe { CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param) };
+
+    if n_code != HC_ACTION as i32 {
+        return pass_through();
+    }
+
+    let bundle = unified_hook_state_snapshot().load_full();
+    if bundle.is_empty() {
+        return pass_through();
+    }
+
+    let keyboard = unsafe { &*(l_param as *const KBDLLHOOKSTRUCT) };
+
+    // Skip our own synthetic keys
+    if keyboard.dwExtraInfo == SYNTHETIC_KEY_MARKER {
+        return pass_through();
+    }
+
+    // Filter injected input (macro tools, automation, drivers).
+    // LLKHF_INJECTED = 0x10 — set by SendInput / keybd_event from other processes.
+    if keyboard.flags & 0x10 != 0 {
+        IGNORED_INJECTED_COUNT.fetch_add(1, Ordering::Relaxed);
+        return pass_through();
+    }
+
+    let message = w_param as u32;
+    let is_key_down = matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN);
+    let is_key_up = matches!(message, WM_KEYUP | WM_SYSKEYUP);
+    if !is_key_down && !is_key_up {
+        return pass_through();
+    }
+
+    let vk = keyboard.vkCode;
+
+    let mut swallow = false;
+    for state in [
+        bundle.dictation.as_ref(),
+        bundle.translation.as_ref(),
+        bundle.assistant.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|s| s.backend == HotkeyBackend::LowLevelHook)
+    {
+        swallow |= match &state.spec {
+            HotkeySpec::ModifierOnly {
+                label,
+                required_modifiers,
+            } => handle_modifier_only_event(state, vk, is_key_down, label, required_modifiers),
+            HotkeySpec::Standard {
+                label,
+                modifiers,
+                main_vk,
+                consume_main_key,
+                ..
+            } => handle_standard_event(
+                state,
+                vk,
+                is_key_down,
+                label,
+                modifiers,
+                *main_vk,
+                *consume_main_key,
+            ),
+        };
+    }
+
+    if swallow {
+        1
+    } else {
+        pass_through()
+    }
+}
+
+/// Returns `true` if the event should be swallowed (not forwarded to OS).
+/// All heavy work (mutex, IPC) is dispatched via channel — the hook thread
+/// only touches atomics.
+#[cfg(target_os = "windows")]
+fn handle_modifier_only_event(
+    state: &Arc<UnifiedHookState>,
+    vk: u32,
+    is_key_down: bool,
+    label: &str,
+    required_modifiers: &[ModifierKey],
+) -> bool {
+    let is_required = vk_to_required_index(&state.spec, vk).is_some();
+    // Windows represents AltGr as a synthetic Left Ctrl followed by Right Alt.
+    // Do not taint a Right Alt binding with that companion event.
+    let is_altgr_ctrl_companion = vk as u16 == VK_LCONTROL && accepts_right_alt(required_modifiers);
+    let was_activated = state.activated.load(Ordering::Acquire);
+
+    if is_key_down {
+        if is_required {
+            if let Some(idx) = vk_to_required_index(&state.spec, vk) {
+                state.key_down[idx].store(true, Ordering::Release);
+            }
+
+            let all_down = state.key_down.iter().all(|b| b.load(Ordering::Acquire));
+            if all_down && !was_activated && !state.tainted.load(Ordering::Acquire) {
+                state.activated.store(true, Ordering::Release);
+                send_dispatch(DispatchEvent::Press(
+                    state.clone(),
+                    format!("{} 按下，开始录音", label),
+                ));
+            }
+        } else if !is_altgr_ctrl_companion {
+            // Non-required key pressed → taint
+            state.tainted.store(true, Ordering::Release);
+            if was_activated {
+                state.activated.store(false, Ordering::Release);
+                send_dispatch(DispatchEvent::Release(
+                    state.clone(),
+                    format!("{} 被非热键按键打断，停止录音", label),
+                ));
+            }
+        }
+    } else {
+        // Key up
+        if is_required {
+            if let Some(idx) = vk_to_required_index(&state.spec, vk) {
+                state.key_down[idx].store(false, Ordering::Release);
+            }
+
+            if was_activated {
+                state.activated.store(false, Ordering::Release);
+                send_dispatch(DispatchEvent::Release(
+                    state.clone(),
+                    format!("{} 松开，停止录音", label),
+                ));
+            }
+        }
+
+        // When all required modifiers are up, clear taint and handle cleanup
+        let any_still_down = state.key_down.iter().any(|b| b.load(Ordering::Acquire));
+        if !any_still_down {
+            let need_cleanup = was_activated && state.modifier_leaked.swap(false, Ordering::AcqRel);
+            state.tainted.store(false, Ordering::Release);
+            state.activated.store(false, Ordering::Release);
+
+            if need_cleanup {
+                for required in required_modifiers {
+                    if required.is_super() {
+                        log::debug!("补发合成 Win key-up 修复 OS 修饰键状态");
+                        send_synthetic_key_up(VK_LWIN);
+                        send_synthetic_key_up(VK_RWIN);
+                    }
+                    if required.is_alt() {
+                        log::debug!("补发合成 Alt key-up 修复 OS 修饰键状态");
+                        send_synthetic_key_up(VK_LMENU);
+                        send_synthetic_key_up(VK_RMENU);
+                    }
+                }
+            }
+        }
+    }
+
+    // Decide whether to swallow — must happen AFTER state updates above
+    let swallow = should_swallow_modifier_only(state, vk);
+
+    // Track modifier leak: key-down of a required modifier that we didn't swallow
+    if is_key_down && is_required && !swallow && is_modifier_vk(vk) {
+        state.modifier_leaked.store(true, Ordering::Release);
+    }
+
+    swallow
+}
+
+#[cfg(target_os = "windows")]
+fn should_swallow_modifier_only(state: &UnifiedHookState, vk: u32) -> bool {
+    let is_required = vk_to_required_index(&state.spec, vk).is_some();
+    if !is_required {
+        return false;
+    }
+
+    let currently_activated = state.activated.load(Ordering::Acquire);
+    let any_required_down = state.key_down.iter().any(|b| b.load(Ordering::Acquire));
+
+    // For Win/Alt keys: swallow whenever any required key is down or was activated.
+    // This prevents Win from opening start menu, Alt from activating menus.
+    if is_win_vk(vk) || is_alt_vk(vk) {
+        return currently_activated || any_required_down;
+    }
+
+    // For other modifiers (Ctrl, Shift): only swallow when activated
+    currently_activated
+}
+
+/// Returns `true` if the event should be swallowed.
+/// All heavy work (mutex, IPC) is dispatched via channel.
+#[cfg(target_os = "windows")]
+fn handle_standard_event(
+    state: &Arc<UnifiedHookState>,
+    vk: u32,
+    is_key_down: bool,
+    label: &str,
+    modifiers: &ShortcutModifiers,
+    main_vk: u16,
+    consume_main_key: bool,
+) -> bool {
+    let is_main_key = vk as u16 == main_vk;
+
+    if is_key_down && is_main_key {
+        let was_activated = state.activated.load(Ordering::Acquire);
+        if all_modifiers_down(modifiers) && !was_activated {
+            state.activated.store(true, Ordering::Release);
+            send_dispatch(DispatchEvent::Press(
+                state.clone(),
+                format!("{} 按下，开始录音", label),
+            ));
+        }
+    } else if !is_key_down && state.activated.load(Ordering::Acquire) {
+        let combo_broken = is_main_key || !all_modifiers_down(modifiers);
+        if combo_broken {
+            state.activated.store(false, Ordering::Release);
+            send_dispatch(DispatchEvent::Release(
+                state.clone(),
+                format!("{} 松开，停止录音", label),
+            ));
+
+            // Clean up leaked modifier state in one read
+            let leaked = state.modifier_leaked.swap(false, Ordering::AcqRel);
+            if leaked {
+                if modifiers.has_super() {
+                    send_synthetic_key_up(VK_LWIN);
+                    send_synthetic_key_up(VK_RWIN);
+                }
+                if modifiers.has_alt() {
+                    send_synthetic_key_up(VK_LMENU);
+                    send_synthetic_key_up(VK_RMENU);
+                }
+            }
+        }
+    }
+
+    // Read activated state AFTER updates — swallow the main key while hotkey is active.
+    // This correctly swallows:
+    //   - The triggering key-down (activated just set to true above)
+    //   - Repeated key-downs while held
+    // And does NOT swallow:
+    //   - The key-up that deactivated (activated just set to false above)
+    let currently_activated = state.activated.load(Ordering::Acquire);
+
+    // Track modifier leaks for Win/Alt (key-down that we won't swallow)
+    if is_key_down
+        && !currently_activated
+        && ((is_win_vk(vk) && modifiers.has_super()) || (is_alt_vk(vk) && modifiers.has_alt()))
+    {
+        state.modifier_leaked.store(true, Ordering::Release);
+    }
+
+    is_main_key && (consume_main_key || currently_activated)
+}
+
+// ---------------------------------------------------------------------------
+// RegisterHotKey backend — dedicated thread with message pump
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+enum RegHotkeyCmd {
+    Register {
+        id: i32,
+        mods: u32,
+        vk: u32,
+        state: Arc<UnifiedHookState>,
+        result_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
+    },
+    Unregister {
+        id: i32,
+    },
+}
+
+#[cfg(target_os = "windows")]
+fn reg_hotkey_cmd_channel() -> &'static (
+    std::sync::mpsc::Sender<RegHotkeyCmd>,
+    Mutex<std::sync::mpsc::Receiver<RegHotkeyCmd>>,
+) {
+    static CH: OnceLock<(
+        std::sync::mpsc::Sender<RegHotkeyCmd>,
+        Mutex<std::sync::mpsc::Receiver<RegHotkeyCmd>>,
+    )> = OnceLock::new();
+    CH.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (tx, Mutex::new(rx))
+    })
+}
+
+#[cfg(target_os = "windows")]
+struct RegisterHotkeyBackend {
+    thread_id: u32,
+    handle: JoinHandle<()>,
+}
+
+#[cfg(target_os = "windows")]
+fn reg_backend_slot() -> &'static Mutex<Option<RegisterHotkeyBackend>> {
+    static SLOT: OnceLock<Mutex<Option<RegisterHotkeyBackend>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+/// Windows application hotkey IDs are 0x0000..=0xBFFF. Never reuse one in this
+/// process: an old WM_HOTKEY may remain queued after UnregisterHotKey.
+#[cfg(target_os = "windows")]
+fn allocate_reg_hotkey_id(next: &AtomicU32) -> Option<i32> {
+    next.fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| {
+        (id <= 0xBFFF).then(|| id + 1)
+    })
+    .ok()
+    .map(|id| id as i32)
+}
+
+#[cfg(target_os = "windows")]
+fn next_reg_hotkey_id() -> Option<i32> {
+    static NEXT: AtomicU32 = AtomicU32::new(1);
+    allocate_reg_hotkey_id(&NEXT)
+}
+
+/// Build MOD_ flags for RegisterHotKey from ShortcutModifiers
+#[cfg(target_os = "windows")]
+fn shortcut_mods_to_reg_mods(mods: &ShortcutModifiers) -> u32 {
+    let mut m = MOD_NOREPEAT;
+    if mods.has_ctrl() {
+        m |= MOD_CONTROL;
+    }
+    if mods.has_alt() {
+        m |= MOD_ALT;
+    }
+    if mods.has_shift() {
+        m |= MOD_SHIFT;
+    }
+    if mods.has_super() {
+        m |= MOD_WIN;
+    }
+    m
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_reg_hotkey_backend() -> Result<(), AppError> {
+    let backend_running = {
+        let guard = match reg_backend_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.is_some()
+    };
+    if backend_running {
+        return Ok(());
+    }
+
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+
+    let handle = std::thread::Builder::new()
+        .name("register-hotkey-backend".into())
+        .spawn(move || {
+            let thread_id = unsafe { GetCurrentThreadId() };
+
+            // Ensure message queue exists
+            let mut peek_msg: MSG = unsafe { std::mem::zeroed() };
+            let _ = unsafe { PeekMessageW(&mut peek_msg, std::ptr::null_mut(), 0, 0, PM_NOREMOVE) };
+
+            if ready_tx.send(Ok(thread_id)).is_err() {
+                return;
+            }
+
+            // Registered hotkey states, keyed by id
+            let mut registered: std::collections::HashMap<i32, Arc<UnifiedHookState>> =
+                std::collections::HashMap::new();
+
+            let mut message: MSG = unsafe { std::mem::zeroed() };
+            loop {
+                let result = unsafe { GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) };
+                if result <= 0 {
+                    break;
+                }
+
+                match message.message {
+                    WM_HOTKEY => {
+                        let id = message.wParam as i32;
+                        if let Some(state) = registered.get(&id) {
+                            send_dispatch(DispatchEvent::Press(
+                                state.clone(),
+                                format!("{} 按下（RegisterHotKey）", state.spec.label()),
+                            ));
+                        }
+                    }
+                    WM_NULL => {
+                        // Drain command channel
+                        let rx_guard = match reg_hotkey_cmd_channel().1.lock() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
+                        while let Ok(cmd) = rx_guard.try_recv() {
+                            match cmd {
+                                RegHotkeyCmd::Register {
+                                    id,
+                                    mods,
+                                    vk,
+                                    state,
+                                    result_tx,
+                                } => {
+                                    if !state.gate.registered.load(Ordering::Acquire) {
+                                        let _ = result_tx.send(Err(
+                                            "Hotkey registration is no longer valid".into(),
+                                        ));
+                                        continue;
+                                    }
+                                    let ok = unsafe {
+                                        RegisterHotKey(std::ptr::null_mut(), id, mods, vk)
+                                    };
+                                    if ok != 0 {
+                                        registered.insert(id, state);
+                                        let _ = result_tx.send(Ok(()));
+                                    } else {
+                                        let err = std::io::Error::last_os_error();
+                                        let _ = result_tx
+                                            .send(Err(format!("RegisterHotKey failed: {}", err)));
+                                    }
+                                }
+                                RegHotkeyCmd::Unregister { id } => {
+                                    if registered.remove(&id).is_some() {
+                                        unsafe {
+                                            UnregisterHotKey(std::ptr::null_mut(), id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => unsafe {
+                        TranslateMessage(&message);
+                        DispatchMessageW(&message);
+                    },
+                }
+            }
+
+            // Cleanup all registered hotkeys
+            for &id in registered.keys() {
+                unsafe { UnregisterHotKey(std::ptr::null_mut(), id) };
+            }
+        })
+        .map_err(|e| AppError::Other(format!("Failed to start RegisterHotKey thread: {}", e)))?;
+
+    let thread_id = ready_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .map_err(|e| {
+            AppError::Other(format!(
+                "Timed out waiting for RegisterHotKey thread: {}",
+                e
+            ))
+        })?
+        .map_err(AppError::Other)?;
+
+    let mut guard = match reg_backend_slot().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    *guard = Some(RegisterHotkeyBackend { thread_id, handle });
+    Ok(())
+}
+
+/// Register a hotkey via the RegisterHotKey backend.
+/// Blocks until the registration is confirmed or rejected.
+#[cfg(target_os = "windows")]
+fn register_via_reg_hotkey(
+    mods: &ShortcutModifiers,
+    main_vk: u16,
+    state: Arc<UnifiedHookState>,
+) -> Result<(), AppError> {
+    ensure_reg_hotkey_backend()?;
+
+    let id = state.reg_hotkey_id.ok_or_else(|| {
+        AppError::Other(
+            "RegisterHotKey IDs exhausted; falling back to low-level keyboard hook".into(),
+        )
+    })?;
+    let win_mods = shortcut_mods_to_reg_mods(mods);
+    let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+
+    reg_hotkey_cmd_channel()
+        .0
+        .send(RegHotkeyCmd::Register {
+            id,
+            mods: win_mods,
+            vk: main_vk as u32,
+            state,
+            result_tx,
+        })
+        .map_err(|_| AppError::Other("RegisterHotKey command channel closed".into()))?;
+
+    // Wake the backend thread
+    let tid = {
+        let guard = match reg_backend_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.as_ref().map(|b| b.thread_id)
+    };
+    if let Some(tid) = tid {
+        unsafe { PostThreadMessageW(tid, WM_NULL, 0, 0) };
+    }
+
+    result_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .map_err(|_| AppError::Other("RegisterHotKey registration timed out".into()))?
+        .map_err(AppError::Other)
+}
+
+/// Unregister a hotkey from the RegisterHotKey backend.
+#[cfg(target_os = "windows")]
+fn unregister_via_reg_hotkey(kind: HotkeyKind) {
+    let bundle = get_unified_hook_states();
+    let state = match kind {
+        HotkeyKind::Dictation => bundle.dictation,
+        HotkeyKind::Translation => bundle.translation,
+        HotkeyKind::Assistant => bundle.assistant,
+    };
+    if let Some(id) = state.and_then(|state| state.reg_hotkey_id) {
+        unregister_reg_hotkey_id(id);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn unregister_reg_hotkey_id(id: i32) {
+    let _ = reg_hotkey_cmd_channel()
+        .0
+        .send(RegHotkeyCmd::Unregister { id });
+
+    let tid = {
+        let guard = match reg_backend_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.as_ref().map(|b| b.thread_id)
+    };
+    if let Some(tid) = tid {
+        unsafe { PostThreadMessageW(tid, WM_NULL, 0, 0) };
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn stop_reg_hotkey_backend() {
+    let backend = {
+        let mut guard = match reg_backend_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.take()
+    };
+
+    if let Some(backend) = backend {
+        let _ = unsafe { PostThreadMessageW(backend.thread_id, WM_QUIT, 0, 0) };
+        let _ = backend.handle.join();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Monitor thread management (LLKH backend)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+struct UnifiedHotkeyMonitor {
+    thread_id: u32,
+    handle: JoinHandle<()>,
+}
+
+#[cfg(target_os = "windows")]
+fn monitor_slot() -> &'static Mutex<Option<UnifiedHotkeyMonitor>> {
+    static SLOT: OnceLock<Mutex<Option<UnifiedHotkeyMonitor>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "windows")]
+fn stop_unified_hotkey_monitor() {
+    let monitor = {
+        let mut guard = match monitor_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.take()
+    };
+
+    if let Some(monitor) = monitor {
+        let _ = unsafe { PostThreadMessageW(monitor.thread_id, WM_QUIT, 0, 0) };
+        let _ = monitor.handle.join();
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn stop_unified_hotkey_monitor() {}
+
+#[cfg(target_os = "windows")]
+/// HHOOK is *mut c_void in windows-sys
+type HookHandle = *mut std::ffi::c_void;
+
+fn install_hook_on_thread() -> Result<HookHandle, String> {
+    let module = unsafe { GetModuleHandleW(std::ptr::null()) };
+    let hook = unsafe {
+        SetWindowsHookExW(
+            WH_KEYBOARD_LL,
+            Some(unified_low_level_keyboard_proc),
+            module,
+            0,
+        )
+    };
+    if hook.is_null() {
+        Err(format!(
+            "Failed to install keyboard hook: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(hook)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_unified_hotkey_monitor(_app_handle: tauri::AppHandle) -> Result<(), AppError> {
+    let monitor_running = {
+        let guard = match monitor_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.is_some()
+    };
+    if monitor_running {
+        return Ok(());
+    }
+
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+
+    let handle = std::thread::Builder::new()
+        .name("unified-hotkey-monitor".to_string())
+        .spawn(move || {
+            let thread_id = unsafe { GetCurrentThreadId() };
+
+            let hook = match install_hook_on_thread() {
+                Ok(h) => h,
+                Err(msg) => {
+                    let _ = ready_tx.send(Err(msg));
+                    return;
+                }
+            };
+            let hook_handle: HookHandle = hook;
+
+            // Ensure message queue exists
+            let mut peek_msg: MSG = unsafe { std::mem::zeroed() };
+            let _ = unsafe { PeekMessageW(&mut peek_msg, std::ptr::null_mut(), 0, 0, PM_NOREMOVE) };
+
+            if ready_tx.send(Ok(thread_id)).is_err() {
+                unsafe { UnhookWindowsHookEx(hook_handle) };
+                return;
+            }
+
+            // Simple message loop — the hook callback is kept fast enough that
+            // Windows will not silently remove it.
+            let mut message: MSG = unsafe { std::mem::zeroed() };
+            loop {
+                let result = unsafe { GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) };
+                if result <= 0 {
+                    break;
+                }
+
+                unsafe {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+
+            unsafe { UnhookWindowsHookEx(hook_handle) };
+        })
+        .map_err(|e| AppError::Other(format!("Failed to start hotkey listener thread: {}", e)))?;
+
+    let thread_id = ready_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .map_err(|e| AppError::Other(format!("Timed out waiting for hotkey listener: {}", e)))?
+        .map_err(AppError::Other)?;
+
+    let mut guard = match monitor_slot().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    *guard = Some(UnifiedHotkeyMonitor { thread_id, handle });
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn force_release_hotkey(state: &UnifiedHookState) {
+    let _transition = state.gate.transition.lock();
+    state.gate.registered.store(false, Ordering::Release);
+    if let Some(id) = state.reg_hotkey_id {
+        unregister_reg_hotkey_id(id);
+    }
+    let label = state.spec.label();
+    if let Some(session_id) = state.gate.start_owner.release() {
+        handle_hotkey_stop(
+            state.app_handle.clone(),
+            label.to_string(),
+            state.trigger,
+            session_id,
+        );
+    }
+    reset_hotkey_event_gate(&state.gate);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ensure_unified_hotkey_monitor(_app_handle: tauri::AppHandle) -> Result<(), AppError> {
+    Err(AppError::Other(
+        "Low-level keyboard hook hotkeys are not supported on this OS".to_string(),
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn build_hook_state(
+    app_handle: tauri::AppHandle,
+    spec: HotkeySpec,
+    trigger: RecordingTrigger,
+) -> Arc<UnifiedHookState> {
+    let backend = classify_backend(&spec);
+    build_hook_state_with_backend(app_handle, spec, trigger, backend)
+}
+
+fn build_hook_state_with_backend(
+    app_handle: tauri::AppHandle,
+    spec: HotkeySpec,
+    trigger: RecordingTrigger,
+    backend: HotkeyBackend,
+) -> Arc<UnifiedHookState> {
+    let key_down_count = match &spec {
+        HotkeySpec::ModifierOnly {
+            required_modifiers, ..
+        } => required_modifiers.len(),
+        HotkeySpec::Standard { .. } => 0,
+    };
+
+    Arc::new(UnifiedHookState {
+        app_handle,
+        backend,
+        reg_hotkey_id: if backend == HotkeyBackend::RegisterHotKey {
+            next_reg_hotkey_id()
+        } else {
+            None
+        },
+        spec,
+        trigger,
+        gate: Arc::new(HotkeyEventGate::default()),
+        key_down: (0..key_down_count)
+            .map(|_| AtomicBool::new(false))
+            .collect(),
+        activated: AtomicBool::new(false),
+        tainted: AtomicBool::new(false),
+        modifier_leaked: AtomicBool::new(false),
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn sync_hotkey_monitor_lifecycle(app_handle: tauri::AppHandle) -> Result<(), AppError> {
+    let (has_llkh, _has_any) = {
+        let guard = match unified_hook_state_slot().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let has_llkh = [
+            guard.dictation.as_ref(),
+            guard.translation.as_ref(),
+            guard.assistant.as_ref(),
+        ]
+        .iter()
+        .flatten()
+        .any(|s| s.backend == HotkeyBackend::LowLevelHook);
+        let has_any = !guard.is_empty();
+        (has_llkh, has_any)
+    };
+
+    // Only install LLKH when at least one hotkey actually needs it
+    if has_llkh {
+        ensure_unified_hotkey_monitor(app_handle)
+    } else {
+        stop_unified_hotkey_monitor();
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn sync_hotkey_monitor_lifecycle(app_handle: tauri::AppHandle) -> Result<(), AppError> {
+    ensure_unified_hotkey_monitor(app_handle)
+}
+
+// ---------------------------------------------------------------------------
+// Key parsing
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+fn parse_main_key_to_vk(main_key: &str) -> Option<u16> {
+    match main_key {
+        "Escape" => Some(VK_ESCAPE),
+        "Enter" => Some(VK_RETURN),
+        "Tab" => Some(VK_TAB),
+        "Space" => Some(VK_SPACE),
+        "Backspace" => Some(VK_BACK),
+        "Delete" => Some(VK_DELETE),
+        "Insert" => Some(VK_INSERT),
+        "Home" => Some(VK_HOME),
+        "End" => Some(VK_END),
+        "PageUp" => Some(VK_PRIOR),
+        "PageDown" => Some(VK_NEXT),
+        "ArrowUp" => Some(VK_UP),
+        "ArrowDown" => Some(VK_DOWN),
+        "ArrowLeft" => Some(VK_LEFT),
+        "ArrowRight" => Some(VK_RIGHT),
+        "CapsLock" => Some(VK_CAPITAL),
+        _ if main_key.len() == 1 => {
+            let byte = main_key.as_bytes()[0];
+            if byte.is_ascii_uppercase() || byte.is_ascii_digit() {
+                Some(byte as u16)
+            } else {
+                None
+            }
+        }
+        _ if main_key.starts_with('F') => {
+            let suffix = main_key.strip_prefix('F')?;
+            let index = suffix.parse::<u16>().ok()?;
+            if (1..=24).contains(&index) {
+                Some(VK_F1 + index - 1)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// normalize_shortcut → HotkeySpec
+// ---------------------------------------------------------------------------
+
+fn normalize_shortcut(raw: &str) -> Result<HotkeySpec, AppError> {
+    let mut modifiers = ShortcutModifiers::default();
+    let mut main_key: Option<String> = None;
+
+    for token in raw.split('+').map(str::trim) {
+        if token.is_empty() {
+            return Err(AppError::Other(
+                "Invalid shortcut format: contains an empty key token; please set it again"
+                    .to_string(),
+            ));
+        }
+
+        let modifier = match token.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => Some(ModifierKey::Ctrl),
+            "leftctrl" | "ctrlleft" | "leftcontrol" | "controlleft" => Some(ModifierKey::LeftCtrl),
+            "rightctrl" | "ctrlright" | "rightcontrol" | "controlright" => {
+                Some(ModifierKey::RightCtrl)
+            }
+            "alt" | "option" | "altgraph" => Some(ModifierKey::Alt),
+            "leftalt" | "altleft" | "leftoption" => Some(ModifierKey::LeftAlt),
+            "rightalt" | "altright" | "rightoption" => Some(ModifierKey::RightAlt),
+            "shift" => Some(ModifierKey::Shift),
+            "super" | "meta" | "win" | "windows" | "cmd" | "command" | "os" => {
+                Some(ModifierKey::Super)
+            }
+            _ => None,
+        };
+
+        if let Some(modifier) = modifier {
+            modifiers.insert(modifier)?;
+        } else {
+            if main_key.is_some() {
+                return Err(AppError::Other(
+                    "Invalid shortcut format: only one main key is allowed (for example Ctrl+Win+R)".to_string(),
+                ));
+            }
+            main_key = Some(token.to_string());
+        }
+    }
+
+    // Build ordered label
+    let mut label_parts = Vec::with_capacity(5);
+    label_parts.extend(
+        modifiers
+            .ordered_keys()
+            .map(|modifier| modifier.label().to_string()),
+    );
+
+    if let Some(ref mk) = main_key {
+        label_parts.push(mk.clone());
+
+        #[cfg(target_os = "windows")]
+        let main_vk = parse_main_key_to_vk(mk)
+            .ok_or_else(|| AppError::Other(format!("Unrecognized key: {}", mk)))?;
+        #[cfg(not(target_os = "windows"))]
+        let main_vk = 0u16;
+
+        let label = label_parts.join("+");
+        let consume_main_key = mk.eq_ignore_ascii_case("CapsLock");
+        let force_low_level_hook = modifiers.has_side_specific() || consume_main_key;
+        Ok(HotkeySpec::Standard {
+            label,
+            modifiers,
+            main_vk,
+            force_low_level_hook,
+            consume_main_key,
+        })
+    } else {
+        // Pure modifier-only hotkey
+        if modifiers.is_empty() {
+            return Err(AppError::Other(
+                "Invalid shortcut format: please specify at least one key".to_string(),
+            ));
+        }
+
+        #[cfg(target_os = "windows")]
+        let required_modifiers = modifiers.ordered_keys().collect();
+        #[cfg(not(target_os = "windows"))]
+        let required_modifiers = Vec::new();
+
+        let label = label_parts.join("+");
+        Ok(HotkeySpec::ModifierOnly {
+            label,
+            required_modifiers,
+        })
+    }
+}
+
+/// Register a hotkey on the appropriate backend. Returns the backend label on success.
+/// Caller holds the configuration lock. Retired Arcs are snapshots of settings,
+/// never candidates for publication during rollback.
+#[cfg(target_os = "windows")]
+fn restore_hotkey_registrations(
+    app_handle: &tauri::AppHandle,
+    previous: &[(HotkeyKind, Option<Arc<UnifiedHookState>>)],
+) -> Result<(), AppError> {
+    for (kind, _) in previous {
+        if let Some(current) = set_unified_hook_state(*kind, None) {
+            force_release_hotkey(&current);
+        }
+    }
+    for (kind, state) in previous {
+        if let Some(state) = state {
+            let fresh =
+                build_hook_state(state.app_handle.clone(), state.spec.clone(), state.trigger);
+            set_unified_hook_state(*kind, Some(fresh.clone()));
+            try_register_hotkey_backend(*kind, &fresh);
+        }
+    }
+    if let Err(error) = sync_hotkey_monitor_lifecycle(app_handle.clone()) {
+        for (kind, _) in previous {
+            if let Some(current) = set_unified_hook_state(*kind, None) {
+                force_release_hotkey(&current);
+            }
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn rollback_hotkey_error(
+    app_handle: &tauri::AppHandle,
+    previous: &[(HotkeyKind, Option<Arc<UnifiedHookState>>)],
+    error: AppError,
+) -> AppError {
+    match restore_hotkey_registrations(app_handle, previous) {
+        Ok(()) => error,
+        Err(restore_error) => AppError::Other(format!(
+            "{error}; failed to restore previous shortcut: {restore_error}"
+        )),
+    }
+}
+
+/// Register a hotkey on the appropriate backend. Returns the backend label on success.
+#[cfg(target_os = "windows")]
+fn register_on_chosen_backend(
+    app_handle: &tauri::AppHandle,
+    kind: HotkeyKind,
+    chosen_backend: HotkeyBackend,
+    hook_state: Arc<UnifiedHookState>,
+    previous_state: Option<Arc<UnifiedHookState>>,
+    label: &str,
+) -> Result<&'static str, AppError> {
+    if chosen_backend == HotkeyBackend::RegisterHotKey {
+        if let HotkeySpec::Standard {
+            modifiers, main_vk, ..
+        } = &hook_state.spec
+        {
+            let (mods_copy, vk_copy) = (modifiers.clone(), *main_vk);
+            match register_via_reg_hotkey(&mods_copy, vk_copy, hook_state.clone()) {
+                Ok(()) => {
+                    // Sync LLKH lifecycle — may stop hook if not needed by others
+                    if let Err(error) = sync_hotkey_monitor_lifecycle(app_handle.clone()) {
+                        return Err(rollback_hotkey_error(
+                            app_handle,
+                            &[(kind, previous_state)],
+                            error,
+                        ));
+                    }
+                    return Ok("registerHotKey");
+                }
+                Err(reg_err) => {
+                    force_release_hotkey(&hook_state);
+                    // RegisterHotKey failed — rebuild state with LowLevelHook backend
+                    // so the LLKH callback will process this hotkey.
+                    log::warn!(
+                        "RegisterHotKey 注册 {} 失败，回退到低层键盘钩子: {}",
+                        label,
+                        reg_err
+                    );
+                    let fallback_state = build_hook_state_with_backend(
+                        hook_state.app_handle.clone(),
+                        hook_state.spec.clone(),
+                        hook_state.trigger,
+                        HotkeyBackend::LowLevelHook,
+                    );
+                    set_unified_hook_state(kind, Some(fallback_state));
+                    // Fall through to LLKH path below
+                }
+            }
+        }
+    }
+
+    // LLKH path (either direct or fallback from RegisterHotKey failure)
+    if let Err(err) = sync_hotkey_monitor_lifecycle(app_handle.clone()) {
+        let err = rollback_hotkey_error(app_handle, &[(kind, previous_state)], err);
+        let now_ms = now_unix_ms();
+        update_hotkey_diagnostic(app_handle, |diagnostic| {
+            diagnostic.shortcut = label.to_string();
+            diagnostic.registered = false;
+            diagnostic.backend = "none".to_string();
+            diagnostic.is_pressed = false;
+            diagnostic.last_error = Some(err.to_string());
+            diagnostic.warning = hotkey_warning_message(label);
+            diagnostic.last_event = Some("error".to_string());
+            diagnostic.last_event_at_ms = Some(now_ms);
+        });
+        return Err(err);
+    }
+
+    Ok("lowLevelHook")
+}
+
+/// Try to register a hotkey via RegisterHotKey if its backend demands it.
+/// On failure, rebuilds state with LowLevelHook backend in the slot.
+#[cfg(target_os = "windows")]
+fn try_register_hotkey_backend(kind: HotkeyKind, state: &Arc<UnifiedHookState>) {
+    if state.backend != HotkeyBackend::RegisterHotKey {
+        return;
+    }
+    if let HotkeySpec::Standard {
+        modifiers, main_vk, ..
+    } = &state.spec
+    {
+        let (mods_copy, vk_copy) = (modifiers.clone(), *main_vk);
+        if let Err(e) = register_via_reg_hotkey(&mods_copy, vk_copy, state.clone()) {
+            force_release_hotkey(state);
+            log::warn!(
+                "{} RegisterHotKey 失败，回退到 LLKH: {}",
+                state.spec.label(),
+                e
+            );
+            let fallback = build_hook_state_with_backend(
+                state.app_handle.clone(),
+                state.spec.clone(),
+                state.trigger,
+                HotkeyBackend::LowLevelHook,
+            );
+            set_unified_hook_state(kind, Some(fallback));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tauri commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn register_custom_hotkey(
+    app_handle: tauri::AppHandle,
+    shortcut: String,
+) -> Result<String, AppError> {
+    let _configuration = hotkey_configuration_lock().lock();
+    let spec = match normalize_shortcut(&shortcut) {
+        Ok(spec) => spec,
+        Err(err) => {
+            let now_ms = now_unix_ms();
+            update_hotkey_diagnostic(&app_handle, |diagnostic| {
+                diagnostic.shortcut = shortcut.replace("Super", "Win");
+                diagnostic.registered = false;
+                diagnostic.backend = "none".to_string();
+                diagnostic.is_pressed = false;
+                diagnostic.last_error = Some(err.to_string());
+                diagnostic.warning = None;
+                diagnostic.last_event = Some("error".to_string());
+                diagnostic.last_event_at_ms = Some(now_ms);
+            });
+            return Err(err);
+        }
+    };
+
+    let label = spec.label().to_string();
+    ensure_hotkey_not_conflicting(&app_handle, HotkeyKind::Dictation, &label)?;
+
+    // Unregister from the previous backend BEFORE probing — otherwise our own
+    // RegisterHotKey registration would cause a false positive system conflict.
+    #[cfg(target_os = "windows")]
+    {
+        unregister_via_reg_hotkey(HotkeyKind::Dictation);
+    }
+
+    // Probe system-wide conflict
+    #[cfg(target_os = "windows")]
+    let system_conflict = probe_system_hotkey_conflict(&spec);
+    #[cfg(not(target_os = "windows"))]
+    let system_conflict: Option<String> = None;
+
+    if let Some(ref msg) = system_conflict {
+        log::warn!("系统快捷键冲突检测: {}", msg);
+    }
+
+    #[cfg(target_os = "windows")]
+    let hook_state = build_hook_state(
+        app_handle.clone(),
+        spec,
+        RecordingTrigger::DictationOriginal,
+    );
+
+    #[cfg(target_os = "windows")]
+    let chosen_backend = hook_state.backend;
+
+    #[cfg(target_os = "windows")]
+    let previous_state = set_unified_hook_state(HotkeyKind::Dictation, Some(hook_state.clone()));
+
+    #[cfg(target_os = "windows")]
+    if let Some(previous) = previous_state.as_ref() {
+        force_release_hotkey(previous);
+    }
+
+    #[cfg(target_os = "windows")]
+    let backend_label = register_on_chosen_backend(
+        &app_handle,
+        HotkeyKind::Dictation,
+        chosen_backend,
+        hook_state,
+        previous_state,
+        &label,
+    )?;
+
+    #[cfg(not(target_os = "windows"))]
+    let backend_label = {
+        sync_hotkey_monitor_lifecycle(app_handle.clone())?;
+        "lowLevelHook"
+    };
+
+    let now_ms = now_unix_ms();
+    update_hotkey_diagnostic(&app_handle, |diagnostic| {
+        diagnostic.shortcut = label.clone();
+        diagnostic.registered = true;
+        diagnostic.backend = backend_label.to_string();
+        diagnostic.is_pressed = false;
+        diagnostic.last_error = None;
+        diagnostic.warning = hotkey_warning_message(&label);
+        diagnostic.system_conflict = system_conflict;
+        diagnostic.last_event = Some("registered".to_string());
+        diagnostic.last_event_at_ms = Some(now_ms);
+        diagnostic.last_registered_at_ms = Some(now_ms);
+    });
+
+    log::info!("自定义快捷键 {} 已注册（{}）", label, backend_label);
+    Ok(format!("Shortcut {} registered", label))
+}
+
+#[tauri::command]
+pub async fn register_translation_hotkey(
+    app_handle: tauri::AppHandle,
+    shortcut: String,
+) -> Result<String, AppError> {
+    register_translation_hotkey_inner(
+        app_handle,
+        Some(shortcut.trim().to_string()).filter(|value| !value.is_empty()),
+    )
+}
+
+pub(crate) fn register_translation_hotkey_inner(
+    app_handle: tauri::AppHandle,
+    shortcut: Option<String>,
+) -> Result<String, AppError> {
+    let _configuration = hotkey_configuration_lock().lock();
+    #[cfg(not(target_os = "windows"))]
+    {
+        if shortcut.is_some() {
+            ensure_unified_hotkey_monitor(app_handle)?;
+        }
+        return Ok("Translation hotkey updated".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let next_state = if let Some(shortcut) = shortcut {
+            let spec = normalize_shortcut(&shortcut)?;
+            ensure_hotkey_not_conflicting(&app_handle, HotkeyKind::Translation, spec.label())?;
+            Some(build_hook_state(
+                app_handle.clone(),
+                spec,
+                RecordingTrigger::DictationTranslated,
+            ))
+        } else {
+            None
+        };
+
+        let previous_state = set_unified_hook_state(HotkeyKind::Translation, next_state.clone());
+
+        if let Some(previous) = previous_state.as_ref() {
+            force_release_hotkey(previous);
+        }
+
+        if let Some(ref state) = next_state {
+            try_register_hotkey_backend(HotkeyKind::Translation, state);
+        }
+
+        if let Err(err) = sync_hotkey_monitor_lifecycle(app_handle.clone()) {
+            return Err(rollback_hotkey_error(
+                &app_handle,
+                &[(HotkeyKind::Translation, previous_state)],
+                err,
+            ));
+        }
+
+        let label = next_state
+            .as_ref()
+            .map(|state| state.spec.label().to_string())
+            .unwrap_or_else(|| "Not set".to_string());
+        log::info!("翻译热键已更新: {}", label);
+        Ok(format!("Translation hotkey updated: {}", label))
+    }
+}
+
+#[tauri::command]
+pub async fn register_assistant_hotkey(
+    app_handle: tauri::AppHandle,
+    shortcut: String,
+) -> Result<String, AppError> {
+    register_assistant_hotkey_inner(
+        app_handle,
+        Some(shortcut.trim().to_string()).filter(|value| !value.is_empty()),
+    )
+}
+
+pub(crate) fn register_assistant_hotkey_inner(
+    app_handle: tauri::AppHandle,
+    shortcut: Option<String>,
+) -> Result<String, AppError> {
+    let _configuration = hotkey_configuration_lock().lock();
+    #[cfg(not(target_os = "windows"))]
+    {
+        if shortcut.is_some() {
+            ensure_unified_hotkey_monitor(app_handle)?;
+        }
+        return Ok("Assistant hotkey updated".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let next_state = if let Some(shortcut) = shortcut {
+            let spec = normalize_shortcut(&shortcut)?;
+            ensure_hotkey_not_conflicting(&app_handle, HotkeyKind::Assistant, spec.label())?;
+            Some(build_hook_state(
+                app_handle.clone(),
+                spec,
+                RecordingTrigger::Assistant,
+            ))
+        } else {
+            None
+        };
+
+        let previous_state = set_unified_hook_state(HotkeyKind::Assistant, next_state.clone());
+
+        if let Some(previous) = previous_state.as_ref() {
+            force_release_hotkey(previous);
+        }
+
+        if let Some(ref state) = next_state {
+            try_register_hotkey_backend(HotkeyKind::Assistant, state);
+        }
+
+        if let Err(err) = sync_hotkey_monitor_lifecycle(app_handle.clone()) {
+            return Err(rollback_hotkey_error(
+                &app_handle,
+                &[(HotkeyKind::Assistant, previous_state)],
+                err,
+            ));
+        }
+
+        let label = next_state
+            .as_ref()
+            .map(|state| state.spec.label().to_string())
+            .unwrap_or_else(|| "Not set".to_string());
+        log::info!("助手热键已更新: {}", label);
+        Ok(format!("Assistant hotkey updated: {}", label))
+    }
+}
+
+#[tauri::command]
+pub async fn unregister_all_hotkeys(app_handle: tauri::AppHandle) -> Result<String, AppError> {
+    let _configuration = hotkey_configuration_lock().lock();
+    #[cfg(target_os = "windows")]
+    {
+        // Unregister from RegisterHotKey backend
+        unregister_via_reg_hotkey(HotkeyKind::Dictation);
+        unregister_via_reg_hotkey(HotkeyKind::Translation);
+        unregister_via_reg_hotkey(HotkeyKind::Assistant);
+
+        // Unregister from LLKH backend
+        if let Some(previous) = set_unified_hook_state(HotkeyKind::Dictation, None) {
+            force_release_hotkey(&previous);
+        }
+        if let Some(previous) = set_unified_hook_state(HotkeyKind::Translation, None) {
+            force_release_hotkey(&previous);
+        }
+        if let Some(previous) = set_unified_hook_state(HotkeyKind::Assistant, None) {
+            force_release_hotkey(&previous);
+        }
+    }
+    stop_unified_hotkey_monitor();
+    #[cfg(target_os = "windows")]
+    stop_reg_hotkey_backend();
+
+    let now_ms = now_unix_ms();
+    update_hotkey_diagnostic(&app_handle, |diagnostic| {
+        diagnostic.registered = false;
+        diagnostic.is_pressed = false;
+        diagnostic.last_error = None;
+        diagnostic.last_event = Some("unregistered".to_string());
+        diagnostic.last_event_at_ms = Some(now_ms);
+    });
+
+    log::info!("所有全局快捷键已注销");
+    Ok("All global shortcuts unregistered".to_string())
+}
+
+#[tauri::command]
+pub async fn set_recording_mode(
+    _app_handle: tauri::AppHandle,
+    toggle: bool,
+) -> Result<(), AppError> {
+    let _configuration = hotkey_configuration_lock().lock();
+    let previous_mode = toggle_mode_flag().swap(toggle, Ordering::AcqRel);
+    if previous_mode == toggle {
+        return Ok(());
+    }
+    // If switching from toggle→hold while toggle is active, stop recording
+    if !toggle {
+        let state = _app_handle.state::<AppState>();
+        let active_session = state
+            .recording
+            .recording
+            .lock()
+            .as_ref()
+            .map(|slot| (slot.session_id(), slot.trigger()));
+        if let Some((session_id, trigger)) = active_session {
+            handle_hotkey_stop(
+                _app_handle.clone(),
+                "切换到按住模式，停止当前录音".to_string(),
+                trigger,
+                session_id,
+            );
+        }
+    }
+
+    // Mode change may require backend migration for all registered hotkeys.
+    // Re-register each active hotkey so classify_backend picks the right backend.
+    #[cfg(target_os = "windows")]
+    {
+        let bundle = get_unified_hook_states();
+        for (kind, state) in [
+            (HotkeyKind::Dictation, bundle.dictation.as_ref()),
+            (HotkeyKind::Translation, bundle.translation.as_ref()),
+            (HotkeyKind::Assistant, bundle.assistant.as_ref()),
+        ] {
+            if let Some(old_state) = state {
+                let new_backend = classify_backend(&old_state.spec);
+                let label = old_state.spec.label().to_string();
+                log::info!(
+                    "模式切换：{} 从 {:?} 迁移到 {:?}",
+                    label,
+                    old_state.backend,
+                    new_backend
+                );
+
+                // Retire even when the backend is unchanged: queued events
+                // must not reinterpret an old press using the new mode.
+                force_release_hotkey(old_state);
+
+                // Rebuild state with new backend classification
+                let new_state = build_hook_state(
+                    old_state.app_handle.clone(),
+                    old_state.spec.clone(),
+                    old_state.trigger,
+                );
+
+                set_unified_hook_state(kind, Some(new_state.clone()));
+
+                try_register_hotkey_backend(kind, &new_state);
+            }
+        }
+        if let Err(error) = sync_hotkey_monitor_lifecycle(_app_handle.clone()) {
+            toggle_mode_flag().store(previous_mode, Ordering::Release);
+            return Err(rollback_hotkey_error(
+                &_app_handle,
+                &[
+                    (HotkeyKind::Dictation, bundle.dictation),
+                    (HotkeyKind::Translation, bundle.translation),
+                    (HotkeyKind::Assistant, bundle.assistant),
+                ],
+                error,
+            ));
+        }
+    }
+
+    log::info!("录音模式已设置为: {}", if toggle { "切换" } else { "按住" });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_hotkey_diagnostic(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::state::HotkeyDiagnosticState, AppError> {
+    Ok(state.hotkey_diagnostic_snapshot())
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "windows")]
+    use super::{accepts_right_alt, VK_CAPITAL, VK_LCONTROL, VK_LMENU, VK_RCONTROL, VK_RMENU};
+    use super::{
+        is_ignorable_start_audio_error, normalize_shortcut, reset_hotkey_event_gate,
+        HotkeyEventGate, HotkeySpec, ModifierKey, RECORDING_ALREADY_ACTIVE_ERROR,
+        RECORDING_NOT_READY_ERROR, RECORDING_START_CANCELLED_ERROR,
+    };
+    use std::sync::atomic::Ordering;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn registration_ids_are_not_reused_for_the_same_hotkey() {
+        let first = super::next_reg_hotkey_id().unwrap();
+        let second = super::next_reg_hotkey_id().unwrap();
+        assert_ne!(
+            first, second,
+            "queued WM_HOTKEY must keep its original registration identity"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn registration_id_exhaustion_does_not_wrap() {
+        let next = super::AtomicU32::new(0xBFFF);
+        assert_eq!(super::allocate_reg_hotkey_id(&next), Some(0xBFFF));
+        assert_eq!(super::allocate_reg_hotkey_id(&next), None);
+        assert_eq!(super::allocate_reg_hotkey_id(&next), None);
+    }
+
+    #[test]
+    fn mode_changes_replace_gates_even_without_backend_migration() {
+        let source = include_str!("hotkey.rs");
+        let body = source
+            .split("pub async fn set_recording_mode(")
+            .nth(1)
+            .unwrap();
+        let body = body.split("#[tauri::command]").next().unwrap();
+        assert!(
+            !body.contains("if new_backend != old_state.backend"),
+            "a same-backend mode switch must also invalidate queued presses"
+        );
+        assert!(!body.contains("release_hotkey_registration(old_state, false)"));
+    }
+
+    #[test]
+    fn failed_registration_does_not_restore_retired_arcs() {
+        let source = include_str!("hotkey.rs");
+        let production = source.split("mod tests {").next().unwrap();
+        assert!(!production.contains("set_unified_hook_state(kind, previous_state)"));
+        assert!(
+            !production.contains("set_unified_hook_state(HotkeyKind::Translation, previous_state)")
+        );
+        assert!(
+            !production.contains("set_unified_hook_state(HotkeyKind::Assistant, previous_state)")
+        );
+    }
+
+    #[test]
+    fn native_success_and_mode_change_do_not_swallow_lifecycle_errors() {
+        let source = include_str!("hotkey.rs");
+        let native = source
+            .split("fn register_on_chosen_backend(")
+            .nth(1)
+            .unwrap();
+        let success = native
+            .split("Ok(()) => {")
+            .nth(1)
+            .unwrap()
+            .split("Err(reg_err) => {")
+            .next()
+            .unwrap();
+        assert!(!success.contains("let _ = sync_hotkey_monitor_lifecycle"));
+        let mode = source
+            .split("pub async fn set_recording_mode(")
+            .nth(1)
+            .unwrap()
+            .split("#[tauri::command]")
+            .next()
+            .unwrap();
+        assert!(!mode.contains("let _ = sync_hotkey_monitor_lifecycle"));
+    }
+
+    #[test]
+    fn quick_cancel_is_not_rebroadcast_as_a_start_error() {
+        assert!(is_ignorable_start_audio_error(
+            RECORDING_START_CANCELLED_ERROR
+        ));
+        assert!(!is_ignorable_start_audio_error("麦克风不可用"));
+    }
+
+    #[test]
+    fn all_expected_start_audio_races_are_ignored_but_other_audio_errors_are_not() {
+        for message in [
+            RECORDING_NOT_READY_ERROR,
+            RECORDING_ALREADY_ACTIVE_ERROR,
+            RECORDING_START_CANCELLED_ERROR,
+        ] {
+            assert!(
+                is_ignorable_start_audio_error(message),
+                "known start race should be ignored: {message}"
+            );
+        }
+        assert!(!is_ignorable_start_audio_error("麦克风不可用"));
+    }
+
+    #[test]
+    fn reset_hotkey_event_gate_clears_press_release_and_toggle_state() {
+        let gate = HotkeyEventGate::default();
+        gate.is_pressed.store(true, Ordering::Relaxed);
+        gate.last_release_ms.store(123, Ordering::Relaxed);
+        gate.toggle_active.store(true, Ordering::Relaxed);
+
+        reset_hotkey_event_gate(&gate);
+
+        assert!(!gate.is_pressed.load(Ordering::Relaxed));
+        assert_eq!(gate.last_release_ms.load(Ordering::Relaxed), 0);
+        assert!(!gate.toggle_active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn low_level_hook_callback_does_not_lock_state_slot() {
+        let source = include_str!("hotkey.rs");
+        let hook_start = source
+            .find("fn unified_low_level_keyboard_proc")
+            .expect("low-level hook callback should exist");
+        let hook_rest = &source[hook_start..];
+        let hook_end = hook_rest
+            .find("/// Returns `true` if the event should be swallowed")
+            .expect("hook callback section should end before helper docs");
+        let hook_body = &hook_rest[..hook_end];
+
+        assert!(
+            !hook_body.contains("get_unified_hook_states()")
+                && !hook_body.contains("unified_hook_state_slot()")
+                && !hook_body.contains(".lock()"),
+            "WH_KEYBOARD_LL callback must read lock-free state only; mutex locking in the hook path can stall global keyboard input"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn side_specific_ctrl_is_not_collapsed_to_generic_ctrl() {
+        let left = normalize_shortcut("LeftCtrl").expect("Left Ctrl should parse");
+        let generic = normalize_shortcut("Ctrl").expect("generic Ctrl should parse");
+
+        let HotkeySpec::ModifierOnly {
+            required_modifiers: left_required,
+            ..
+        } = left
+        else {
+            panic!("Left Ctrl should be a modifier-only shortcut");
+        };
+        assert_eq!(left_required, vec![ModifierKey::LeftCtrl]);
+        assert!(left_required[0].matches_vk(VK_LCONTROL as u32));
+        assert!(!left_required[0].matches_vk(VK_RCONTROL as u32));
+
+        let HotkeySpec::ModifierOnly {
+            required_modifiers: generic_required,
+            ..
+        } = generic
+        else {
+            panic!("Ctrl should be a modifier-only shortcut");
+        };
+        assert!(generic_required[0].matches_vk(VK_LCONTROL as u32));
+        assert!(generic_required[0].matches_vk(VK_RCONTROL as u32));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn right_alt_accepts_altgr_companion_but_not_left_alt() {
+        let spec = normalize_shortcut("RightAlt").expect("Right Alt should parse");
+        let HotkeySpec::ModifierOnly {
+            required_modifiers, ..
+        } = spec
+        else {
+            panic!("Right Alt should be a modifier-only shortcut");
+        };
+
+        assert!(accepts_right_alt(&required_modifiers));
+        assert!(required_modifiers[0].matches_vk(VK_RMENU as u32));
+        assert!(!required_modifiers[0].matches_vk(VK_LMENU as u32));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn caps_lock_uses_low_level_hook_and_consumes_native_toggle() {
+        let spec = normalize_shortcut("CapsLock").expect("Caps Lock should parse");
+        let HotkeySpec::Standard {
+            main_vk,
+            force_low_level_hook,
+            consume_main_key,
+            ..
+        } = spec
+        else {
+            panic!("Caps Lock should be a standard main key");
+        };
+
+        assert_eq!(main_vk, VK_CAPITAL);
+        assert!(force_low_level_hook);
+        assert!(consume_main_key);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn side_specific_modifier_combinations_force_the_low_level_hook() {
+        let spec = normalize_shortcut("RightCtrl+LeftAlt+R")
+            .expect("side-specific modifier combination should parse");
+        let HotkeySpec::Standard {
+            modifiers,
+            main_vk,
+            force_low_level_hook,
+            consume_main_key,
+            ..
+        } = spec
+        else {
+            panic!("modifier plus R should be a standard shortcut");
+        };
+
+        assert_eq!(
+            modifiers.keys,
+            vec![ModifierKey::RightCtrl, ModifierKey::LeftAlt]
+        );
+        assert_eq!(main_vk, b'R' as u16);
+        assert!(force_low_level_hook);
+        assert!(!consume_main_key);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn legacy_generic_modifier_combinations_keep_the_standard_backend_path() {
+        let spec = normalize_shortcut("Ctrl+Alt+F2")
+            .expect("legacy generic modifier combination should parse");
+        let HotkeySpec::Standard {
+            force_low_level_hook,
+            consume_main_key,
+            ..
+        } = spec
+        else {
+            panic!("modifier plus F2 should be a standard shortcut");
+        };
+
+        assert!(!force_low_level_hook);
+        assert!(!consume_main_key);
+    }
+
+    #[test]
+    fn generic_and_side_specific_aliases_cannot_be_mixed() {
+        let error = normalize_shortcut("Ctrl+LeftCtrl")
+            .expect_err("generic and side-specific Ctrl should conflict")
+            .to_string();
+        assert!(error.contains("left/right modifiers of the same family"));
+    }
+}
