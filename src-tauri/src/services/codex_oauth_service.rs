@@ -1,14 +1,19 @@
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use base64::Engine;
-use rand::{distributions::Alphanumeric, rngs::OsRng, Rng};
-use serde::de::{self, Deserializer};
+use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tauri_plugin_keyring::KeyringExt;
+#[cfg(test)]
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
+#[cfg(test)]
+use super::oauth_callback::base64_url_encode;
+use super::oauth_callback::{
+    callback_html, decode_jwt_claims, delete_keyring_password, deserialize_interval_secs,
+    generate_pkce_pair, generate_state, now_ms, respond_with_html,
+};
 use crate::services::grok_build_oauth_service;
 use crate::services::llm_provider::KEYRING_SERVICE;
 use crate::state::oauth_session::OAuthOperation;
@@ -175,31 +180,6 @@ struct CallbackListeners {
     port: u16,
 }
 
-fn deserialize_interval_secs<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    match value {
-        serde_json::Value::Number(number) => number
-            .as_u64()
-            .ok_or_else(|| de::Error::custom("interval must be a positive integer")),
-        serde_json::Value::String(value) => value
-            .trim()
-            .parse::<u64>()
-            .map_err(|err| de::Error::custom(format!("invalid interval: {err}"))),
-        serde_json::Value::Null => Ok(0),
-        _ => Err(de::Error::custom("interval must be a string or number")),
-    }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
 fn make_status(session: Option<&OpenaiCodexOauthSession>) -> OpenaiCodexOauthStatus {
     if let Some(session) = session {
         return OpenaiCodexOauthStatus {
@@ -357,17 +337,6 @@ fn save_session_to_storage(
     write_session_meta(session)
 }
 
-fn delete_keyring_password(
-    app_handle: &tauri::AppHandle,
-    user: &str,
-    description: &str,
-) -> Result<(), String> {
-    match app_handle.keyring().delete_password(KEYRING_SERVICE, user) {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(_) => Err(format!("Failed to {description}")),
-    }
-}
-
 fn clear_session_from_storage(app_handle: &tauri::AppHandle) -> Result<(), String> {
     let mut errors = Vec::new();
     if let Err(error) = write_logout_tombstone() {
@@ -401,25 +370,13 @@ fn clear_session_from_storage(app_handle: &tauri::AppHandle) -> Result<(), Strin
     }
 }
 
-fn decode_jwt_claims(jwt: &str) -> Option<JwtClaims> {
-    let mut parts = jwt.split('.');
-    let (_header, payload, _signature) = match (parts.next(), parts.next(), parts.next()) {
-        (Some(h), Some(p), Some(s)) if !h.is_empty() && !p.is_empty() && !s.is_empty() => (h, p, s),
-        _ => return None,
-    };
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload)
-        .ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
 fn enrich_session_from_tokens(
     session: &mut OpenaiCodexOauthSession,
     id_token_fallback: Option<&str>,
 ) {
-    let claims = decode_jwt_claims(&session.id_token)
-        .or_else(|| id_token_fallback.and_then(decode_jwt_claims))
-        .or_else(|| decode_jwt_claims(&session.access_token));
+    let claims = decode_jwt_claims::<JwtClaims>(&session.id_token)
+        .or_else(|| id_token_fallback.and_then(decode_jwt_claims::<JwtClaims>))
+        .or_else(|| decode_jwt_claims::<JwtClaims>(&session.access_token));
 
     if let Some(claims) = claims {
         session.email = claims
@@ -435,18 +392,6 @@ fn enrich_session_from_tokens(
             session.expires_at_ms = claims.exp.map(|exp| exp.saturating_mul(1000));
         }
     }
-}
-
-fn generate_code_verifier() -> String {
-    OsRng
-        .sample_iter(&Alphanumeric)
-        .take(64)
-        .map(char::from)
-        .collect()
-}
-
-fn base64_url_encode(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 pub(crate) fn encode_chatgpt_bearer_token(token: &ChatgptBearerToken) -> Option<String> {
@@ -544,22 +489,6 @@ fn auth_from_openai_session(
     })
 }
 
-fn generate_pkce_pair() -> (String, String) {
-    let verifier = generate_code_verifier();
-    let mut hasher = Sha256::new();
-    hasher.update(verifier.as_bytes());
-    let challenge = base64_url_encode(&hasher.finalize());
-    (verifier, challenge)
-}
-
-fn generate_state() -> String {
-    let bytes = rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(48)
-        .collect::<Vec<u8>>();
-    base64_url_encode(&bytes)
-}
-
 fn oauth_error_message(error_code: &str, error_description: Option<&str>) -> String {
     if error_code == "access_denied"
         && error_description
@@ -575,58 +504,6 @@ fn oauth_error_message(error_code: &str, error_description: Option<&str>) -> Str
     }
 
     format!("OpenAI Codex OAuth sign-in failed: {error_code}")
-}
-
-fn html_escape(input: &str) -> String {
-    let mut escaped = String::with_capacity(input.len());
-    for ch in input.chars() {
-        match ch {
-            '&' => escaped.push_str("&amp;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '"' => escaped.push_str("&quot;"),
-            '\'' => escaped.push_str("&#39;"),
-            _ => escaped.push(ch),
-        }
-    }
-    escaped
-}
-
-fn callback_html(title: &str, message: &str, auto_close: bool) -> String {
-    let script = if auto_close {
-        "<script>setTimeout(() => window.close(), 1200)</script>"
-    } else {
-        ""
-    };
-    let title = html_escape(title);
-    let message = html_escape(message);
-    format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title}</title><style>body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#111827;color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Segoe UI',system-ui,sans-serif;font-weight:400;letter-spacing:-.008em;text-align:center}}h1{{margin:0;font-size:34px;line-height:1.2;font-weight:700;letter-spacing:-.02em}}p{{margin:0;font-size:21px;line-height:1.65;white-space:pre-wrap}}</style></head><body><div style=\"max-width:680px;padding:48px 32px;display:flex;flex-direction:column;align-items:center;gap:18px;\"><h1>{title}</h1><p>{message}</p></div>{script}</body></html>"
-    )
-}
-
-async fn respond_with_html(
-    stream: &mut tokio::net::TcpStream,
-    status_line: &str,
-    html: &str,
-) -> Result<(), String> {
-    let body = html.as_bytes();
-    let response = format!(
-        "HTTP/1.1 {status_line}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream
-        .write_all(response.as_bytes())
-        .await
-        .map_err(|err| format!("Failed to write OAuth callback response: {err}"))?;
-    stream
-        .write_all(body)
-        .await
-        .map_err(|err| format!("Failed to write OAuth callback response body: {err}"))?;
-    stream
-        .flush()
-        .await
-        .map_err(|err| format!("Failed to flush OAuth callback response: {err}"))
 }
 
 fn is_ipv6_loopback_unavailable(err: &std::io::Error) -> bool {

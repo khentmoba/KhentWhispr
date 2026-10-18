@@ -32,8 +32,7 @@
     "rehype-katex": "7.0.1",
     "remark-gfm": "4.0.1",
     "remark-math": "6.0.0",
-    "sonner": "^1.7.0",
-    "tauri-plugin-keyring-api": "^0.1.1"
+    "sonner": "^1.7.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

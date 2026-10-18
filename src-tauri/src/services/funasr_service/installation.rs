@@ -22,9 +22,21 @@ fn to_normalized_path(path: &std::path::Path) -> String {
     paths::strip_win_prefix(&canonical)
 }
 
+const EMPTY_ARCHIVE_FINGERPRINT: &str =
+    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const PUBLISHED_ENGINE_ARCHIVE_FINGERPRINT: &str =
+    "sha256:76fae1f69d274bab6f18d1054c92bc3e0caa13d01f4aa93e98424f801b155391";
+
+fn effective_engine_archive_fingerprint(build_fingerprint: &str) -> &str {
+    if build_fingerprint != EMPTY_ARCHIVE_FINGERPRINT {
+        build_fingerprint
+    } else {
+        PUBLISHED_ENGINE_ARCHIVE_FINGERPRINT
+    }
+}
+
 fn expected_engine_install_fingerprint(app_handle: &tauri::AppHandle) -> String {
-    if ENGINE_ARCHIVE_FINGERPRINT
-        != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    if ENGINE_ARCHIVE_FINGERPRINT != EMPTY_ARCHIVE_FINGERPRINT
         || paths::get_engine_archive_path(app_handle).is_some()
     {
         ENGINE_ARCHIVE_FINGERPRINT.to_string()
@@ -35,11 +47,16 @@ fn expected_engine_install_fingerprint(app_handle: &tauri::AppHandle) -> String 
 
 pub(super) fn engine_install_fingerprint_matches(installed: &str, expected: &str) -> bool {
     let installed = installed.trim();
+    let effective_archive = effective_engine_archive_fingerprint(ENGINE_ARCHIVE_FINGERPRINT);
     installed == expected
-        || (expected == ENGINE_ARCHIVE_FINGERPRINT
+        || installed == effective_archive
+        || ((expected == ENGINE_ARCHIVE_FINGERPRINT || expected == effective_archive)
             && installed
                 .rsplit_once('+')
-                .is_some_and(|(_, archive_fingerprint)| archive_fingerprint == expected))
+                .is_some_and(|(_, archive_fingerprint)| {
+                    archive_fingerprint == ENGINE_ARCHIVE_FINGERPRINT
+                        || archive_fingerprint == effective_archive
+                }))
 }
 
 /// 查找引擎运行时
@@ -140,7 +157,10 @@ async fn extract_engine_archive(
 
     // 解压是 CPU 密集型 + IO 密集型，放到阻塞线程
     tokio::task::spawn_blocking(move || {
-        verify_engine_archive(&archive, ENGINE_ARCHIVE_FINGERPRINT)?;
+        verify_engine_archive(
+            &archive,
+            effective_engine_archive_fingerprint(ENGINE_ARCHIVE_FINGERPRINT),
+        )?;
         let parent = engine_dir.parent().ok_or_else(|| {
             AppError::Asr("Engine directory missing parent directory".to_string())
         })?;
@@ -182,7 +202,7 @@ async fn extract_engine_archive(
             }
 
             // 写入版本标记，用于后续升级检测；只写 staging，验证成功后整体替换。
-            let fingerprint = expected_engine_install_fingerprint(&handle);
+            let fingerprint = effective_engine_archive_fingerprint(ENGINE_ARCHIVE_FINGERPRINT);
             paths::atomic_write(
                 staging_dir.join(".version").as_path(),
                 fingerprint.as_bytes(),
@@ -680,6 +700,35 @@ mod tests {
             status_commit: Arc::new(parking_lot::Mutex::new(())),
             expected_generation: 1,
         }
+    }
+
+    #[test]
+    fn empty_build_fingerprint_uses_published_archive() {
+        assert_eq!(
+            effective_engine_archive_fingerprint(EMPTY_ARCHIVE_FINGERPRINT),
+            PUBLISHED_ENGINE_ARCHIVE_FINGERPRINT
+        );
+    }
+
+    #[test]
+    fn non_empty_build_fingerprint_keeps_its_own_archive() {
+        let build_fingerprint =
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(
+            effective_engine_archive_fingerprint(build_fingerprint),
+            build_fingerprint
+        );
+    }
+
+    #[test]
+    fn downloaded_engine_is_reused_with_app_version_expectation() {
+        let installed = effective_engine_archive_fingerprint(ENGINE_ARCHIVE_FINGERPRINT);
+        let expected = env!("CARGO_PKG_VERSION");
+        assert!(engine_install_fingerprint_matches(installed, expected));
+        assert!(!engine_install_fingerprint_matches(
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            expected
+        ));
     }
 
     #[test]
