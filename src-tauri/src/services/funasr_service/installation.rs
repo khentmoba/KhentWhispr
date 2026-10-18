@@ -27,9 +27,9 @@ const EMPTY_ARCHIVE_FINGERPRINT: &str =
 const PUBLISHED_ENGINE_ARCHIVE_FINGERPRINT: &str =
     "sha256:76fae1f69d274bab6f18d1054c92bc3e0caa13d01f4aa93e98424f801b155391";
 
-fn effective_engine_archive_fingerprint() -> &'static str {
-    if ENGINE_ARCHIVE_FINGERPRINT != EMPTY_ARCHIVE_FINGERPRINT {
-        ENGINE_ARCHIVE_FINGERPRINT
+fn effective_engine_archive_fingerprint(build_fingerprint: &str) -> &str {
+    if build_fingerprint != EMPTY_ARCHIVE_FINGERPRINT {
+        build_fingerprint
     } else {
         PUBLISHED_ENGINE_ARCHIVE_FINGERPRINT
     }
@@ -47,7 +47,7 @@ fn expected_engine_install_fingerprint(app_handle: &tauri::AppHandle) -> String 
 
 pub(super) fn engine_install_fingerprint_matches(installed: &str, expected: &str) -> bool {
     let installed = installed.trim();
-    let effective_archive = effective_engine_archive_fingerprint();
+    let effective_archive = effective_engine_archive_fingerprint(ENGINE_ARCHIVE_FINGERPRINT);
     installed == expected
         || installed == effective_archive
         || ((expected == ENGINE_ARCHIVE_FINGERPRINT || expected == effective_archive)
@@ -157,7 +157,10 @@ async fn extract_engine_archive(
 
     // 解压是 CPU 密集型 + IO 密集型，放到阻塞线程
     tokio::task::spawn_blocking(move || {
-        verify_engine_archive(&archive, effective_engine_archive_fingerprint())?;
+        verify_engine_archive(
+            &archive,
+            effective_engine_archive_fingerprint(ENGINE_ARCHIVE_FINGERPRINT),
+        )?;
         let parent = engine_dir.parent().ok_or_else(|| {
             AppError::Asr("Engine directory missing parent directory".to_string())
         })?;
@@ -199,7 +202,7 @@ async fn extract_engine_archive(
             }
 
             // 写入版本标记，用于后续升级检测；只写 staging，验证成功后整体替换。
-            let fingerprint = effective_engine_archive_fingerprint();
+            let fingerprint = effective_engine_archive_fingerprint(ENGINE_ARCHIVE_FINGERPRINT);
             paths::atomic_write(
                 staging_dir.join(".version").as_path(),
                 fingerprint.as_bytes(),
@@ -697,6 +700,35 @@ mod tests {
             status_commit: Arc::new(parking_lot::Mutex::new(())),
             expected_generation: 1,
         }
+    }
+
+    #[test]
+    fn empty_build_fingerprint_uses_published_archive() {
+        assert_eq!(
+            effective_engine_archive_fingerprint(EMPTY_ARCHIVE_FINGERPRINT),
+            PUBLISHED_ENGINE_ARCHIVE_FINGERPRINT
+        );
+    }
+
+    #[test]
+    fn non_empty_build_fingerprint_keeps_its_own_archive() {
+        let build_fingerprint =
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(
+            effective_engine_archive_fingerprint(build_fingerprint),
+            build_fingerprint
+        );
+    }
+
+    #[test]
+    fn downloaded_engine_is_reused_with_app_version_expectation() {
+        let installed = effective_engine_archive_fingerprint(ENGINE_ARCHIVE_FINGERPRINT);
+        let expected = env!("CARGO_PKG_VERSION");
+        assert!(engine_install_fingerprint_matches(installed, expected));
+        assert!(!engine_install_fingerprint_matches(
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            expected
+        ));
     }
 
     #[test]
