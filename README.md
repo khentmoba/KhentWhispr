@@ -44,6 +44,12 @@ Basic local dictation works without an LLM account. For rewriting, translation o
 
 Both local engines run on Windows without WSL. Models download separately and are cached; FireRedVAD is bundled. GPU acceleration is optional. R2T2's committed subtitle text does not roll back, while its preview can change. Streaming alone does not guarantee lower latency; see [measured behavior and limitations](docs/r2t2-native.md).
 
+### Learning corrections in other apps
+
+With **Learn corrections in other apps** enabled in the correction-rules settings, SpeakFlow watches the field receiving its automatic dictation paste for up to 60 seconds. Correct a spelling mistake there and pause for two seconds; the learned rule is saved locally and used in future dictations. Pasting over selected text is supported. Deleting words no longer prevents learning separate spelling corrections, but deletions themselves never become global word-removal rules.
+
+This requires a Windows accessibility-compatible text field; it cannot work in every app or field. Password fields, ambiguous edits, large documents and arbitrary rewrites are skipped. Manually copying a transcript into another field is not tracked. No keystrokes are recorded and the watcher does not send document text to an AI service. You can disable learning or remove learned rules in settings.
+
 <details>
 <summary><strong>AI providers, automatic decisions and web search</strong></summary>
 
