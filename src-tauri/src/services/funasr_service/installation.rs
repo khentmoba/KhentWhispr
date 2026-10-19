@@ -106,10 +106,22 @@ pub async fn find_engine(
             "Found engine archive, preparing to extract: {}",
             archive_path.display()
         );
-        let engine_exe = extract_engine_archive(&archive_path, app_handle, &progress_gate).await?;
-        let path_str = paths::strip_win_prefix(&engine_exe);
-        log::info!("Engine extraction complete: {}", path_str);
-        return Ok(EngineRuntime::Bundled { exe_path: path_str });
+        match extract_engine_archive(&archive_path, app_handle, &progress_gate).await {
+            Ok(engine_exe) => {
+                let path_str = paths::strip_win_prefix(&engine_exe);
+                log::info!("Engine extraction complete: {}", path_str);
+                return Ok(EngineRuntime::Bundled { exe_path: path_str });
+            }
+            // Lightweight updates can leave an older bundled archive behind.
+            Err(AppError::Download(err)) => {
+                log::warn!(
+                    "Ignoring unverifiable local engine archive {}: {}. Falling back to engine download.",
+                    archive_path.display(),
+                    err
+                );
+            }
+            Err(err) => return Err(err),
+        }
     }
 
     // Unpackaged executables are a development-only fallback.
@@ -748,6 +760,46 @@ mod tests {
             "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         )
         .is_err());
+    }
+
+    #[test]
+    fn stale_local_archive_falls_back_without_bypassing_download_verification() {
+        let source = include_str!("installation.rs");
+        let discovery = source
+            .split("pub async fn find_engine(")
+            .nth(1)
+            .unwrap()
+            .split("async fn extract_engine_archive(")
+            .next()
+            .unwrap();
+        let fallback = discovery.find("Err(AppError::Download(err)) =>").unwrap();
+        let other_errors = discovery.find("Err(err) => return Err(err)").unwrap();
+        let download = discovery
+            .find("download_and_extract_engine(app_handle")
+            .unwrap();
+        assert!(fallback < other_errors && other_errors < download);
+
+        let extraction = source
+            .split("async fn extract_engine_archive(")
+            .nth(1)
+            .unwrap()
+            .split("pub(super) fn replace_engine_dir(")
+            .next()
+            .unwrap();
+        assert!(
+            extraction.find("verify_engine_archive(").unwrap()
+                < extraction.find("std::fs::create_dir_all(parent)").unwrap()
+        );
+        let download = source
+            .split("async fn download_and_extract_engine(")
+            .nth(1)
+            .unwrap()
+            .split("pub(super) async fn find_python()")
+            .next()
+            .unwrap();
+        assert!(download.contains(
+            "extract_engine_archive(&temp_archive_path, app_handle, progress_gate).await"
+        ));
     }
 
     #[test]
