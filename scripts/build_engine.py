@@ -36,6 +36,16 @@ QWEN3_CUDA_PROVIDER_URL = (
     "transcribe_cpp_native_cu12-0.1.3-py3-none-win_amd64.whl"
     "#sha256=b46eef15ccce2d3248bff99fe988f081511a1116032643276ec4ef50cb1716eb"
 )
+# The cu12 provider wheel bundles only the ggml modules: its prepare() loads
+# cudart/cublas at runtime from the `nvidia` namespace wheels, which
+# PyInstaller collects from neither. bundle_nvidia_runtime_dlls() copies the
+# three DLLs into the frozen bundle root; without them ggml-cuda.dll fails to
+# load and Qwen3-ASR silently falls back to Vulkan or CPU.
+NVIDIA_CUDA_RUNTIME_WHEELS = (
+    "nvidia-cuda-runtime-cu12>=12.9,<13",
+    "nvidia-cublas-cu12>=12.9,<13",
+)
+NVIDIA_CUDA_RUNTIME_DLLS = ("cudart64_12.dll", "cublasLt64_12.dll", "cublas64_12.dll")
 
 # 同级 Python 脚本，打包到 _internal/
 ADD_DATA_FILES = [
@@ -129,17 +139,18 @@ EXCLUDE_MODULES = [
 
 
 def ensure_qwen3_cuda_provider() -> None:
-    """Install the pinned CUDA provider without duplicate NVIDIA runtime wheels."""
+    """Install the pinned CUDA provider plus the NVIDIA runtime wheels it loads."""
+    uv = shutil.which("uv")
+    if not uv:
+        raise RuntimeError("构建 Qwen3-ASR CUDA 引擎需要 uv，但当前 PATH 中未找到")
     try:
         installed = importlib.metadata.version("transcribe-cpp-native-cu12")
     except importlib.metadata.PackageNotFoundError:
         installed = None
-    if installed == QWEN3_CUDA_PROVIDER_VERSION:
-        return
-
-    uv = shutil.which("uv")
-    if not uv:
-        raise RuntimeError("构建 Qwen3-ASR CUDA 引擎需要 uv，但当前 PATH 中未找到")
+    requirements = list(NVIDIA_CUDA_RUNTIME_WHEELS)
+    reinstall_provider = installed is not None and installed != QWEN3_CUDA_PROVIDER_VERSION
+    if installed != QWEN3_CUDA_PROVIDER_VERSION:
+        requirements.insert(0, QWEN3_CUDA_PROVIDER_URL)
     cmd = [
         uv,
         "pip",
@@ -147,9 +158,9 @@ def ensure_qwen3_cuda_provider() -> None:
         "--python",
         sys.executable,
         "--no-deps",
-        QWEN3_CUDA_PROVIDER_URL,
+        *requirements,
     ]
-    if installed is not None:
+    if reinstall_provider:
         cmd.insert(-1, "--reinstall")
     subprocess.run(cmd, check=True)
 
@@ -303,6 +314,43 @@ def share_native_runtime_dlls(engine_dir: Path) -> float:
             manifest.setdefault("shared_files", {}).update(shared)
             manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return saved / (1024 * 1024)
+
+
+def bundle_nvidia_runtime_dlls(engine_dir: Path, site_packages: Path | None = None) -> None:
+    """Place the NVIDIA CUDA runtime DLLs at the frozen bundle root.
+
+    PyInstaller discovers ggml-cuda.dll's import-table dependencies (cublas),
+    but cudart is delay-loaded by ggml, so it never enters the bundle and the
+    cu12 provider's prepare() is a no-op without the nvidia wheels. The frozen
+    bootloader resolves DLLs from _internal, so the runtime set must live
+    there next to the already-bundled cublas copies.
+    """
+    internal = engine_dir / "_internal"
+    if not (internal / "transcribe_cpp_native_cu12").is_dir():
+        return
+    if site_packages is None:
+        site_packages = Path(sys.executable).resolve().parent.parent / "Lib" / "site-packages"
+    sources = {}
+    for wheels_root in site_packages.glob("nvidia/*/bin"):
+        if wheels_root.is_dir():
+            for dll in wheels_root.glob("*.dll"):
+                sources.setdefault(dll.name, dll)
+    missing = []
+    for name in NVIDIA_CUDA_RUNTIME_DLLS:
+        target = internal / name
+        if target.is_file():
+            continue
+        source = sources.get(name)
+        if source is None:
+            missing.append(name)
+            continue
+        shutil.copy2(source, target)
+    if missing:
+        raise RuntimeError(
+            "Qwen3-ASR CUDA 运行库缺失: "
+            + ", ".join(missing)
+            + f"；请在构建环境中安装 {', '.join(NVIDIA_CUDA_RUNTIME_WHEELS)}"
+        )
 
 
 def create_tar_xz_with_python(engine_dir: Path, output: Path) -> float:
@@ -513,6 +561,7 @@ def main(cpu_only=False):
 
     saved = 0.0
     saved += strip_dev_artifacts(engine_dir)
+    bundle_nvidia_runtime_dlls(engine_dir)
     saved += share_native_runtime_dlls(engine_dir)
     stripped_size = get_size_mb(engine_dir)
     print(f"节省: {saved:.0f} MB, 瘦身后: {stripped_size:.0f} MB")

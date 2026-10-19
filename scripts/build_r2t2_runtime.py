@@ -2,6 +2,8 @@
 
 Requires Visual Studio C++ build tools, CMake/Ninja and (for CUDA) a compatible
 CUDA SDK. Models are downloaded separately; no model weights enter the bundle.
+CUDA toolchains reject host compilers newer than Visual Studio 2022, so set
+VS_INSTALLATION_PATH to a VS 2022 installation when a newer VS is the latest.
 """
 import argparse
 import hashlib
@@ -31,8 +33,12 @@ def digest(path):
 def build_environment():
     if os.name != "nt":
         raise RuntimeError("This packaging script builds the Windows native runtime")
+    # CUDA toolchains only support host compilers up to Visual Studio 2022
+    # (nvcc fails with C1189 on newer MSVC). vswhere -latest otherwise picks
+    # the newest installed VS, so allow pinning an older installation.
+    override = os.environ.get("VS_INSTALLATION_PATH")
     vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
-    installation = run(
+    installation = override.strip() if override else run(
         [vswhere, "-latest", "-products", "*", "-requires",
          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
         capture_output=True, text=True,
@@ -51,6 +57,11 @@ def build_environment():
         if separator and key:
             env[key] = value
     ninja = Path(installation) / "Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe"
+    if not ninja.is_file():
+        ninja_on_path = shutil.which("ninja", path=env.get("PATH"))
+        if not ninja_on_path:
+            raise RuntimeError("Ninja is required in Visual Studio or on PATH")
+        ninja = Path(ninja_on_path)
     return env, ninja
 
 
