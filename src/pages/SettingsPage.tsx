@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ArrowLeft, Mic, Keyboard, ClipboardPaste, AudioLines, AudioWaveform, Zap, BookOpen, Plus, X, Minus, ChevronsUpDown, Globe, Cloud, FolderOpen, RotateCcw, HardDrive, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Mic, Keyboard, ClipboardPaste, AudioLines, BookOpen, Plus, X, Minus, ChevronsUpDown, FolderOpen, RotateCcw, HardDrive, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useHotkeyCapture } from "@/hooks/useHotkeyCapture";
 import { useExclusivePicker } from "@/hooks/useExclusivePicker";
@@ -38,22 +38,12 @@ import {
 import { readLocalStorage, writeLocalStorage } from "@/lib/storage";
 import { useTranslation } from "react-i18next";
 
-const CorrectionRulesModal = lazy(() => import("@/components/settings/CorrectionRulesModal"));
+import { engineOptions, engineOptionLabel } from "@/lib/asrEngineOptions";
 
-const engineOptions = [
-  { key: "qwen3-asr-0.6b", icon: Zap, label: "Qwen3-ASR 0.6B Q8", labelKey: undefined, descKey: "settings.qwen3Asr06Desc" },
-  { key: "confucius4-r2t2", icon: AudioWaveform, label: "Confucius4-R2T2 Q8", labelKey: undefined, descKey: "settings.r2t2Desc" },
-  { key: "glm-asr", icon: Globe, label: "GLM-ASR", labelKey: undefined, descKey: "settings.glmAsrDesc" },
-  { key: "alibaba-asr", icon: Cloud, label: "Alibaba DashScope", labelKey: "settings.alibabaAsrLabel", descKey: "settings.alibabaAsrDesc" },
-] as const;
+const CorrectionRulesModal = lazy(() => import("@/components/settings/CorrectionRulesModal"));
 
 const ONLINE_ENGINES: ReadonlySet<string> = new Set(["glm-asr", "alibaba-asr"]);
 const isOnlineEngineKey = (engine: string) => ONLINE_ENGINES.has(engine);
-
-const engineOptionLabel = (
-  option: (typeof engineOptions)[number],
-  translate: (key: string) => string,
-) => option.labelKey ? translate(option.labelKey) : option.label;
 
 const asrCapabilityTagKeys = (engineKey: string) => {
   const capability = getAsrEngineCapability(engineKey);

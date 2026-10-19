@@ -56,6 +56,14 @@ describe("StatusIndicator model integrity repair", () => {
       .toHaveTextContent(/repair|corrupt|damaged/i);
   });
 
+  it("shows an error instead of an endless preparing spinner", () => {
+    const { container } = renderStatus("error");
+    expect(screen.getByRole("status")).toHaveTextContent("Not ready · Needs attention");
+    expect(container.querySelector(".animate-spin")).not.toBeInTheDocument();
+    expect(screen.getByText(/model unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText("CPU")).not.toBeInTheDocument();
+  });
+
   it("keeps the existing missing-model download action", () => {
     const { downloadModels } = renderStatus("need_download");
     fireEvent.click(screen.getByRole("button", { name: /start download/i }));

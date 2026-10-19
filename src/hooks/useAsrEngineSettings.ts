@@ -36,6 +36,7 @@ export function useAsrEngineSettings({
   const [onlineAsrRegion, setOnlineAsrRegion] = useState("international");
   const [onlineAsrUrl, setOnlineAsrUrl] = useState("");
   const [onlineAsrRegionLoading, setOnlineAsrRegionLoading] = useState(false);
+  const [alibabaAsrModelSaving, setAlibabaAsrModelSaving] = useState(false);
   const [alibabaAsrModel, setAlibabaAsrModelState] = useState("qwen3-asr-flash");
   const [alibabaAsrModels, setAlibabaAsrModelsState] = useState<readonly string[]>([]);
   const [alibabaAsrModelsSource, setAlibabaAsrModelsSource] = useState<"live" | "fallback">("fallback");
@@ -201,17 +202,24 @@ export function useAsrEngineSettings({
   }, [computeOnlineAsrKeyringUser, engine, onlineAsrKeySave, onlineAsrRegion]);
 
   const handleAlibabaAsrModelSelect = useCallback(async (model: string) => {
+    if (transitioning.current) return;
+    transitioning.current = true;
+    setAlibabaAsrModelSaving(true);
     try {
       await setAlibabaAsrModel(model);
       modelSelectionVersion.current += 1;
       setAlibabaAsrModelState(model);
     } catch {
-      // Keep the previous model when persistence fails.
+      toast.error(t("toast.switchEngineFailed"));
+    } finally {
+      transitioning.current = false;
+      setAlibabaAsrModelSaving(false);
     }
-  }, []);
+  }, [t]);
 
   return {
     alibabaAsrModel,
+    alibabaAsrModelSaving,
     alibabaAsrModels,
     alibabaAsrModelsLoading,
     alibabaAsrModelsSource,

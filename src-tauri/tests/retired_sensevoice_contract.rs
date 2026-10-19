@@ -16,15 +16,18 @@ fn read(path: impl AsRef<Path>) -> String {
 fn sensevoice_is_not_a_selectable_or_runnable_engine() {
     let root = repo_root();
     let settings = read(root.join("src/pages/SettingsPage.tsx"));
+    let engine_options = read(root.join("src/lib/asrEngineOptions.ts"));
     let engine_entry = read(root.join("src-tauri/resources/engine.py"));
     let rust_paths = read(root.join("src-tauri/src/utils/paths.rs"));
 
     assert!(!settings.contains("key: \"sensevoice\""));
+    assert!(!engine_options.contains("key: \"sensevoice\""));
     assert!(!engine_entry.contains("\"sensevoice\""));
     assert!(!rust_paths.contains("\"sensevoice\""));
     // String allocation moved outside the engine selection match. Default
     // selection is exercised by the paths module's configuration tests.
-    assert!(settings.contains("key: \"qwen3-asr-0.6b\""));
+    assert!(settings.contains("import { engineOptions, engineOptionLabel }"));
+    assert!(engine_options.contains("key: \"qwen3-asr-0.6b\""));
     assert!(engine_entry.contains("\"qwen3-asr-0.6b\""));
 }
 
