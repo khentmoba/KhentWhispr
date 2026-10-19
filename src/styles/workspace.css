@@ -1,14 +1,14 @@
 /* SpeakFlow workspace: shared desktop shell and working surfaces. */
 :root {
-  --color-shell: #E5EDE7;
-  --color-shell-text: #365644;
-  --color-shell-active: #D1E1D6;
+  --color-shell: #F1F5F9;
+  --color-shell-text: #334155;
+  --color-shell-active: #E2E8F0;
 }
 
 [data-theme="dark"], .dark {
-  --color-shell: #18281F;
-  --color-shell-text: #BDCFBF;
-  --color-shell-active: #2E4937;
+  --color-shell: #0B162C;
+  --color-shell-text: #94A3B8;
+  --color-shell-active: #162447;
 }
 
 .app-shell {
@@ -38,6 +38,9 @@
   font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.035em;
+}
+.sidebar-brand svg {
+  color: var(--color-accent);
 }
 
 .app-navigation { display: flex; flex-direction: column; gap: 6px; }
