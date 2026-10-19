@@ -1,5 +1,8 @@
 # Releases
 
+Use the project skill `/skill:speakflow-release` to publish a signed in-app update. Run
+`/reload` after adding the skill if it is not yet available in your session.
+
 Build installers locally. GitHub Actions checks source code; it does not build or upload installers.
 Write the README, documentation and release notes in concise English.
 
