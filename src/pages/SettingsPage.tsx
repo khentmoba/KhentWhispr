@@ -282,18 +282,12 @@ export default function SettingsPage({
     autostartMinimizedLoading,
     handleAutostartToggle,
     handleAutostartMinimizedToggle,
-    handleCheckForUpdates,
     handleCopyExportPath,
     handleExportConfig,
     exporting,
     handleImportConfig,
-    handleInstallUpdate,
     handleTestPaste,
     lastExportPath,
-    latestAvailableVersion,
-    updateChecking,
-    updateInstalling,
-    updateStatusText,
   } = useSystemSettings({ inputMethod, profile, refreshProfile });
 
   const engineLabel = useCallback((engineValue: string) => {
@@ -1122,19 +1116,12 @@ export default function SettingsPage({
             autostartMinimized={autostartMinimized}
             autostartMinimizedLoading={autostartMinimizedLoading}
             appVersion={appVersion}
-            updateStatusText={updateStatusText}
-            latestAvailableVersion={latestAvailableVersion}
-            updateChecking={updateChecking}
-            updateInstalling={updateInstalling}
             onExport={() => { void handleExportConfig(); }}
             onCopyExportPath={() => { void handleCopyExportPath(); }}
             onImport={handleImportConfig}
             onTestPaste={() => { void handleTestPaste(); }}
             onToggleAutostart={() => { void handleAutostartToggle(); }}
             onToggleAutostartMinimized={() => { void handleAutostartMinimizedToggle(); }}
-            onUpdateAction={() => {
-              void (latestAvailableVersion ? handleInstallUpdate() : handleCheckForUpdates());
-            }}
           />
         </div>
       </div>

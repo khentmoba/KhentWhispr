@@ -10,12 +10,18 @@ describe("workspace navigation", () => {
     const { rerender } = render(<AppNavigation view="main" onNavigate={onNavigate} />);
     expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dictation" })).toHaveAttribute("aria-current", "page");
-    for (const [label, view] of [["Dictation", "main"], ["History", "history"], ["Settings", "settings"]]) {
+    for (const [label, view] of [["Dictation", "main"], ["History", "history"], ["Settings", "settings"], ["Updates", "updates"]]) {
       fireEvent.click(screen.getByRole("button", { name: label }));
       expect(onNavigate).toHaveBeenLastCalledWith(view);
     }
     rerender(<AppNavigation view="settings" onNavigate={onNavigate} />);
     expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("button", { name: "Dictation" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks an available update and identifies the update destination", () => {
+    render(<AppNavigation view="updates" onNavigate={vi.fn()} updateAvailable updateInstalling />);
+    expect(screen.getByRole("button", { name: /Updates/ })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("img", { name: "Update in progress" })).toBeInTheDocument();
   });
 });

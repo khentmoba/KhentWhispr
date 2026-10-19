@@ -1,5 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render as renderUI, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { AppUpdateProvider } from "@/contexts/AppUpdateContext";
+const render = (ui: ReactElement) => renderUI(ui, { wrapper: ({ children }) => <AppUpdateProvider automatic={false}>{children}</AppUpdateProvider> });import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as tauri from "@/api/tauri";
 import type { UserProfile } from "@/types";
 

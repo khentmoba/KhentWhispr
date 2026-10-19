@@ -1,5 +1,7 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render as renderUI, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { AppUpdateProvider } from "@/contexts/AppUpdateContext";
+const render = (ui: ReactElement) => renderUI(ui, { wrapper: ({ children }) => <AppUpdateProvider automatic={false}>{children}</AppUpdateProvider> });import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INPUT_DEVICE_STORAGE_KEY, MIC_LEVEL_MONITOR_ENABLED_KEY } from "@/lib/constants";
 import type { UserProfile } from "@/types";
 

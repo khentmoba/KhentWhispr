@@ -17,6 +17,10 @@ vi.mock("./contexts/RecordingContext", () => ({
 }));
 
 vi.mock("./hooks/useTheme", () => ({ useTheme: vi.fn() }));
+vi.mock("./contexts/AppUpdateContext", () => ({
+  AppUpdateProvider: ({ children }: { children: ReactNode }) => children,
+  useAppUpdates: () => ({ latestAvailableVersion: null, updateInstalling: false }),
+}));
 vi.mock("sonner", () => ({ Toaster: () => null }));
 vi.mock("./i18n", () => ({ default: { t: (key: string) => key } }));
 
@@ -48,6 +52,8 @@ vi.mock("./pages/SettingsPage", () => ({
   ),
 }));
 
+vi.mock("./pages/UpdatesPage", () => ({ default: () => <main data-testid="updates-page">Updates workspace</main> }));
+
 import { App } from "./main";
 
 function setReducedMotion(matches: boolean) {
@@ -71,6 +77,14 @@ afterEach(() => {
 });
 
 describe("App page motion", () => {
+  it("opens updates from the sidebar", async () => {
+    setReducedMotion(true);
+    render(<App />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Updates" })); });
+    expect(screen.getByTestId("updates-page")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Updates" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("switches immediately and stays unlocked when reduced motion is enabled", async () => {
     setReducedMotion(true);
     render(<App />);
