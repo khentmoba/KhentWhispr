@@ -4,31 +4,44 @@ use crate::state::{AppState, RecordingMode, RecordingPhase};
 use crate::utils::AppError;
 use tauri::{Emitter, Manager};
 
-/// 使用 Windows API 强制将窗口置于最顶层
+// Tauri's Windows show/style updates can activate the overlay, even with focused(false).
 #[cfg(target_os = "windows")]
-fn force_window_topmost(window: &tauri::WebviewWindow) {
+fn show_subtitle_without_activation(window: &tauri::WebviewWindow) -> Result<(), AppError> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
     };
 
-    match window.hwnd() {
-        Ok(hwnd) => {
-            let raw = hwnd.0;
-            let topmost = -1isize as *mut std::ffi::c_void;
-            unsafe {
-                SetWindowPos(
-                    raw,
-                    topmost,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                );
-            }
-        }
-        Err(err) => log::warn!("获取字幕窗口句柄失败: {}", err),
+    let hwnd = window
+        .hwnd()
+        .map_err(|e| tauri_error("Failed to get subtitle window handle", e))?;
+    let shown = unsafe {
+        SetWindowPos(
+            hwnd.0,
+            -1isize as _,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
+    };
+    if shown == 0 {
+        return Err(tauri_error(
+            "Failed to show subtitle window",
+            std::io::Error::last_os_error(),
+        ));
     }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn show_subtitle_without_activation(window: &tauri::WebviewWindow) -> Result<(), AppError> {
+    window
+        .show()
+        .map_err(|e| tauri_error("Failed to show subtitle window", e))?;
+    window
+        .set_always_on_top(true)
+        .map_err(|e| tauri_error("Failed to set subtitle window topmost", e))
 }
 
 const DEFAULT_SUBTITLE_WINDOW_WIDTH: f64 = 1280.0;
@@ -135,6 +148,38 @@ pub(crate) fn set_subtitle_window_interactive(
     interactive: bool,
 ) -> Result<(), AppError> {
     if let Some(window) = app_handle.get_webview_window("subtitle") {
+        #[cfg(target_os = "windows")]
+        {
+            use windows_sys::Win32::Foundation::SetLastError;
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+                WS_EX_TRANSPARENT,
+            };
+
+            let hwnd = window
+                .hwnd()
+                .map_err(|e| tauri_error("Failed to get subtitle window handle", e))?;
+            unsafe {
+                let style = GetWindowLongPtrW(hwnd.0, GWL_EXSTYLE) | WS_EX_NOACTIVATE as isize;
+                let click_through = (WS_EX_TRANSPARENT | WS_EX_LAYERED) as isize;
+                let style = if interactive {
+                    style & !click_through
+                } else {
+                    style | click_through
+                };
+                SetLastError(0);
+                if SetWindowLongPtrW(hwnd.0, GWL_EXSTYLE, style) == 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() != Some(0) {
+                        return Err(tauri_error(
+                            "Failed to set subtitle window interaction",
+                            error,
+                        ));
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
         window
             .set_ignore_cursor_events(!interactive)
             .map_err(|e| tauri_error("Failed to set subtitle window interaction", e))?;
@@ -158,7 +203,7 @@ fn create_subtitle_window_unlocked(app_handle: &tauri::AppHandle) -> Result<Stri
 
     let (logical_width, logical_height, x, y) = resolve_subtitle_layout(app_handle);
 
-    let window = tauri::WebviewWindowBuilder::new(
+    tauri::WebviewWindowBuilder::new(
         app_handle,
         "subtitle",
         tauri::WebviewUrl::App("/?window=subtitle".into()),
@@ -171,15 +216,14 @@ fn create_subtitle_window_unlocked(app_handle: &tauri::AppHandle) -> Result<Stri
     .always_on_top(true)
     .skip_taskbar(true)
     .focused(false)
+    .focusable(false)
     .resizable(false)
     .shadow(false)
     .visible(false)
     .build()
     .map_err(|e| tauri_error("Failed to create subtitle window", e))?;
 
-    if let Err(err) = window.set_ignore_cursor_events(true) {
-        log::warn!("设置字幕窗口鼠标穿透失败，继续运行: {}", err);
-    }
+    set_subtitle_window_interactive(app_handle, false)?;
 
     Ok("Subtitle window created".to_string())
 }
@@ -286,24 +330,10 @@ fn show_subtitle_window_unlocked(
         }) {
             return Ok(stale_session_show_result(session_id, show_gen));
         }
-        window
-            .show()
-            .map_err(|e| tauri_error("Failed to show subtitle window", e))?;
+        show_subtitle_without_activation(&window)?;
     } else {
-        window
-            .show()
-            .map_err(|e| tauri_error("Failed to show subtitle window", e))?;
+        show_subtitle_without_activation(&window)?;
     }
-
-    // 确保窗口在最顶层（Windows 上 hide/show 后可能丢失置顶状态）
-    // 先用 Tauri API 置顶
-    let _ = window.set_always_on_top(false);
-    if let Err(err) = window.set_always_on_top(true) {
-        log::warn!("设置字幕窗口置顶失败: {}", err);
-    }
-    // 再通过 Windows API 强制置顶，避免被其他窗口遮挡
-    #[cfg(target_os = "windows")]
-    force_window_topmost(&window);
 
     if let Err(err) = set_subtitle_window_interactive(app_handle, false) {
         log::warn!("重新设置字幕窗口鼠标穿透失败: {}", err);
@@ -359,6 +389,16 @@ pub async fn hide_subtitle_window(app_handle: tauri::AppHandle) -> Result<String
 pub fn hide_subtitle_window_inner(app_handle: &tauri::AppHandle) -> Result<String, AppError> {
     if let Some(window) = app_handle.get_webview_window("subtitle") {
         let _ = set_subtitle_window_interactive(app_handle, false);
+        #[cfg(target_os = "windows")]
+        {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+
+            let hwnd = window
+                .hwnd()
+                .map_err(|e| tauri_error("Failed to get subtitle window handle", e))?;
+            unsafe { ShowWindow(hwnd.0, SW_HIDE) };
+        }
+        #[cfg(not(target_os = "windows"))]
         window
             .hide()
             .map_err(|e| tauri_error("Failed to hide subtitle window", e))?;
