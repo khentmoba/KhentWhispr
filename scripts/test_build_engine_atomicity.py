@@ -354,5 +354,91 @@ class BuildEngineArchiveAtomicityTests(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(native_builder.os.name == "nt", "Windows build environment")
+class NativeBuildEnvironmentTests(unittest.TestCase):
+    def test_missing_visual_studio_ninja_uses_path_or_reports_missing_tool(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            installation = Path(temporary)
+            vcvars = installation / "VC/Auxiliary/Build/vcvars64.bat"
+            vcvars.parent.mkdir(parents=True)
+            vcvars.touch()
+            with mock.patch.dict(native_builder.os.environ, {"VS_INSTALLATION_PATH": temporary}), \
+                 mock.patch.object(native_builder.subprocess, "run", return_value=types.SimpleNamespace(stdout="PATH=C:\\tools\n")), \
+                 mock.patch.object(native_builder.shutil, "which", return_value="C:/tools/ninja.exe") as which:
+                _, ninja = native_builder.build_environment()
+                self.assertEqual(ninja, Path("C:/tools/ninja.exe"))
+                which.assert_called_once_with("ninja", path="C:\\tools")
+                which.return_value = None
+                with self.assertRaisesRegex(RuntimeError, "Ninja is required"):
+                    native_builder.build_environment()
+
+
+class NvidiaRuntimeBundleTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.root = Path(self.temp_dir.name)
+        self.engine_dir = self.root / "engine"
+        self.internal = self.engine_dir / "_internal"
+        self.module = load_build_engine_module()
+
+    def test_installed_cuda_provider_still_installs_nvidia_runtime_wheels(self):
+        with mock.patch.object(self.module.importlib.metadata, "version", return_value="0.1.3"), \
+             mock.patch.object(self.module.shutil, "which", return_value="uv"), \
+             mock.patch.object(self.module.subprocess, "run") as run:
+            self.module.ensure_qwen3_cuda_provider()
+        run.assert_called_once_with(
+            ["uv", "pip", "install", "--python", self.module.sys.executable, "--no-deps",
+             "nvidia-cuda-runtime-cu12>=12.9,<13", "nvidia-cublas-cu12>=12.9,<13"],
+            check=True,
+        )
+
+    def _frozen_provider(self):
+        provider = self.internal / "transcribe_cpp_native_cu12/_native"
+        provider.mkdir(parents=True)
+        (provider / "ggml-cuda.dll").write_bytes(b"cuda backend")
+
+    def _wheels(self, packages):
+        site_packages = self.root / "site-packages"
+        for package, dlls in packages.items():
+            directory = site_packages.joinpath(package, "bin")
+            directory.mkdir(parents=True)
+            for name, data in dlls.items():
+                (directory / name).write_bytes(data)
+        return site_packages
+
+    def test_missing_cuda_runtime_dll_is_copied_to_the_bundle_root(self):
+        self._frozen_provider()
+        (self.internal / "cublas64_12.dll").write_bytes(b"already bundled cublas")
+        (self.internal / "cublasLt64_12.dll").write_bytes(b"already bundled cublasLt")
+        site_packages = self._wheels({
+            "nvidia/cuda_runtime": {"cudart64_12.dll": b"wheel cudart"},
+            "nvidia/cublas": {
+                "cublas64_12.dll": b"wheel cublas",
+                "cublasLt64_12.dll": b"wheel cublasLt",
+            },
+        })
+        self.module.bundle_nvidia_runtime_dlls(self.engine_dir, site_packages)
+        # cudart fails-to-load silently makes CUDA unusable; cublas was already
+        # collected by PyInstaller and must not be replaced.
+        self.assertEqual((self.internal / "cudart64_12.dll").read_bytes(), b"wheel cudart")
+        self.assertEqual((self.internal / "cublas64_12.dll").read_bytes(), b"already bundled cublas")
+        self.assertEqual((self.internal / "cublasLt64_12.dll").read_bytes(), b"already bundled cublasLt")
+
+    def test_bundle_without_cuda_provider_keeps_only_its_own_files(self):
+        (self.internal / "onnxruntime").mkdir(parents=True)
+        self.module.bundle_nvidia_runtime_dlls(
+            self.engine_dir, self.root / "no-site-packages"
+        )
+        self.assertEqual([item.name for item in self.internal.iterdir()], ["onnxruntime"])
+
+    def test_missing_runtime_dll_without_wheels_fails_the_build(self):
+        self._frozen_provider()
+        with self.assertRaisesRegex(RuntimeError, "cudart64_12.dll"):
+            self.module.bundle_nvidia_runtime_dlls(
+                self.engine_dir, self.root / "no-site-packages"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
