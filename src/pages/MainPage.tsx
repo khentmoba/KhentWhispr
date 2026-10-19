@@ -9,6 +9,8 @@ import RecordingButton from "@/components/RecordingButton";
 import StatusIndicator from "@/components/StatusIndicator";
 import TranscriptionResult from "@/components/TranscriptionResult";
 import TranscriptionHistory from "@/components/TranscriptionHistory";
+import { useAsrEngineSettings } from "@/hooks/useAsrEngineSettings";
+import { engineOptions, engineOptionLabel } from "@/lib/asrEngineOptions";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 import { useTranslation } from "react-i18next";
 import { PADDING, ONBOARDING_DISMISSED_KEY, RECORDING_MODE_KEY } from "@/lib/constants";
@@ -23,11 +25,23 @@ export default function MainPage({ onNavigate, animClass = "" }: {
   const {
     isStarting, isRecording, isProcessing, startRecording, stopRecording,
     recordingError, transcriptionResult, originalAsrText, editBaselineText, setEditBaselineText, setTranscriptionResult, polishAuditWarning,
-    durationSec, charCount, detectedLanguage, editGrabStatus, timing, history, recordingMode, stage, isReady,
+    durationSec, charCount, detectedLanguage, editGrabStatus, timing, history, recordingMode, stage: modelStage, isReady: modelReady,
     device, gpuName, downloadProgress, downloadMessage,
     isDownloading, modelError, hotkeyDisplay,
     downloadModels: triggerDownload, cancelDownload, retryModel,
   } = useRecordingContext();
+
+  const engineLabel = useCallback((value: string) => {
+    const option = engineOptions.find((item) => item.key === value);
+    return option ? engineOptionLabel(option, t) : value;
+  }, [t]);
+  const {
+    engine, engineLoading, handleEngineSwitch,
+    alibabaAsrModel, alibabaAsrModelSaving, alibabaAsrModels, alibabaAsrModelsLoading, handleAlibabaAsrModelSelect,
+  } = useAsrEngineSettings({ engineLabel, retryModel });
+  const isReady = modelReady && !engineLoading && !alibabaAsrModelSaving;
+  const stage = engineLoading || alibabaAsrModelSaving ? "checking" : modelStage;
+  const modelSelectionDisabled = engineLoading || alibabaAsrModelSaving || isStarting || isRecording || isProcessing || isDownloading;
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [errorDismissed, setErrorDismissed] = useState(false);
@@ -165,6 +179,35 @@ export default function MainPage({ onNavigate, animClass = "" }: {
           <p>{isRecording ? t("main.hintListening") : isReady ? t("main.hintReady") : t("main.hintDefault")}</p>
         </div>
         <div className="recording-zone">
+          <div className="dictation-model-selector">
+            <label htmlFor="dictation-model">{t("main.modelLabel")}</label>
+            <select
+              id="dictation-model"
+              value={engine}
+              disabled={modelSelectionDisabled}
+              onChange={(event) => { void handleEngineSwitch(event.target.value); }}
+            >
+              {engineOptions.map((option) => (
+                <option key={option.key} value={option.key}>{engineOptionLabel(option, t)}</option>
+              ))}
+              {!engineOptions.some((option) => option.key === engine) && <option value={engine}>{engine}</option>}
+            </select>
+            {engine === "alibaba-asr" && (
+              <>
+                <label htmlFor="dictation-cloud-model">{t("main.cloudModelLabel")}</label>
+                <select
+                  id="dictation-cloud-model"
+                  value={alibabaAsrModel}
+                  disabled={modelSelectionDisabled || alibabaAsrModelsLoading}
+                  onChange={(event) => { void handleAlibabaAsrModelSelect(event.target.value); }}
+                >
+                  {Array.from(new Set([alibabaAsrModel, ...alibabaAsrModels])).map((model) => (
+                    <option key={model} value={model}>{model}</option>
+                  ))}
+                </select>
+              </>
+            )}
+          </div>
           <StatusIndicator
             stage={stage}
             isReady={isReady}

@@ -53,15 +53,20 @@ function getStatusText(
       ? t("status.downloadingModel", { progress: Math.round(downloadProgress) })
       : (downloadMessage ?? t("status.downloadPreparing"));
   }
+  if (stage === "error") return t("status.modelUnavailable");
   if (stage === "need_download") return t("status.needDownload");
   if (stage === "need_repair") return t("status.needRepair");
   if (stage === "loading") return downloadMessage || t("status.modelLoading");
   return t("status.preparing");
 }
 
-function getChipLabel(stage: ModelStage, downloadMessage: string | null, t: (key: string, options?: Record<string, unknown>) => string): string {
+function getChipLabel(stage: ModelStage, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (stage === "ready") return t("status.chipReady");
+  if (stage === "error") return t("status.chipError");
+  if (stage === "need_download") return t("status.needDownload");
+  if (stage === "need_repair") return t("status.chipRepair");
   if (stage === "downloading") return t("status.chipDownloading");
-  if (stage === "loading") return downloadMessage || t("status.chipLoading");
+  if (stage === "loading") return t("status.chipLoading");
   return t("status.chipPreparing");
 }
 
@@ -80,7 +85,13 @@ export default function StatusIndicator({
   return (
     <>
       <div className="chip-container">
-        {device && (
+        <span className="chip model-status" data-state={stage} role="status">
+          {stage === "checking" || stage === "loading" || stage === "downloading" || isStarting || isProcessing
+            ? <Loader2 size={11} className="animate-spin" aria-hidden="true" />
+            : <span className="model-status-dot" aria-hidden="true" />}
+          <span>{isStarting ? t("main.statusConnecting") : isRecording ? t("status.chipActive") : isProcessing ? t("status.recognizing") : getChipLabel(stage, t)}</span>
+        </span>
+        {device && isReady && (
           <span className={`chip chip-device ${isReady ? "animate-success" : "animate-fade-in"}`}>
             <span
               className={`chip-dot ${device === "cloud" ? "chip-dot-cloud" : (device === "cuda" || device === "gpu") ? "chip-dot-gpu" : "chip-dot-cpu"}`}
@@ -88,12 +99,6 @@ export default function StatusIndicator({
             />
             {device === "cloud" ? <Globe size={11} strokeWidth={1.8} /> : <Cpu size={11} strokeWidth={1.8} />}
             <span>{getDeviceLabel(device, gpuName, t)}</span>
-          </span>
-        )}
-        {!isReady && stage !== "need_download" && stage !== "need_repair" && (
-          <span className="chip animate-fade-in">
-            <Loader2 size={11} className="animate-spin" />
-            <span>{getChipLabel(stage, downloadMessage, t)}</span>
           </span>
         )}
       </div>
