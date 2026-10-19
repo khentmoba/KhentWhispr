@@ -382,6 +382,17 @@ class NvidiaRuntimeBundleTests(unittest.TestCase):
         self.internal = self.engine_dir / "_internal"
         self.module = load_build_engine_module()
 
+    def test_installed_cuda_provider_still_installs_nvidia_runtime_wheels(self):
+        with mock.patch.object(self.module.importlib.metadata, "version", return_value="0.1.3"), \
+             mock.patch.object(self.module.shutil, "which", return_value="uv"), \
+             mock.patch.object(self.module.subprocess, "run") as run:
+            self.module.ensure_qwen3_cuda_provider()
+        run.assert_called_once_with(
+            ["uv", "pip", "install", "--python", self.module.sys.executable, "--no-deps",
+             "nvidia-cuda-runtime-cu12>=12.9,<13", "nvidia-cublas-cu12>=12.9,<13"],
+            check=True,
+        )
+
     def _frozen_provider(self):
         provider = self.internal / "transcribe_cpp_native_cu12/_native"
         provider.mkdir(parents=True)
