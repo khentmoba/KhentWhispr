@@ -58,7 +58,7 @@ processing requests.
 | Automatic decisions and optional checks | Text and processing requirements go to the configured decision provider. Selecting Auto can make these requests even when the decision ultimately skips further processing. |
 | Web search | Queries and related request context go to the selected search service: Bing, Exa, Tavily, Google or a model provider's native search. ChatGPT/Codex search uses Exa. |
 | Account login and model discovery | The selected provider receives login/authorization requests, account credentials or tokens needed for that service, and model-catalog requests. Browser login is governed by the provider's policies. |
-| Check for updates | Clicking Check for Updates requests release metadata from GitHub, including an application/version user-agent and normal network metadata. |
+| Check for updates | SpeakFlow requests release metadata from GitHub at startup and hourly while running, or when you click Check for Updates. Focus and network reconnection can trigger an overdue check. Requests include an application/version user-agent and normal network metadata, not speech content. Download and installation require your action. |
 
 Network services can receive your IP address and request metadata and apply
 their own retention and processing rules. Requests are made directly to the

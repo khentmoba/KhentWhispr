@@ -7,13 +7,16 @@ import { RecordingProvider } from "./contexts/RecordingContext";
 import { prefersReducedMotion } from "./lib/motion";
 import MainPage from "./pages/MainPage";
 import AppNavigation from "./components/AppNavigation";
+import { AppUpdateProvider, useAppUpdates } from "./contexts/AppUpdateContext";
 import { useTheme } from "./hooks/useTheme";
 import i18n from "./i18n";
 import "./styles/theme.css";
 import "./styles/pages.css";
 import "./styles/workspace.css";
 
-type View = "main" | "settings" | "history";
+type View = "main" | "settings" | "history" | "updates";
+const loadUpdatesPage = () => import("./pages/UpdatesPage");
+const UpdatesPage = lazy(loadUpdatesPage);
 const loadSettingsPage = () => import("./pages/SettingsPage");
 const loadHistoryPage = () => import("./pages/HistoryPage");
 const SettingsPage = lazy(loadSettingsPage);
@@ -54,6 +57,11 @@ class ErrorBoundary extends React.Component<
 }
 
 export function App() {
+  return <AppUpdateProvider><AppWorkspace /></AppUpdateProvider>;
+}
+
+function AppWorkspace() {
+  const { latestAvailableVersion, updateInstalling } = useAppUpdates();
   const [view, setView] = useState<View>("main");
   const [animClass, setAnimClass] = useState("");
   const isTransitioning = useRef(false);
@@ -103,7 +111,7 @@ export function App() {
     };
 
     if (target !== "main") {
-      const loadTarget = target === "settings" ? loadSettingsPage : loadHistoryPage;
+      const loadTarget = target === "settings" ? loadSettingsPage : target === "updates" ? loadUpdatesPage : loadHistoryPage;
       void loadTarget().then(startTransition).catch((error) => {
         isTransitioning.current = false;
         console.error(`${target} page load failed:`, error);
@@ -117,13 +125,15 @@ export function App() {
   return (
     <RecordingProvider>
       <div className="app-shell">
-        <AppNavigation view={view} onNavigate={navigateTo} />
+        <AppNavigation view={view} onNavigate={navigateTo} updateAvailable={Boolean(latestAvailableVersion)} updateInstalling={updateInstalling} />
         <div className="app-workspace">
           <Suspense fallback={<div className="workspace-loading" role="status">Loading workspace…</div>}>
             {view === "main" ? (
               <MainPage onNavigate={navigateTo} animClass={animClass} />
             ) : view === "settings" ? (
               <SettingsPage onNavigate={navigateTo} active animClass={animClass} />
+            ) : view === "updates" ? (
+              <UpdatesPage animClass={animClass} />
             ) : (
               <HistoryPage onNavigate={navigateTo} animClass={animClass} />
             )}

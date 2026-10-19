@@ -1,5 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { act, fireEvent, render as renderUI, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { AppUpdateProvider } from "@/contexts/AppUpdateContext";
+const render = (ui: ReactElement) => renderUI(ui, { wrapper: ({ children }) => <AppUpdateProvider automatic={false}>{children}</AppUpdateProvider> });import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppUpdateInfo, UserProfile } from "@/types";
 
@@ -632,8 +634,10 @@ describe("SettingsPage app updates", () => {
     const onProgress = tauriMock.installAppUpdate.mock.calls[0][1];
     act(() => onProgress({ phase: "downloading", downloaded: 25, total: 100 }));
     expect(screen.getByRole("status")).toHaveTextContent("Downloading update... 25%");
+    expect(screen.getByRole("progressbar", { name: "Downloading update" })).toHaveAttribute("aria-valuenow", "25");
     act(() => onProgress({ phase: "installing", downloaded: 100, total: 100 }));
     expect(screen.getByRole("status")).toHaveTextContent("SpeakFlow will restart automatically");
+    expect(screen.getByRole("progressbar", { name: "Installing update" })).not.toHaveAttribute("aria-valuenow");
     await act(async () => rejectInstall(new Error("installer failed")));
     expect(action).not.toBeDisabled();
     expect(screen.getByText("installer failed")).toBeInTheDocument();

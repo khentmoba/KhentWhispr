@@ -1,17 +1,20 @@
-import { AudioLines, History, Settings } from "lucide-react";
+import { AudioLines, History, Settings, RefreshCw } from "lucide-react";
 import { SpeakFlowBrandIcon } from "./TitleBar";
 
-export type AppView = "main" | "history" | "settings";
+export type AppView = "main" | "history" | "settings" | "updates";
 
 const destinations = [
   { view: "main", label: "Dictation", icon: AudioLines },
   { view: "history", label: "History", icon: History },
   { view: "settings", label: "Settings", icon: Settings },
+  { view: "updates", label: "Updates", icon: RefreshCw },
 ] as const;
 
-export default function AppNavigation({ view, onNavigate }: {
+export default function AppNavigation({ view, onNavigate, updateAvailable = false, updateInstalling = false }: {
   view: AppView;
   onNavigate: (view: AppView) => void;
+  updateAvailable?: boolean;
+  updateInstalling?: boolean;
 }) {
   return (
     <aside className="app-sidebar">
@@ -28,8 +31,9 @@ export default function AppNavigation({ view, onNavigate }: {
             aria-current={view === destination ? "page" : undefined}
             onClick={() => onNavigate(destination)}
           >
-            <Icon size={18} strokeWidth={1.7} aria-hidden="true" />
+            <Icon size={18} strokeWidth={1.7} aria-hidden="true" className={destination === "updates" && updateInstalling ? "update-spinner" : undefined} />
             <span>{label}</span>
+            {destination === "updates" && updateAvailable && <span className="update-nav-dot" role="img" aria-label={updateInstalling ? "Update in progress" : "New release available"} />}
           </button>
         ))}
       </nav>

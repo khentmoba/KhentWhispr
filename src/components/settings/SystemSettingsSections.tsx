@@ -1,7 +1,8 @@
 import { useRef } from "react";
-import { Archive, Copy, Download, LoaderCircle, Power, RefreshCw, ShieldCheck, Upload } from "lucide-react";
+import { Archive, Copy, Download, LoaderCircle, Power, ShieldCheck, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { SettingsReveal } from "./SettingsReveal";
+import AppUpdatePanel from "./AppUpdatePanel";
 
 interface SystemSettingsSectionsProps {
   lastExportPath: string | null;
@@ -11,17 +12,12 @@ interface SystemSettingsSectionsProps {
   autostartMinimized: boolean;
   autostartMinimizedLoading: boolean;
   appVersion: string;
-  updateStatusText: string;
-  latestAvailableVersion: string | null;
-  updateChecking: boolean;
-  updateInstalling?: boolean;
   onExport: () => void;
   onCopyExportPath: () => void;
   onImport: (json: string) => Promise<void>;
   onTestPaste: () => void;
   onToggleAutostart: () => void;
   onToggleAutostartMinimized: () => void;
-  onUpdateAction: () => void;
 }
 
 export default function SystemSettingsSections({
@@ -32,17 +28,12 @@ export default function SystemSettingsSections({
   autostartMinimized,
   autostartMinimizedLoading,
   appVersion,
-  updateStatusText,
-  latestAvailableVersion,
-  updateChecking,
-  updateInstalling = false,
   onExport,
   onCopyExportPath,
   onImport,
   onTestPaste,
   onToggleAutostart,
   onToggleAutostartMinimized,
-  onUpdateAction,
 }: SystemSettingsSectionsProps) {
   const { t } = useTranslation();
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -154,44 +145,6 @@ export default function SystemSettingsSections({
         </SettingsReveal>
       </section>
 
-      <section className="settings-card">
-        <div className="settings-section-header">
-          <RefreshCw size={15} className="icon-accent" />
-          <h2 className="settings-section-title">{t("settings.update")}</h2>
-        </div>
-        <div className="settings-row settings-update-row">
-          <div className="permission-item settings-update-copy">
-            <RefreshCw size={14} className="icon-tertiary" />
-            <div className="settings-column settings-update-details">
-              <span className="permission-label">{t("settings.checkAppUpdate")}</span>
-              <p className="settings-hint" role="status" aria-live="polite">
-                {updateStatusText || t("settings.currentVersion", { version: appVersion || "..." })}
-              </p>
-              {latestAvailableVersion && (
-                <p className="settings-hint">
-                  {t("settings.newVersionAvailable", { version: latestAvailableVersion })}
-                </p>
-              )}
-            </div>
-          </div>
-          <button
-            className="test-btn settings-update-button"
-            onClick={onUpdateAction}
-            disabled={updateChecking}
-          >
-            {updateInstalling
-              ? t("settings.updating")
-              : updateChecking
-              ? t("settings.checking")
-              : latestAvailableVersion
-                ? t("settings.installUpdate")
-                : t("settings.checkUpdate")}
-          </button>
-        </div>
-        {latestAvailableVersion && (
-          <p className="settings-hint settings-update-source">{t("settings.updateSource")}</p>
-        )}
-      </section>
-    </>
+      <AppUpdatePanel appVersion={appVersion} />    </>
   );
 }
