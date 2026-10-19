@@ -13,6 +13,7 @@ pub struct Snapshot {
     window: isize,
     field: Vec<i32>,
     text: String,
+    selected: String,
 }
 
 pub fn capture() -> Option<Snapshot> {
@@ -74,23 +75,32 @@ fn capture_field(expected: Option<&Snapshot>) -> Option<Snapshot> {
         if field.is_empty() || expected.is_some_and(|s| s.field != field) {
             return None;
         }
-        let text = input
-            .get_pattern::<UITextPattern>()
-            .ok()
-            .and_then(|pattern| pattern.get_document_range().ok())
-            .and_then(|range| range.get_text(MAX_TEXT as i32 + 1).ok())
+        let text_pattern = input.get_pattern::<UITextPattern>().ok();
+        let value_pattern = input.get_pattern::<UIValuePattern>().ok();
+        if value_pattern
+            .as_ref()
+            .is_some_and(|value| value.is_readonly().unwrap_or(true))
+        {
+            return None;
+        }
+        // Chromium inputs can expose an empty TextPattern alongside a populated ValuePattern.
+        let text = value_pattern
+            .filter(|_| input.get_control_type().ok() == Some(ControlType::Edit))
+            // shortcut: ValuePattern has no bounded read; reject oversized values below.
+            .and_then(|value| value.get_value().ok())
             .or_else(|| {
-                // Never fall back to reading an ancestor document or a read-only value.
-                if input.get_control_type().ok()? != ControlType::Edit {
-                    return None;
-                }
-                let value = input.get_pattern::<UIValuePattern>().ok()?;
-                if value.is_readonly().ok()? {
-                    return None;
-                }
-                // shortcut: ValuePattern has no bounded read; reject oversized values below.
-                value.get_value().ok()
+                text_pattern
+                    .as_ref()?
+                    .get_document_range()
+                    .ok()?
+                    .get_text(MAX_TEXT as i32 + 1)
+                    .ok()
             })?;
+        let selected = text_pattern
+            .and_then(|pattern| pattern.get_selection().ok())
+            .filter(|ranges| ranges.len() == 1)
+            .and_then(|ranges| ranges[0].get_text(MAX_TEXT as i32 + 1).ok())
+            .unwrap_or_default();
         if text.encode_utf16().count() > MAX_TEXT
             || unsafe { GetForegroundWindow() } as isize != window
             || !automation
@@ -103,6 +113,7 @@ fn capture_field(expected: Option<&Snapshot>) -> Option<Snapshot> {
             window,
             field,
             text: normalize_line_endings(&text),
+            selected: normalize_line_endings(&selected),
         })
     }
     #[cfg(not(target_os = "windows"))]
@@ -118,7 +129,12 @@ fn normalize_line_endings(text: &str) -> String {
 }
 
 // Require a uniquely identifiable insertion; never guess which duplicate was pasted.
-fn insertion<'a>(before: &str, after: &'a str, pasted: &str) -> Option<(&'a str, &'a str)> {
+fn insertion<'a>(
+    before: &str,
+    after: &'a str,
+    pasted: &str,
+    selected: &str,
+) -> Option<(&'a str, &'a str)> {
     if pasted.is_empty() || pasted.chars().count() > MAX_TEXT {
         return None;
     }
@@ -129,10 +145,7 @@ fn insertion<'a>(before: &str, after: &'a str, pasted: &str) -> Option<(&'a str,
     {
         let prefix = &after[..start];
         let suffix = &after[start + pasted.len()..];
-        if before.len() == prefix.len() + suffix.len()
-            && before.starts_with(prefix)
-            && before.ends_with(suffix)
-        {
+        if passage(before, prefix, suffix) == Some(selected) {
             if found.is_some() {
                 return None;
             }
@@ -380,7 +393,7 @@ fn corrections(before: &str, after: &str) -> Option<Vec<(String, String)>> {
         }
     }
     if updated.len() < original.len() {
-        return None;
+        return corrections_with_deletions(&original, &updated);
     }
     if updated.len() > original.len()
         && original
@@ -409,6 +422,74 @@ fn corrections(before: &str, after: &str) -> Option<Vec<(String, String)>> {
     pairs.filter(|pairs| !pairs.is_empty())
 }
 
+// Align only deletions and safe spelling substitutions. No insertion/rewrite may be
+// disguised as a deletion, and deleted words never become global removal rules.
+fn corrections_with_deletions(
+    original: &[&str],
+    updated: &[&str],
+) -> Option<Vec<(String, String)>> {
+    // Bound quadratic work even for a large pasted document.
+    if original.len() > 512 || updated.len() > 512 {
+        return None;
+    }
+    let mut costs = vec![vec![usize::MAX; updated.len() + 1]; original.len() + 1];
+    costs[0][0] = 0;
+    for i in 0..original.len() {
+        for j in 0..=updated.len() {
+            let cost = costs[i][j];
+            if cost == usize::MAX {
+                continue;
+            }
+            // Only words and whitespace can be deleted, not sentence boundaries.
+            if original[i]
+                .chars()
+                .all(|c| c.is_alphanumeric() || c.is_whitespace())
+            {
+                costs[i + 1][j] = costs[i + 1][j].min(cost + 1);
+            }
+            if j < updated.len() {
+                if original[i] == updated[j] {
+                    costs[i + 1][j + 1] = costs[i + 1][j + 1].min(cost);
+                } else if word_correction(original[i], updated[j]).is_some() {
+                    costs[i + 1][j + 1] = costs[i + 1][j + 1].min(cost + 1);
+                }
+            }
+        }
+    }
+    if costs[original.len()][updated.len()] == usize::MAX {
+        return None;
+    }
+    let (mut i, mut j) = (original.len(), updated.len());
+    let mut pairs = Vec::new();
+    while i > 0 {
+        let deleted = original[i - 1]
+            .chars()
+            .all(|c| c.is_alphanumeric() || c.is_whitespace())
+            && costs[i - 1][j].checked_add(1) == Some(costs[i][j]);
+        let pair = if j > 0 {
+            word_correction(original[i - 1], updated[j - 1])
+        } else {
+            None
+        };
+        let matched = j > 0
+            && (original[i - 1] == updated[j - 1] || pair.is_some())
+            && costs[i - 1][j - 1].checked_add(usize::from(pair.is_some())) == Some(costs[i][j]);
+        // Repeated whitespace is harmless; an ambiguous substitution is not.
+        if (!matched && !deleted) || (matched && deleted && pair.is_some()) {
+            return None;
+        }
+        if matched {
+            if let Some(pair) = pair {
+                pairs.push(pair);
+            }
+            j -= 1;
+        }
+        i -= 1;
+    }
+    pairs.reverse();
+    (!pairs.is_empty()).then_some(pairs)
+}
+
 pub fn watch(app: tauri::AppHandle, before: Snapshot, pasted: String, generation: u64) {
     use crate::{
         services::profile_service,
@@ -435,7 +516,7 @@ pub fn watch(app: tauri::AppHandle, before: Snapshot, pasted: String, generation
             let Some(current) = capture_field(Some(&before)) else {
                 return;
             };
-            if insertion(&before.text, &current.text, &pasted).is_some() {
+            if insertion(&before.text, &current.text, &pasted, &before.selected).is_some() {
                 baseline = Some(current.text);
                 break;
             }
@@ -446,13 +527,15 @@ pub fn watch(app: tauri::AppHandle, before: Snapshot, pasted: String, generation
         let Some(baseline) = baseline else {
             return;
         };
-        let Some((prefix, suffix)) = insertion(&before.text, &baseline, &pasted) else {
+        let Some((prefix, suffix)) = insertion(&before.text, &baseline, &pasted, &before.selected)
+        else {
             return;
         };
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut learned = std::collections::HashSet::new();
         let mut latest = pasted.clone();
         let mut changed_at = Instant::now();
+        let mut evaluated = false;
         while Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(400));
             if !active() {
@@ -467,11 +550,13 @@ pub fn watch(app: tauri::AppHandle, before: Snapshot, pasted: String, generation
             if edited != latest {
                 latest = edited.to_string();
                 changed_at = Instant::now();
+                evaluated = false;
                 continue;
             }
-            if latest == pasted || changed_at.elapsed() < Duration::from_secs(2) {
+            if evaluated || latest == pasted || changed_at.elapsed() < Duration::from_secs(2) {
                 continue;
             }
+            evaluated = true;
             let Some(pairs) = corrections(&pasted, &latest) else {
                 continue;
             };
@@ -582,7 +667,7 @@ mod tests {
             "Before\nteh\nrecieve\nafter",
         ] {
             let baseline = normalize_line_endings(raw);
-            let (prefix, suffix) = insertion(&before, &baseline, &pasted).unwrap();
+            let (prefix, suffix) = insertion(&before, &baseline, &pasted, "").unwrap();
             let edited = normalize_line_endings("Before\r\nthe\r\nreceive\r\nafter");
             let edited = passage(&edited, prefix, suffix).unwrap();
             assert_eq!(corrections(&pasted, edited).unwrap().len(), 2);
@@ -592,19 +677,64 @@ mod tests {
     #[test]
     fn identifies_only_the_inserted_passage() {
         assert_eq!(
-            insertion("Before  after", "Before teh after", "teh"),
+            insertion("Before  after", "Before teh after", "teh", ""),
             Some(("Before ", " after"))
         );
-        assert_eq!(insertion("hi", "hihi", "hi"), None);
-        assert_eq!(insertion("a", "aaa", "aa"), None);
-        assert_eq!(insertion("selected", "replacement", "replacement"), None);
-        assert_eq!(insertion("", "", ""), None);
+        assert_eq!(insertion("hi", "hihi", "hi", ""), None);
+        assert_eq!(insertion("a", "aaa", "aa", ""), None);
+        assert_eq!(
+            insertion("selected", "replacement", "replacement", ""),
+            None
+        );
+        assert_eq!(insertion("", "", "", ""), None);
         assert_eq!(
             passage("Before the after", "Before ", " after"),
             Some("the")
         );
         assert_eq!(passage("Different the after", "Before ", " after"), None);
         assert_eq!(passage("short", "long prefix", "suffix"), None);
+    }
+
+    #[test]
+    fn tracks_pastes_that_replace_selected_text() {
+        assert_eq!(
+            insertion(
+                "Before selected after",
+                "Before teh after",
+                "teh",
+                "selected"
+            ),
+            Some(("Before ", " after"))
+        );
+        assert_eq!(insertion("old", "teh", "teh", "old"), Some(("", "")));
+        assert_eq!(insertion("private", "teh", "teh", "different"), None);
+        assert_eq!(insertion("a", "aaa", "aa", ""), None);
+    }
+
+    #[test]
+    fn deleting_words_does_not_discard_other_spelling_corrections() {
+        assert_eq!(
+            corrections("Use teh extra word today.", "Use the word today."),
+            Some(vec![("teh".into(), "the".into())])
+        );
+        assert_eq!(
+            corrections(
+                "Please please recieve teh file.",
+                "Please receive the file."
+            ),
+            Some(vec![
+                ("recieve".into(), "receive".into()),
+                ("teh".into(), "the".into())
+            ])
+        );
+        assert_eq!(corrections("Delete this word.", "Delete word."), None);
+        assert_eq!(corrections("teh hello there", "the goodbye"), None);
+        assert_eq!(corrections("teh. Extra", "the"), None);
+        assert_eq!(corrections("", ""), None);
+        assert_eq!(
+            corrections_with_deletions(&vec!["teh"; 513], &["the"]),
+            None
+        );
     }
 
     #[test]
