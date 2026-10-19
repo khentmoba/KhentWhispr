@@ -16,6 +16,7 @@ fn read(relative: &str) -> String {
 #[test]
 fn whisper_engine_is_retired_from_runtime_and_ui() {
     let settings = read("src/pages/SettingsPage.tsx");
+    let engine_options = read("src/lib/asrEngineOptions.ts");
     let engine_cli = read("src-tauri/resources/engine.py");
     let rust_paths = read("src-tauri/src/utils/paths.rs");
     let rust_commands = read("src-tauri/src/commands/funasr.rs");
@@ -23,6 +24,7 @@ fn whisper_engine_is_retired_from_runtime_and_ui() {
     let tauri_config = read("src-tauri/tauri.conf.json");
 
     assert!(!settings.contains("key: \"whisper\""));
+    assert!(!engine_options.contains("key: \"whisper\""));
     assert!(!engine_cli.contains("choices=[\"whisper\""));
     assert!(!rust_paths.contains("\"whisper\""));
     assert!(!rust_paths.contains("get_whisper_server_path"));
