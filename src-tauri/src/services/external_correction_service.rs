@@ -312,7 +312,9 @@ pub fn apply_spelling_rules(
                 return Some(first.corrected.as_str());
             }
         }
-        let mut ci_matches = rules.iter().filter(|rule| rule.original.eq_ignore_ascii_case(key));
+        let mut ci_matches = rules
+            .iter()
+            .filter(|rule| rule.original.eq_ignore_ascii_case(key));
         let first = ci_matches.next()?;
         (!ci_matches.any(|rule| !rule.corrected.eq_ignore_ascii_case(&first.corrected)))
             .then_some(first.corrected.as_str())
@@ -655,10 +657,7 @@ mod tests {
         let pairs = corrections("speekflow app", "SpeakFlow app").unwrap();
         learn_from_structured(&mut profile, &pairs, &[], CorrectionSource::User);
         assert_eq!(
-            apply_spelling_rules(
-                "Speekflow is great, and speekflow is fast.",
-                &profile
-            ),
+            apply_spelling_rules("Speekflow is great, and speekflow is fast.", &profile),
             "SpeakFlow is great, and SpeakFlow is fast."
         );
     }

@@ -268,7 +268,11 @@ fn collect_han_candidates<'a>(
             continue;
         }
 
-        if window.iter().map(|(_, ch)| *ch).eq(hot_chars.iter().copied()) {
+        if window
+            .iter()
+            .map(|(_, ch)| *ch)
+            .eq(hot_chars.iter().copied())
+        {
             continue;
         }
 
