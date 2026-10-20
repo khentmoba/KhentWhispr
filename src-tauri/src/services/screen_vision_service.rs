@@ -76,7 +76,6 @@ pub async fn describe_images(
         text: VISION_USER_PROMPT.to_string(),
         images: images.to_vec(),
     };
-    let reasoning_mode = config.polish_reasoning_mode();
     let options = LlmRequestOptions {
         auth_context: Some((app_handle, state)),
         ..request_options(&config)
@@ -108,7 +107,7 @@ pub async fn describe_images(
                     "屏幕视觉代理读取完成: provider={}, model={}, reasoning={:?}, 图片={}张, 描述={}字符",
                     endpoint.provider,
                     endpoint.model,
-                    reasoning_mode,
+                    options.reasoning_mode,
                     images.len(),
                     description.chars().count()
                 );

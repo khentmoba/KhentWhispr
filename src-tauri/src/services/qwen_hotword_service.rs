@@ -77,7 +77,7 @@ pub fn correct_qwen_hot_words(text: &str, hot_words: &[HotWord]) -> HotWordCorre
 
     for (rank, hot_word) in ranked.into_iter().enumerate() {
         let hot_text = hot_word.text.trim();
-        if hot_text.is_empty() || text.contains(hot_text) {
+        if hot_text.is_empty() {
             continue;
         }
 
@@ -256,35 +256,37 @@ fn collect_han_candidates<'a>(
         return;
     };
 
+    let min_shared = if is_manual {
+        1.max(hot_len / 3)
+    } else {
+        1.max(hot_len.div_ceil(2))
+    };
+
     for start_index in 0..=chars.len() - hot_len {
         let window = &chars[start_index..start_index + hot_len];
         if !window.iter().all(|(_, ch)| is_han(*ch)) {
             continue;
         }
 
-        let candidate_chars: Vec<char> = window.iter().map(|(_, ch)| *ch).collect();
-        if candidate_chars == hot_chars {
+        if window.iter().map(|(_, ch)| *ch).eq(hot_chars.iter().copied()) {
             continue;
         }
 
-        let shared_chars = candidate_chars
+        let shared_chars = window
             .iter()
             .zip(&hot_chars)
-            .filter(|(candidate, hot)| candidate == hot)
+            .filter(|((_, ch), hot)| ch == *hot)
             .count();
-        let min_shared = if is_manual {
-            1.max(hot_len / 3)
-        } else {
-            1.max(hot_len.div_ceil(2))
-        };
         if shared_chars < min_shared {
             continue;
         }
 
-        let Some(candidate_pinyin) = pinyin_signature(&candidate_chars) else {
-            continue;
-        };
-        if candidate_pinyin != hot_pinyin {
+        let pinyin_matches = window.iter().zip(&hot_pinyin).all(|((_, ch), hot_pi)| {
+            ch.to_pinyin()
+                .map(|p| p.plain() == *hot_pi)
+                .unwrap_or(false)
+        });
+        if !pinyin_matches {
             continue;
         }
 
@@ -311,6 +313,12 @@ fn collect_ascii_candidates<'a>(
     rank: usize,
     candidates: &mut Vec<ReplacementCandidate<'a>>,
 ) {
+    let is_manual = hot_word.source == HotWordSource::User && hot_word.weight >= 3;
+    let has_canonical_style = has_canonical_ascii_style(hot_text);
+    if !is_manual && !has_canonical_style {
+        return;
+    }
+
     let hot_normalized = normalize_ascii(hot_text);
     if hot_normalized.is_empty() {
         return;
@@ -319,11 +327,6 @@ fn collect_ascii_candidates<'a>(
     let hot_word_count = ascii_word_spans(hot_text).len().max(1);
     let min_words = hot_word_count.saturating_sub(1).max(1);
     let max_words = hot_word_count + 1;
-    let is_manual = hot_word.source == HotWordSource::User && hot_word.weight >= 3;
-    let has_canonical_style = has_canonical_ascii_style(hot_text);
-    if !is_manual && !has_canonical_style {
-        return;
-    }
 
     for start_index in 0..words.len() {
         for word_count in min_words..=max_words {
@@ -481,20 +484,41 @@ fn is_han(ch: char) -> bool {
 
 fn levenshtein(left: &str, right: &str) -> usize {
     let right = right.as_bytes();
-    let mut previous: Vec<usize> = (0..=right.len()).collect();
-    let mut current = vec![0; right.len() + 1];
-
-    for (left_index, left_byte) in left.as_bytes().iter().enumerate() {
-        current[0] = left_index + 1;
-        for (right_index, right_byte) in right.iter().enumerate() {
-            let substitution = previous[right_index] + usize::from(left_byte != right_byte);
-            current[right_index + 1] = (previous[right_index + 1] + 1)
-                .min(current[right_index] + 1)
-                .min(substitution);
+    let r_len = right.len();
+    if r_len <= 64 {
+        let mut previous = [0usize; 65];
+        let mut current = [0usize; 65];
+        for (i, p) in previous.iter_mut().enumerate().take(r_len + 1) {
+            *p = i;
         }
-        std::mem::swap(&mut previous, &mut current);
+
+        for (left_index, &left_byte) in left.as_bytes().iter().enumerate() {
+            current[0] = left_index + 1;
+            for (right_index, &right_byte) in right.iter().enumerate() {
+                let substitution = previous[right_index] + usize::from(left_byte != right_byte);
+                current[right_index + 1] = (previous[right_index + 1] + 1)
+                    .min(current[right_index] + 1)
+                    .min(substitution);
+            }
+            previous[..=r_len].copy_from_slice(&current[..=r_len]);
+        }
+        previous[r_len]
+    } else {
+        let mut previous: Vec<usize> = (0..=r_len).collect();
+        let mut current = vec![0; r_len + 1];
+
+        for (left_index, &left_byte) in left.as_bytes().iter().enumerate() {
+            current[0] = left_index + 1;
+            for (right_index, &right_byte) in right.iter().enumerate() {
+                let substitution = previous[right_index] + usize::from(left_byte != right_byte);
+                current[right_index + 1] = (previous[right_index + 1] + 1)
+                    .min(current[right_index] + 1)
+                    .min(substitution);
+            }
+            std::mem::swap(&mut previous, &mut current);
+        }
+        previous[r_len]
     }
-    previous[right.len()]
 }
 
 #[cfg(test)]
@@ -762,6 +786,20 @@ mod tests {
         );
         assert_eq!(before, 47);
         assert_eq!(after, 121);
+    }
+
+    #[test]
+    fn corrects_misheard_occurrences_even_when_hotword_already_present() {
+        let hot_words = vec![user("github")];
+        let result = correct_qwen_hot_words(
+            "I already use github, but get hub is misspelled.",
+            &hot_words,
+        );
+        assert_eq!(
+            result.text,
+            "I already use github, but github is misspelled."
+        );
+        assert_eq!(result.replacements, 1);
     }
 
     #[test]

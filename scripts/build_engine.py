@@ -158,10 +158,10 @@ def ensure_qwen3_cuda_provider() -> None:
         "--python",
         sys.executable,
         "--no-deps",
-        *requirements,
     ]
     if reinstall_provider:
-        cmd.insert(-1, "--reinstall")
+        cmd.append("--reinstall")
+    cmd.extend(requirements)
     subprocess.run(cmd, check=True)
 
     actual = importlib.metadata.version("transcribe-cpp-native-cu12")
@@ -329,7 +329,9 @@ def bundle_nvidia_runtime_dlls(engine_dir: Path, site_packages: Path | None = No
     if not (internal / "transcribe_cpp_native_cu12").is_dir():
         return
     if site_packages is None:
-        site_packages = Path(sys.executable).resolve().parent.parent / "Lib" / "site-packages"
+        import sysconfig
+        purelib = Path(sysconfig.get_path("purelib"))
+        site_packages = purelib if purelib.is_dir() else Path(sys.executable).resolve().parent.parent / "Lib" / "site-packages"
     sources = {}
     for wheels_root in site_packages.glob("nvidia/*/bin"):
         if wheels_root.is_dir():

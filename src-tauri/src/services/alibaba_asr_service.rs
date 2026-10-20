@@ -87,13 +87,22 @@ async fn transcribe_via_dashscope_asr(
     let data_url = format!("data:audio/wav;base64,{}", b64(&audio_wav));
     let system_text = hotword_context(state);
 
+    let mut messages = Vec::new();
+    if !system_text.is_empty() {
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": [{"text": system_text}]
+        }));
+    }
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": [{"audio": data_url}]
+    }));
+
     let body = serde_json::json!({
         "model": model,
         "input": {
-            "messages": [
-                {"role": "system", "content": [{"text": system_text}]},
-                {"role": "user", "content": [{"audio": data_url}]}
-            ]
+            "messages": messages
         },
         "parameters": {
             "asr_options": {"enable_itn": true}
@@ -181,7 +190,6 @@ async fn transcribe_via_omni_chat(
     use tokio_stream::StreamExt;
 
     let encoded = b64(&audio_wav);
-    let data_url = format!("data:;base64,{}", encoded);
     let hotwords = hotword_context(state);
     let system_prompt = if hotwords.is_empty() {
         "You are a professional speech recognizer. Transcribe the audio verbatim. Output only the transcription with no extra commentary.".to_string()
@@ -205,7 +213,7 @@ async fn transcribe_via_omni_chat(
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_audio", "input_audio": {"data": data_url, "format": "wav"}},
+                    {"type": "input_audio", "input_audio": {"data": encoded, "format": "wav"}},
                     {"type": "text", "text": "Please transcribe this audio into text. Return the transcription only."}
                 ]
             }

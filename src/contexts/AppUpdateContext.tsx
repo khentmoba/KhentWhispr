@@ -77,6 +77,8 @@ function useUpdateController(automatic: boolean) {
             percent: Math.min(100, Math.floor(progress.downloaded * 100 / progress.total)),
           }) : t("settings.downloadingUpdate"));
       });
+      setLatestAvailableVersion(null);
+      setUpdateStatusText(t("settings.installingUpdate"));
     } catch (error) {
       const message = error instanceof Error ? error.message : t("toast.installUpdateFailed");
       setUpdateStatusText(message);

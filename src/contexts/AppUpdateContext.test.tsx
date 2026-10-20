@@ -71,5 +71,6 @@ describe("background updates", () => {
     ui.rerender(<AppUpdateProvider><Controls /></AppUpdateProvider>);
     expect(screen.getByText("installing")).toBeInTheDocument();
     await act(async () => finish());
+    expect(screen.getByText("none")).toBeInTheDocument();
   });
 });

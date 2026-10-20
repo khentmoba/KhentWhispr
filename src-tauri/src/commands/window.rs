@@ -152,20 +152,22 @@ pub(crate) fn set_subtitle_window_interactive(
         {
             use windows_sys::Win32::Foundation::SetLastError;
             use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-                WS_EX_TRANSPARENT,
+                GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_LAYERED,
+                WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
             };
 
             let hwnd = window
                 .hwnd()
                 .map_err(|e| tauri_error("Failed to get subtitle window handle", e))?;
             unsafe {
-                let style = GetWindowLongPtrW(hwnd.0, GWL_EXSTYLE) | WS_EX_NOACTIVATE as isize;
-                let click_through = (WS_EX_TRANSPARENT | WS_EX_LAYERED) as isize;
+                let style = GetWindowLongPtrW(hwnd.0, GWL_EXSTYLE)
+                    | WS_EX_NOACTIVATE as isize
+                    | (WS_EX_TRANSPARENT | WS_EX_LAYERED) as isize;
                 let style = if interactive {
-                    style & !click_through
+                    style & !(WS_EX_TRANSPARENT as isize)
                 } else {
-                    style | click_through
+                    style
                 };
                 SetLastError(0);
                 if SetWindowLongPtrW(hwnd.0, GWL_EXSTYLE, style) == 0 {
@@ -177,6 +179,15 @@ pub(crate) fn set_subtitle_window_interactive(
                         ));
                     }
                 }
+                SetWindowPos(
+                    hwnd.0,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                );
             }
         }
         #[cfg(not(target_os = "windows"))]

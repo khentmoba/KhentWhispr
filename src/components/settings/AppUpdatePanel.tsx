@@ -20,7 +20,7 @@ export default function AppUpdatePanel({ appVersion }: { appVersion: string }) {
         <div className="settings-column settings-update-details">
           <span className="permission-label">{t("settings.currentVersion", { version: appVersion || "..." })}</span>
           <p className="settings-hint" role="status" aria-live="polite">
-            {updateStatusText || "SpeakFlow checks for new releases automatically."}
+            {updateStatusText || t("updates.autoCheckHint")}
           </p>
           {latestAvailableVersion && <p className="settings-hint">{t("settings.newVersionAvailable", { version: latestAvailableVersion })}</p>}
         </div>
@@ -40,12 +40,12 @@ export default function AppUpdatePanel({ appVersion }: { appVersion: string }) {
               style={percent === undefined ? undefined : { transform: `scaleX(${percent / 100})` }} />
           </div>
           <div className="update-steps" aria-hidden="true">
-            <span data-active={!installing}><Download size={13} /> Download</span>
-            <span data-active={installing}><ShieldCheck size={13} /> Verify &amp; install</span>
+            <span data-active={!installing}><Download size={13} /> {t("updates.download")}</span>
+            <span data-active={installing}><ShieldCheck size={13} /> {t("updates.verifyAndInstall")}</span>
           </div>
         </div>
       )}
-      <p className="settings-hint settings-update-source">Checks at startup and hourly. You choose when to install and restart.</p>
+      <p className="settings-hint settings-update-source">{t("updates.scheduleHint")}</p>
       {latestAvailableVersion && <p className="settings-hint settings-update-source">{t("settings.updateSource")}</p>}
     </section>
   );

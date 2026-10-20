@@ -1064,7 +1064,11 @@ pub async fn check_status(
                 engine: Some(engine),
                 models_present: Some(true),
                 missing_models: Some(Vec::new()),
-                model_state: Some(ModelState::Ready),
+                model_state: if has_key {
+                    Some(ModelState::Ready)
+                } else {
+                    None
+                },
                 corrupt_models: Some(Vec::new()),
             });
         }
