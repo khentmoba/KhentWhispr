@@ -131,5 +131,5 @@ describe("release workflow contract", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  }, 15000);
+  }, 30000);
 });

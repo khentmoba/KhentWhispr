@@ -306,9 +306,18 @@ pub fn apply_spelling_rules(
         })
         .collect();
     let unique = |key: &str| -> Option<&str> {
-        let mut matches = rules.iter().filter(|rule| rule.original == key);
-        let first = matches.next()?;
-        (!matches.any(|rule| rule.corrected != first.corrected)).then_some(first.corrected.as_str())
+        let mut exact_matches = rules.iter().filter(|rule| rule.original == key);
+        if let Some(first) = exact_matches.next() {
+            if !exact_matches.any(|rule| rule.corrected != first.corrected) {
+                return Some(first.corrected.as_str());
+            }
+        }
+        let mut ci_matches = rules
+            .iter()
+            .filter(|rule| rule.original.eq_ignore_ascii_case(key));
+        let first = ci_matches.next()?;
+        (!ci_matches.any(|rule| !rule.corrected.eq_ignore_ascii_case(&first.corrected)))
+            .then_some(first.corrected.as_str())
     };
     let cjk_rules: Vec<&CorrectionPattern> = rules
         .iter()
@@ -514,7 +523,7 @@ pub fn watch(app: tauri::AppHandle, before: Snapshot, pasted: String, generation
                 return;
             }
             let Some(current) = capture_field(Some(&before)) else {
-                return;
+                continue;
             };
             if insertion(&before.text, &current.text, &pasted, &before.selected).is_some() {
                 baseline = Some(current.text);
@@ -635,6 +644,22 @@ mod tests {
         assert_eq!(apply_spelling_rules("Speekflow", &profile), "Speekflow");
         profile.external_correction_learning = false;
         assert_eq!(apply_spelling_rules("teh", &profile), "teh");
+    }
+
+    #[test]
+    fn learned_spelling_matches_case_insensitively_as_fallback() {
+        use crate::services::profile_service::learn_from_structured;
+        use crate::state::user_profile::{CorrectionSource, UserProfile};
+        let mut profile = UserProfile {
+            external_correction_learning: true,
+            ..Default::default()
+        };
+        let pairs = corrections("speekflow app", "SpeakFlow app").unwrap();
+        learn_from_structured(&mut profile, &pairs, &[], CorrectionSource::User);
+        assert_eq!(
+            apply_spelling_rules("Speekflow is great, and speekflow is fast.", &profile),
+            "SpeakFlow is great, and SpeakFlow is fast."
+        );
     }
 
     #[test]

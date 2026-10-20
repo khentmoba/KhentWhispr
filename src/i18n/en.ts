@@ -750,6 +750,15 @@ const en = {
     footer: "SpeakFlow",
     footerSubtitle: "Local speech-to-text",
   },
+  updates: {
+    title: "Updates",
+    heading: "Keep your flow up to date.",
+    subheading: "New releases, checked quietly in the background.",
+    download: "Download",
+    verifyAndInstall: "Verify & install",
+    autoCheckHint: "SpeakFlow checks for new releases automatically.",
+    scheduleHint: "Checks at startup and hourly. You choose when to install and restart.",
+  },
 } as const;
 
 export default en;
