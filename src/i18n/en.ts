@@ -329,7 +329,7 @@ const en = {
     qwen3Asr17Desc: "larger model · multilingual · FireRedVAD",
     parakeetUnifiedDesc: "English only · FireRedVAD",
     parakeetTdtV2Desc: "English only · FireRedVAD",
-    canaryQwen25Desc: "English only · FireRedVAD",
+    canaryQwen25Desc: "English only · no punctuation · FireRedVAD",
     glmAsrDesc: "Zhipu online ASR",
     alibabaAsrDesc: "Alibaba DashScope Qwen ASR / Omni",
     alibabaAsrLabel: "Alibaba DashScope",
