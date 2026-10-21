@@ -613,13 +613,17 @@ fn jev_feature_flags_round_trip_independently_and_preserve_provider() {
 async fn evaluate_uses_selected_provider_transport_and_returns_json_payload() {
     let response = br#"{"answers":{"screen":{"type":"choice","choice":"needed","probabilities":{"needed":0.95,"unneeded":0.04,"uncertain":0.01}}}}"#;
     let providers = [
-        (JevProvider::TypeSafe, "/v1/systemone", Some("jev-1.13.0")),
+        (JevProvider::TypeSafe, "/v1/systemone", Some("jev-latest")),
         (
             JevProvider::OpenRouter,
             "/api/alpha/decisions",
             Some("typesafe/jev-1.13"),
         ),
-        (JevProvider::Vercel, "/v4/ai/evaluation-model", None),
+        (
+            JevProvider::Vercel,
+            "/typesafe/v1/systemone",
+            Some("typesafe-ai/jev"),
+        ),
     ];
 
     for (provider, expected_path, expected_model) in providers {
@@ -651,24 +655,13 @@ async fn evaluate_uses_selected_provider_transport_and_returns_json_payload() {
 
         if let Some(model) = expected_model {
             assert_eq!(captured.body["model"], json!(model));
-        } else {
-            assert!(captured.body.get("model").is_none());
-            assert_eq!(
-                header_value(&captured.headers, "ai-model-id").as_deref(),
-                Some("typesafe-ai/jev")
-            );
-            assert_eq!(
-                header_value(
-                    &captured.headers,
-                    "ai-evaluation-model-specification-version"
-                )
-                .as_deref(),
-                Some("4")
-            );
-            assert_eq!(
-                header_value(&captured.headers, "ai-gateway-protocol-version").as_deref(),
-                Some("0.0.1")
-            );
+        }
+        for name in [
+            "ai-model-id",
+            "ai-evaluation-model-specification-version",
+            "ai-gateway-protocol-version",
+        ] {
+            assert!(header_value(&captured.headers, name).is_none());
         }
     }
 }
