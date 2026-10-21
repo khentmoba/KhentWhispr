@@ -256,7 +256,7 @@ function resetMocks(profile: UserProfile = baseProfile) {
   });
   tauriMock.getModelsDir.mockResolvedValue({
     is_custom: false,
-    path: "C:\\Users\\sun\\.cache\\speak-flow-models",
+    path: "C:\\Users\\khent\\.cache\\speak-flow-models",
   });
   tauriMock.getOnlineAsrApiKey.mockResolvedValue("");
   tauriMock.getOnlineAsrEndpoint.mockResolvedValue({

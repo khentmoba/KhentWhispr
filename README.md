@@ -101,7 +101,7 @@ and third-party service policies.
 
 ## Code signing policy
 
-The v1.7.4 Windows installer is unsigned. A free SignPath Foundation application
+The v1.1.4 Windows installer is unsigned. A free SignPath Foundation application
 was submitted on October 7, 2026; review is pending. Approval and a verified
 hosted build are required before signed downloads can be published.
 See the [Code signing policy](docs/code-signing.md).
@@ -114,4 +114,4 @@ See the [Code signing policy](docs/code-signing.md).
 
 Built with Tauri, React and Rust, using Qwen3-ASR, Parakeet, Canary-Qwen and Cohere Transcribe through transcribe.cpp, Confucius4-R2T2 through audio.cpp, and FireRedVAD.
 
-SpeakFlow is open-source software under [GPL-3.0-only](LICENSE). Third-party code and models retain their own terms; see [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+SpeakFlow is built by [Khent Felary G Sanco](https://github.com/khentmoba) and open-source software under [GPL-3.0-only](LICENSE). Third-party code and models retain their own terms; see [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
