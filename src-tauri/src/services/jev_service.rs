@@ -30,7 +30,7 @@ impl JevProvider {
     fn model(self) -> Option<&'static str> {
         match self {
             Self::TypeSafe => Some("jev-latest"),
-            Self::OpenRouter => Some("typesafe/jev-1.13"),
+            Self::OpenRouter => Some("~typesafe/jev-latest"),
             Self::Vercel => Some("typesafe-ai/jev"),
             Self::Liquid => Some("d1"),
         }
