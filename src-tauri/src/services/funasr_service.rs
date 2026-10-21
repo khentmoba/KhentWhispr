@@ -211,9 +211,9 @@ const LOCAL_MODEL_FILES: &[LocalModelFile] = &[
 
 /// Model for a local engine. Unknown or legacy values fall back to the default engine.
 fn local_model_file(engine: &str) -> &'static LocalModelFile {
-    LOCAL_MODEL_FILES
-        .iter()
-        .find(|model| model.engine == engine)
+    let find = |key: &str| LOCAL_MODEL_FILES.iter().find(|model| model.engine == key);
+    find(engine)
+        .or_else(|| find(paths::DEFAULT_ENGINE))
         .unwrap_or(&QWEN3_ASR_06_MODEL)
 }
 

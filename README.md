@@ -37,10 +37,10 @@ Basic local dictation works without an LLM account. For rewriting, translation o
 
 | Engine | Processing | Setup |
 |:--|:--|:--|
+| **Parakeet TDT 0.6B v2 Q8** | Local · CUDA / Vulkan / CPU | Download ~730 MB; English dictation; default. |
 | **Qwen3-ASR 0.6B Q8** | Local · CUDA / Vulkan / CPU | Download ~850 MB; multilingual dictation. |
 | **Qwen3-ASR 1.7B Q8** | Local · CUDA / Vulkan / CPU | Download ~2.19 GB; larger multilingual model. |
 | **Parakeet Unified EN 0.6B Q8** | Local · CUDA / Vulkan / CPU | Download ~731 MB; English dictation. |
-| **Parakeet TDT 0.6B v2 Q8** | Local · CUDA / Vulkan / CPU | Download ~730 MB; English dictation. |
 | **Canary-Qwen 2.5B Q8** | Local · CUDA / Vulkan / CPU | Download ~2.80 GB; English dictation without punctuation. |
 | **Confucius4-R2T2 Q8** | Local · CUDA / CPU | Download ~2.48 GB; native streaming with language and topic hints. |
 | **GLM-ASR** | Cloud · final results | API key and region. |

@@ -457,7 +457,7 @@ def main(engine=None):
         parser = argparse.ArgumentParser()
         parser.add_argument(
             "--engine",
-            default="qwen3-asr-0.6b",
+            default="parakeet-tdt-0.6b-v2",
             choices=sorted(LOCAL_ASR_MODELS),
         )
         args = parser.parse_args()
