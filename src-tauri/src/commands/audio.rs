@@ -178,6 +178,15 @@ pub(crate) async fn start_recording_with_start_owner(
     let interim_cache: Arc<parking_lot::Mutex<Option<crate::state::InterimCache>>> =
         Arc::new(parking_lot::Mutex::new(None));
 
+    let context_sources = crate::state::user_profile::ContextSources::default();
+    let mut context_capture = context_sources.enabled().then(|| {
+        let app = app_handle.clone();
+        let sources = context_sources.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::services::context_awareness::capture(&app, sources, paste_target)
+        })
+    });
+
     let capture_task = {
         let capture_stop = stop_flag.clone();
         let capture_samples = samples.clone();
@@ -209,6 +218,8 @@ pub(crate) async fn start_recording_with_start_owner(
     if stop_flag.load(Ordering::Acquire) {
         if let Ok((audio_thread, actual_sample_rate)) = capture_result {
             audio_service::discard_recording(RecordingSession {
+                context_capture: context_capture.take(),
+                context_sources: context_sources.clone(),
                 session_id,
                 subtitle_show_gen: show_gen,
                 trigger,
@@ -321,6 +332,8 @@ pub(crate) async fn start_recording_with_start_owner(
     );
 
     let mut session = Some(RecordingSession {
+        context_capture: context_capture.take(),
+        context_sources,
         session_id,
         subtitle_show_gen: show_gen,
         trigger,

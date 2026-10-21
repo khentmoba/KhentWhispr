@@ -28,6 +28,7 @@ export default function AppNavigation({ view, onNavigate, updateAvailable = fals
             key={destination}
             type="button"
             className="app-nav-item"
+            data-destination={destination}
             aria-current={view === destination ? "page" : undefined}
             onClick={() => onNavigate(destination)}
           >
@@ -37,10 +38,7 @@ export default function AppNavigation({ view, onNavigate, updateAvailable = fals
           </button>
         ))}
       </nav>
-      <div className="sidebar-note">
-        <span className="sidebar-note-rule" />
-        <p>A little less typing.<br />A little more flow.</p>
-      </div>
+      <div className="sidebar-note"><span className="sidebar-note-rule" /><p>Speak freely.<br /><span>Stay in your flow.</span></p></div>
     </aside>
   );
 }

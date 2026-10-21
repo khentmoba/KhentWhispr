@@ -1,7 +1,7 @@
 # Privacy policy
 
 This describes the Windows desktop application, not the privacy practices of
-services you choose to connect. Last reviewed: October 7, 2026.
+services you choose to connect. Last reviewed: October 22, 2026.
 
 ## Data processed on your computer
 
@@ -47,6 +47,26 @@ or logged; only the learned word correction is stored in your local profile.
 You can remove these rules in Settings under Correction Rules. Like other
 correction rules, learned words may subsequently be included in enabled cloud
 processing requests.
+
+## Text context awareness
+
+Application/input-field text, selected text, and clipboard text are built-in context
+sources for both Dictation and Assistant. All three are active automatically,
+including for existing profiles. There are no per-source switches in the UI.
+Available text is included with AI processing requests to your configured provider;
+local speech recognition itself does not send these references to a provider.
+
+Application and selection capture use Windows accessibility APIs when recording
+starts, while the original target window remains focused. Password fields and
+SpeakFlow's own process are excluded. Unsupported or inaccessible fields are
+skipped. Each source is limited to 4,000 characters. Clipboard text is captured at
+startup and refreshed at the end of recording before SpeakFlow writes output to
+it, provided the recording is still the latest session.
+
+Context is held for that recording and is not saved as raw context in transcription
+history. Existing application metadata and screenshot-context settings remain
+separate. A provider may retain submitted context under its own policy; AI output
+may also quote or incorporate references into the resulting transcript.
 
 ## Network requests
 
