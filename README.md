@@ -42,6 +42,7 @@ Basic local dictation works without an LLM account. For rewriting, translation o
 | **Qwen3-ASR 1.7B Q8** | Local · CUDA / Vulkan / CPU | Download ~2.19 GB; larger multilingual model. |
 | **Parakeet Unified EN 0.6B Q8** | Local · CUDA / Vulkan / CPU | Download ~731 MB; English dictation. |
 | **Canary-Qwen 2.5B Q8** | Local · CUDA / Vulkan / CPU | Download ~2.80 GB; English dictation without punctuation. |
+| **Cohere Transcribe Q8** | Local · CUDA / Vulkan / CPU | Download ~2.41 GB; English and 13 other languages. |
 | **Confucius4-R2T2 Q8** | Local · CUDA / CPU | Download ~2.48 GB; native streaming with language and topic hints. |
 | **GLM-ASR** | Cloud · final results | API key and region. |
 | **Alibaba DashScope** | Cloud · final results | API key, region and model. |
@@ -111,6 +112,6 @@ See the [Code signing policy](docs/code-signing.md).
 
 [Build & troubleshoot](docs/development.md) · [Release procedure](docs/releasing.md) · [R2T2 backend](docs/r2t2-native.md) · [Formal verification](formal/README.md)
 
-Built with Tauri, React and Rust, using Qwen3-ASR, Parakeet and Canary-Qwen through transcribe.cpp, Confucius4-R2T2 through audio.cpp, and FireRedVAD.
+Built with Tauri, React and Rust, using Qwen3-ASR, Parakeet, Canary-Qwen and Cohere Transcribe through transcribe.cpp, Confucius4-R2T2 through audio.cpp, and FireRedVAD.
 
 SpeakFlow is open-source software under [GPL-3.0-only](LICENSE). Third-party code and models retain their own terms; see [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

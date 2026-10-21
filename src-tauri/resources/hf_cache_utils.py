@@ -52,11 +52,22 @@ CANARY_QWEN_ASR_MODELS = {
     },
 }
 
+COHERE_ASR_MODELS = {
+    "cohere-transcribe-03-2026": {
+        "repo_id": "handy-computer/cohere-transcribe-03-2026-gguf",
+        "filename": "cohere-transcribe-03-2026-Q8_0.gguf",
+        "revision": "7353b6040bdc1be9e5a3823d99d5fe12afe88264",
+        "size": 2_410_655_232,
+        "sha256": "931916663432fd895423a4291a8400221802b288967ca2d435fc5e3141c9e71e",
+    },
+}
+
 # All families run through transcribe.cpp in the same resident server.
 TRANSCRIBE_CPP_ASR_MODELS = {
     **QWEN3_ASR_MODELS,
     **PARAKEET_ASR_MODELS,
     **CANARY_QWEN_ASR_MODELS,
+    **COHERE_ASR_MODELS,
 }
 
 R2T2_MODEL = {

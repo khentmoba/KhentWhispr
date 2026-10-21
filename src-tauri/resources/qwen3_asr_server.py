@@ -3,8 +3,8 @@
 
 """Low-latency local GGUF ASR server backed by transcribe.cpp.
 
-Serves the Qwen3-ASR, Parakeet and Canary-Qwen engines. All run through the
-same transcribe.cpp session, FireRedVAD front end and offline transcription path.
+Serves the Qwen3-ASR, Parakeet, Canary-Qwen and Cohere Transcribe engines. All
+run through the same transcribe.cpp session, FireRedVAD front end and offline transcription path.
 """
 
 import importlib.metadata
@@ -38,6 +38,7 @@ ENGINE_DISPLAY_NAMES = {
     "parakeet-unified-en-0.6b": "Parakeet Unified EN 0.6B",
     "parakeet-tdt-0.6b-v2": "Parakeet TDT 0.6B v2",
     "canary-qwen-2.5b": "Canary-Qwen 2.5B",
+    "cohere-transcribe-03-2026": "Cohere Transcribe",
 }
 
 

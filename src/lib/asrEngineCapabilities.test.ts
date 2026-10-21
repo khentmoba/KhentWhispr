@@ -12,6 +12,7 @@ describe("ASR engine capabilities", () => {
     ["parakeet-unified-en-0.6b", { execution: "local", final: true, interim: true, downloadSize: "731 MB" }],
     ["parakeet-tdt-0.6b-v2", { execution: "local", final: true, interim: true, downloadSize: "730 MB" }],
     ["canary-qwen-2.5b", { execution: "local", final: true, interim: true, downloadSize: "2.80 GB" }],
+    ["cohere-transcribe-03-2026", { execution: "local", final: true, interim: true, downloadSize: "2.41 GB" }],
     ["glm-asr", { execution: "cloud", final: true, interim: false, downloadSize: null }],
     ["alibaba-asr", { execution: "cloud", final: true, interim: false, downloadSize: null }],
   ] as const)("%s exposes its product capability contract", (engineKey, expected) => {

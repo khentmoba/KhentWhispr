@@ -55,6 +55,7 @@ uv run python src-tauri/resources/download_models.py --engine qwen3-asr-1.7b
 uv run python src-tauri/resources/download_models.py --engine parakeet-unified-en-0.6b
 uv run python src-tauri/resources/download_models.py --engine parakeet-tdt-0.6b-v2
 uv run python src-tauri/resources/download_models.py --engine canary-qwen-2.5b
+uv run python src-tauri/resources/download_models.py --engine cohere-transcribe-03-2026
 uv run python src-tauri/resources/download_models.py --engine confucius4-r2t2
 ```
 

@@ -56,6 +56,13 @@ upstream model is licensed under
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/legalcode.en), and its
 repository metadata states the same license.
 
+## Cohere Transcribe model
+
+The [Cohere Transcribe GGUF](https://huggingface.co/handy-computer/cohere-transcribe-03-2026-gguf)
+is downloaded separately. It is a GGUF port, published by handy-computer, of
+Cohere Labs' cohere-transcribe-03-2026 model. Its repository metadata states
+Apache-2.0. The upstream Cohere Labs card is gated and was not reviewed.
+
 ## Confucius4-R2T2 native runtime and model
 
 [audio.cpp](https://github.com/0xShug0/audio.cpp), copyright 2026 ShugoAI LLC,

@@ -330,6 +330,7 @@ const en = {
     parakeetUnifiedDesc: "English only · FireRedVAD",
     parakeetTdtV2Desc: "English only · recommended · FireRedVAD",
     canaryQwen25Desc: "English only · no punctuation · FireRedVAD",
+    cohereTranscribeDesc: "14 languages · FireRedVAD",
     glmAsrDesc: "Zhipu online ASR",
     alibabaAsrDesc: "Alibaba DashScope Qwen ASR / Omni",
     alibabaAsrLabel: "Alibaba DashScope",

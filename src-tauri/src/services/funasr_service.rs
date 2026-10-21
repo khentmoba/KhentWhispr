@@ -202,6 +202,12 @@ const LOCAL_MODEL_FILES: &[LocalModelFile] = &[
         description: "Canary-Qwen 2.5B Q8 model",
     },
     LocalModelFile {
+        engine: "cohere-transcribe-03-2026",
+        repo_id: "handy-computer/cohere-transcribe-03-2026-gguf",
+        filename: "cohere-transcribe-03-2026-Q8_0.gguf",
+        description: "Cohere Transcribe Q8 model",
+    },
+    LocalModelFile {
         engine: "confucius4-r2t2",
         repo_id: "davidxifeng/Confucius4-R2T2-gguf",
         filename: "r2t2-q8_0.gguf",

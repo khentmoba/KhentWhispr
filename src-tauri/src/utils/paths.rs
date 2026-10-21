@@ -77,6 +77,7 @@ pub const LOCAL_ASR_ENGINES: &[&str] = &[
     "parakeet-unified-en-0.6b",
     "parakeet-tdt-0.6b-v2",
     "canary-qwen-2.5b",
+    "cohere-transcribe-03-2026",
     "confucius4-r2t2",
 ];
 
@@ -106,6 +107,7 @@ pub fn is_transcribe_cpp_engine(engine: &str) -> bool {
             | "parakeet-unified-en-0.6b"
             | "parakeet-tdt-0.6b-v2"
             | "canary-qwen-2.5b"
+            | "cohere-transcribe-03-2026"
     )
 }
 
