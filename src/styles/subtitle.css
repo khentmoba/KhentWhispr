@@ -104,6 +104,13 @@ body,
   box-shadow: 0 8px 28px rgba(32, 54, 46, 0.12);
 }
 
+/* Dark theme capsule — Hex/Wispr Flow inspired subtle electric glow and depth */
+[data-theme="dark"] .subtitle-capsule {
+  background: var(--color-bg-elevated);
+  border-color: rgba(0, 210, 247, 0.28);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 210, 247, 0.14);
+}
+
 /* subtitle-text and subtitle-hint now use CSS vars that auto-switch per theme */
 
 /* Fade-out state */

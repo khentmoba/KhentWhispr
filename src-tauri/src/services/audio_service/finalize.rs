@@ -172,7 +172,20 @@ fn resolve_recording_app_profile(
 ) -> ResolvedAppProfile {
     match foreground_app {
         Some(app) if !app.process_name.trim().is_empty() => {
-            profile.resolve_app_profile(&app.process_name, &app.window_title)
+            let direct = profile.resolve_app_profile(&app.process_name, &app.window_title);
+            if direct.rule_name.is_some() {
+                return direct;
+            }
+            if let Some(domain) = crate::services::browser_domain::detect_active_browser_domain(
+                &app.process_name,
+                &app.window_title,
+            ) {
+                let domain_profile = profile.resolve_app_profile(&domain, &app.window_title);
+                if domain_profile.rule_name.is_some() {
+                    return domain_profile;
+                }
+            }
+            direct
         }
         // 无法确认进程身份时，不能确定用户是否为该应用配置了隐私规则。
         // 仅关闭会捕获或持久化内容的功能；听写和显式助手请求仍可继续。
@@ -848,6 +861,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
 }
 
 pub async fn discard_recording(session: RecordingSession) {
+    crate::services::audio_service::restore_audio();
     // 中止本会话持有的 grab handle（spawn_blocking 不可抢占，但 abort 会让
     // JoinHandle 提前 detach，结果被丢弃，不会影响后续会话）。
     if let Some(grab) = session.edit_grab {
@@ -1253,6 +1267,7 @@ async fn do_paste(
     session_id: u64,
     target_window: Option<isize>,
 ) {
+    crate::commands::clipboard::set_last_pasted_text(text);
     let state = app.state::<AppState>();
     {
         let _recording = state.recording.recording.lock();
