@@ -35,7 +35,7 @@ pub(crate) fn uses_deepseek_v4_responses(endpoint: &LlmEndpoint) -> bool {
         && endpoint.provider == "deepseek"
         && matches!(
             endpoint.model.as_str(),
-            "deepseek-v4-flash" | "deepseek-v4-pro"
+            "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4-pro"
         )
 }
 
@@ -53,22 +53,6 @@ pub(crate) fn responses_api_url(api_url: &str) -> String {
         format!("{}/responses", &trimmed[..trimmed.len() - suffix.len()])
     } else {
         format!("{trimmed}/responses")
-    }
-}
-
-fn uses_openai_chat_completions_api(endpoint: &LlmEndpoint) -> bool {
-    endpoint.api_format == ApiFormat::OpenaiCompat
-        && endpoint.api_url.contains("/chat/completions")
-        && llm_provider::is_openai_like_endpoint(endpoint)
-}
-
-pub(crate) fn chat_output_token_limit_key(endpoint: &LlmEndpoint) -> &'static str {
-    if uses_openai_chat_completions_api(endpoint)
-        || llm_provider::is_cerebras_like_endpoint(endpoint)
-    {
-        "max_completion_tokens"
-    } else {
-        "max_tokens"
     }
 }
 

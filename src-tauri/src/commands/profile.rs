@@ -322,7 +322,7 @@ pub async fn remove_hot_word(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn set_llm_provider_config(
-    app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     active: String,
     custom_base_url: Option<String>,
@@ -399,7 +399,6 @@ pub async fn set_llm_provider_config(
             profile.llm_provider.custom_model = normalized_model.clone();
         }
     });
-    llm_provider::sync_runtime_api_key(&app_handle, state.inner());
     Ok(())
 }
 
@@ -688,7 +687,7 @@ pub async fn update_custom_provider(
 
 #[tauri::command]
 pub async fn remove_custom_provider(
-    app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
@@ -702,7 +701,6 @@ pub async fn remove_custom_provider(
             profile.llm_provider.assistant_provider = None;
         }
     });
-    llm_provider::sync_runtime_api_key(&app_handle, state.inner());
     Ok(())
 }
 
@@ -822,7 +820,7 @@ pub async fn export_user_profile(
 
 #[tauri::command]
 pub async fn import_user_profile(
-    app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     json_data: String,
 ) -> Result<(), String> {
@@ -835,7 +833,6 @@ pub async fn import_user_profile(
     profile_service::save_profile_async(state.inner())
         .await
         .map_err(|e| format!("Failed to save profile: {}", e))?;
-    llm_provider::sync_runtime_api_key(&app_handle, state.inner());
     Ok(())
 }
 

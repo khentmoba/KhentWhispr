@@ -37,7 +37,7 @@ export function useAsrEngineSettings({
   const [onlineAsrUrl, setOnlineAsrUrl] = useState("");
   const [onlineAsrRegionLoading, setOnlineAsrRegionLoading] = useState(false);
   const [alibabaAsrModelSaving, setAlibabaAsrModelSaving] = useState(false);
-  const [alibabaAsrModel, setAlibabaAsrModelState] = useState("qwen3-asr-flash");
+  const [alibabaAsrModel, setAlibabaAsrModelState] = useState("qwen-audio-3.1-asr-flash");
   const [alibabaAsrModels, setAlibabaAsrModelsState] = useState<readonly string[]>([]);
   const [alibabaAsrModelsSource, setAlibabaAsrModelsSource] = useState<"live" | "fallback">("fallback");
   const [alibabaAsrModelsLoading, setAlibabaAsrModelsLoading] = useState(false);
