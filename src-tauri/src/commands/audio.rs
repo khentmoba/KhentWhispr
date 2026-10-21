@@ -379,6 +379,8 @@ pub(crate) async fn start_recording_with_start_owner(
         emit_recording_state(&app_handle, &snapshot, false, true, false, None);
     }
 
+    crate::services::audio_service::duck_audio();
+
     if state.ui.sound_enabled.load(Ordering::Acquire) {
         match trigger.mode() {
             RecordingMode::Dictation => crate::utils::sound::play_start_sound(),
@@ -447,6 +449,7 @@ pub(crate) async fn stop_recording_inner(
     };
 
     audio_service::flush_pending_paste(&app_handle);
+    crate::services::audio_service::restore_audio();
 
     let session = match recording {
         None => {

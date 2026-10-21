@@ -299,6 +299,28 @@ pub fn should_restore_clipboard_after_paste(
     current_clipboard_text == Some(paste_text)
 }
 
+static LAST_PASTED_TEXT: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
+
+pub fn set_last_pasted_text(text: &str) {
+    if !text.trim().is_empty() {
+        *LAST_PASTED_TEXT.lock() = Some(text.to_string());
+    }
+}
+
+pub fn get_last_pasted_text() -> Option<String> {
+    LAST_PASTED_TEXT.lock().clone()
+}
+
+#[tauri::command]
+pub async fn paste_last_dictation(app_handle: tauri::AppHandle) -> Result<bool, AppError> {
+    let text = match get_last_pasted_text() {
+        Some(t) => t,
+        None => return Ok(false),
+    };
+    paste_text_impl(&app_handle, &text, "sendInput").await?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn paste_text(
     app_handle: tauri::AppHandle,
@@ -574,6 +596,22 @@ mod tests {
             Some("new user clipboard text"),
             "dictated clipboard text"
         ));
+    }
+
+    #[test]
+    fn last_pasted_text_storage_and_retrieval() {
+        super::set_last_pasted_text("Hello, SpeakFlow!");
+        assert_eq!(
+            super::get_last_pasted_text().as_deref(),
+            Some("Hello, SpeakFlow!")
+        );
+
+        // Whitespace only is rejected
+        super::set_last_pasted_text("   ");
+        assert_eq!(
+            super::get_last_pasted_text().as_deref(),
+            Some("Hello, SpeakFlow!")
+        );
     }
 
     #[test]

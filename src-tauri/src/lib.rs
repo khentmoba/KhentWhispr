@@ -274,6 +274,7 @@ pub fn run() {
             commands::funasr::pick_folder,
             commands::clipboard::copy_to_clipboard,
             commands::clipboard::paste_text,
+            commands::clipboard::paste_last_dictation,
             commands::codex_oauth::login_openai_codex_oauth,
             commands::codex_oauth::start_openai_codex_oauth_device_code,
             commands::codex_oauth::complete_openai_codex_oauth_device_code,

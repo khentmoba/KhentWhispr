@@ -2,7 +2,7 @@
 use crate::commands::audio::{
     RECORDING_ALREADY_ACTIVE_ERROR, RECORDING_NOT_READY_ERROR, RECORDING_START_CANCELLED_ERROR,
 };
-use crate::state::{AppState, RecordingTrigger};
+use crate::state::{AppState, RecordingSlot, RecordingTrigger};
 use crate::utils::AppError;
 #[cfg(target_os = "windows")]
 use std::sync::atomic::AtomicU32;
@@ -21,10 +21,11 @@ use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
-    VK_BACK, VK_CAPITAL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_HOME, VK_INSERT,
-    VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN,
-    VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SPACE, VK_TAB, VK_UP,
+    GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
+    MOD_SHIFT, MOD_WIN, VK_BACK, VK_CAPITAL, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE,
+    VK_F1, VK_HOME, VK_INSERT, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU,
+    VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
+    VK_SPACE, VK_TAB, VK_UP,
 };
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -87,6 +88,8 @@ fn classify_backend(spec: &HotkeySpec) -> HotkeyBackend {
 enum DispatchEvent {
     Press(Arc<UnifiedHookState>, String),
     Release(Arc<UnifiedHookState>, String),
+    Cancel(Arc<UnifiedHookState>, String),
+    PasteLast(Arc<UnifiedHookState>),
 }
 
 #[cfg(target_os = "windows")]
@@ -116,6 +119,37 @@ fn dispatch_channel() -> &'static std::sync::mpsc::Sender<DispatchEvent> {
                                 &msg,
                                 state.spec.label(),
                             );
+                        }
+                        DispatchEvent::Cancel(state, msg) => {
+                            log::info!("{msg}");
+                            let app = state.app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let app_state = app.state::<AppState>();
+                                let recording = app_state.recording.recording.lock().take();
+                                if let Some(slot) = recording {
+                                    match slot {
+                                        RecordingSlot::Starting(pending) => {
+                                            pending.stop_flag.store(true, Ordering::Release);
+                                            pending.stop_notify.notify_waiters();
+                                        }
+                                        RecordingSlot::Active(session) => {
+                                            session.stop_flag.store(true, Ordering::Release);
+                                            crate::services::audio_service::discard_recording(
+                                                session,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                crate::services::audio_service::restore_audio();
+                                crate::commands::window::hide_subtitle_window_inner(&app).ok();
+                            });
+                        }
+                        DispatchEvent::PasteLast(state) => {
+                            let app = state.app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _ = crate::commands::clipboard::paste_last_dictation(app).await;
+                            });
                         }
                     }
                 }
@@ -561,6 +595,10 @@ struct UnifiedHookState {
     key_down: Vec<AtomicBool>,
     /// Hotkey combination currently active
     activated: AtomicBool,
+    /// Hotkey locked via double-tap (hands-free recording)
+    locked: AtomicBool,
+    /// Timestamp of last release in ms for double-tap detection
+    last_release_ms: AtomicU64,
     /// A non-hotkey key was pressed during modifier-only hold → taint (cancel)
     tainted: AtomicBool,
     /// A modifier key leaked to OS before the combo was complete
@@ -765,6 +803,59 @@ unsafe extern "system" fn unified_low_level_keyboard_proc(
 
     let vk = keyboard.vkCode;
 
+    // 1. Universal Escape Abort: Cancel active recording immediately without pasting
+    if vk == VK_ESCAPE as u32 && is_key_down {
+        let any_active = [
+            bundle.dictation.as_ref(),
+            bundle.translation.as_ref(),
+            bundle.assistant.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|s| s.activated.load(Ordering::Acquire) || s.locked.load(Ordering::Acquire));
+
+        if any_active {
+            for state in [
+                bundle.dictation.as_ref(),
+                bundle.translation.as_ref(),
+                bundle.assistant.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                state.locked.store(false, Ordering::Release);
+                state.activated.store(false, Ordering::Release);
+                send_dispatch(DispatchEvent::Cancel(
+                    state.clone(),
+                    "Escape pressed: cancelling active recording".to_string(),
+                ));
+            }
+            return 1;
+        }
+    }
+
+    // 2. Paste Last Dictation: Ctrl + Alt + V global shortcut
+    if vk == 0x56 /* VK_V */ && is_key_down {
+        let ctrl_down = unsafe { (GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8000) != 0 };
+        let alt_down = unsafe { (GetAsyncKeyState(VK_MENU as i32) as u16 & 0x8000) != 0 };
+        let shift_down = unsafe { (GetAsyncKeyState(VK_SHIFT as i32) as u16 & 0x8000) != 0 };
+        let win_down = unsafe {
+            (GetAsyncKeyState(VK_LWIN as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(VK_RWIN as i32) as u16 & 0x8000) != 0
+        };
+        if ctrl_down && alt_down && !shift_down && !win_down {
+            if let Some(state) = bundle
+                .dictation
+                .as_ref()
+                .or(bundle.translation.as_ref())
+                .or(bundle.assistant.as_ref())
+            {
+                send_dispatch(DispatchEvent::PasteLast(state.clone()));
+                return 1;
+            }
+        }
+    }
+
     let mut swallow = false;
     for state in [
         bundle.dictation.as_ref(),
@@ -830,11 +921,27 @@ fn handle_modifier_only_event(
 
             let all_down = state.key_down.iter().all(|b| b.load(Ordering::Acquire));
             if all_down && !was_activated && !state.tainted.load(Ordering::Acquire) {
-                state.activated.store(true, Ordering::Release);
-                send_dispatch(DispatchEvent::Press(
-                    state.clone(),
-                    format!("{} 按下，开始录音", label),
-                ));
+                let is_locked = state.locked.load(Ordering::Acquire);
+                if is_locked {
+                    state.locked.store(false, Ordering::Release);
+                    state.activated.store(false, Ordering::Release);
+                    send_dispatch(DispatchEvent::Release(
+                        state.clone(),
+                        format!("{} 解锁停止录音", label),
+                    ));
+                } else {
+                    let now = now_unix_ms();
+                    let last_rel = state.last_release_ms.load(Ordering::Acquire);
+                    if now.saturating_sub(last_rel) < 350 {
+                        log::info!("Double-tap lock engaged for {}", label);
+                        state.locked.store(true, Ordering::Release);
+                    }
+                    state.activated.store(true, Ordering::Release);
+                    send_dispatch(DispatchEvent::Press(
+                        state.clone(),
+                        format!("{} 按下，开始录音", label),
+                    ));
+                }
             }
         } else if !is_altgr_ctrl_companion {
             // Non-required key pressed → taint
@@ -855,11 +962,18 @@ fn handle_modifier_only_event(
             }
 
             if was_activated {
-                state.activated.store(false, Ordering::Release);
-                send_dispatch(DispatchEvent::Release(
-                    state.clone(),
-                    format!("{} 松开，停止录音", label),
-                ));
+                if state.locked.load(Ordering::Acquire) {
+                    // Double-tap lock is active; keep recording hands-free
+                } else {
+                    state
+                        .last_release_ms
+                        .store(now_unix_ms(), Ordering::Release);
+                    state.activated.store(false, Ordering::Release);
+                    send_dispatch(DispatchEvent::Release(
+                        state.clone(),
+                        format!("{} 松开，停止录音", label),
+                    ));
+                }
             }
         }
 
@@ -934,32 +1048,55 @@ fn handle_standard_event(
 
     if is_key_down && is_main_key {
         let was_activated = state.activated.load(Ordering::Acquire);
-        if all_modifiers_down(modifiers) && !was_activated {
-            state.activated.store(true, Ordering::Release);
-            send_dispatch(DispatchEvent::Press(
-                state.clone(),
-                format!("{} 按下，开始录音", label),
-            ));
+        if all_modifiers_down(modifiers) {
+            let is_locked = state.locked.load(Ordering::Acquire);
+            if is_locked {
+                state.locked.store(false, Ordering::Release);
+                state.activated.store(false, Ordering::Release);
+                send_dispatch(DispatchEvent::Release(
+                    state.clone(),
+                    format!("{} 解锁停止录音", label),
+                ));
+            } else if !was_activated {
+                let now = now_unix_ms();
+                let last_rel = state.last_release_ms.load(Ordering::Acquire);
+                if now.saturating_sub(last_rel) < 350 {
+                    log::info!("Double-tap lock engaged for {}", label);
+                    state.locked.store(true, Ordering::Release);
+                }
+                state.activated.store(true, Ordering::Release);
+                send_dispatch(DispatchEvent::Press(
+                    state.clone(),
+                    format!("{} 按下，开始录音", label),
+                ));
+            }
         }
     } else if !is_key_down && state.activated.load(Ordering::Acquire) {
         let combo_broken = is_main_key || !all_modifiers_down(modifiers);
         if combo_broken {
-            state.activated.store(false, Ordering::Release);
-            send_dispatch(DispatchEvent::Release(
-                state.clone(),
-                format!("{} 松开，停止录音", label),
-            ));
+            if state.locked.load(Ordering::Acquire) {
+                // Double-tap lock is active; keep recording hands-free
+            } else {
+                state
+                    .last_release_ms
+                    .store(now_unix_ms(), Ordering::Release);
+                state.activated.store(false, Ordering::Release);
+                send_dispatch(DispatchEvent::Release(
+                    state.clone(),
+                    format!("{} 松开，停止录音", label),
+                ));
 
-            // Clean up leaked modifier state in one read
-            let leaked = state.modifier_leaked.swap(false, Ordering::AcqRel);
-            if leaked {
-                if modifiers.has_super() {
-                    send_synthetic_key_up(VK_LWIN);
-                    send_synthetic_key_up(VK_RWIN);
-                }
-                if modifiers.has_alt() {
-                    send_synthetic_key_up(VK_LMENU);
-                    send_synthetic_key_up(VK_RMENU);
+                // Clean up leaked modifier state in one read
+                let leaked = state.modifier_leaked.swap(false, Ordering::AcqRel);
+                if leaked {
+                    if modifiers.has_super() {
+                        send_synthetic_key_up(VK_LWIN);
+                        send_synthetic_key_up(VK_RWIN);
+                    }
+                    if modifiers.has_alt() {
+                        send_synthetic_key_up(VK_LMENU);
+                        send_synthetic_key_up(VK_RMENU);
+                    }
                 }
             }
         }
@@ -1477,6 +1614,8 @@ fn build_hook_state_with_backend(
             .map(|_| AtomicBool::new(false))
             .collect(),
         activated: AtomicBool::new(false),
+        locked: AtomicBool::new(false),
+        last_release_ms: AtomicU64::new(0),
         tainted: AtomicBool::new(false),
         modifier_leaked: AtomicBool::new(false),
     })

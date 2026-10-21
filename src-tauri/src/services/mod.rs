@@ -2,6 +2,8 @@ pub mod ai_polish_service;
 pub mod alibaba_asr_service;
 pub mod assistant_service;
 pub mod audio_service;
+pub mod bing_search_service;
+pub mod browser_domain;
 pub mod codex_oauth_service;
 pub mod download_service;
 pub mod external_correction_service;
@@ -20,6 +22,7 @@ pub mod qwen_hotword_service;
 pub mod screen_capture_service;
 pub mod screen_vision_service;
 pub mod selection_service;
+pub mod text_transform;
 pub mod web_search_service;
 
 #[cfg(test)]
@@ -42,5 +45,3 @@ mod llm_reasoning_negotiation_tests;
 mod openai_fast_mode_oauth_tests;
 #[cfg(test)]
 mod openrouter_regression_tests;
-
-pub mod bing_search_service;

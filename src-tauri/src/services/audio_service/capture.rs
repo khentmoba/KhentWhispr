@@ -18,6 +18,58 @@ use crate::utils::AppError;
 pub(crate) const MAX_RECORD_SAMPLES: usize = 30 * 60 * 48_000;
 const AUDIO_CAPTURE_TIMEOUT_JOIN_MS: u64 = 500;
 
+/// Pre-roll 缓冲时长（毫秒）。避免用户按键和开口之间的极短延迟导致首音节被裁切。
+#[allow(dead_code)]
+pub(crate) const PRE_ROLL_DURATION_MS: u32 = 300;
+
+/// 环形 Pre-roll 缓冲区，保留最新的固定时长音频样本。
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct PreRollBuffer {
+    buffer: Vec<i16>,
+    capacity: usize,
+}
+
+#[allow(dead_code)]
+impl PreRollBuffer {
+    pub fn new(sample_rate: u32, duration_ms: u32) -> Self {
+        let capacity = ((sample_rate as usize) * (duration_ms as usize)) / 1000;
+        Self {
+            buffer: Vec::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    pub fn push_samples(&mut self, samples: &[i16]) {
+        if self.capacity == 0 || samples.is_empty() {
+            return;
+        }
+        if samples.len() >= self.capacity {
+            self.buffer.clear();
+            self.buffer
+                .extend_from_slice(&samples[samples.len() - self.capacity..]);
+        } else {
+            let overflow = (self.buffer.len() + samples.len()).saturating_sub(self.capacity);
+            if overflow > 0 {
+                self.buffer.drain(0..overflow);
+            }
+            self.buffer.extend_from_slice(samples);
+        }
+    }
+
+    pub fn take(&mut self) -> Vec<i16> {
+        std::mem::take(&mut self.buffer)
+    }
+
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+}
+
 #[cfg(target_os = "windows")]
 const WINDOWS_NATIVE_CAPTURE_INIT_TIMEOUT_MS: u64 = 2_000;
 #[cfg(target_os = "windows")]
@@ -723,6 +775,23 @@ mod cap_tests {
         assert_eq!(*captured_samples.lock(), vec![1, 2, 3, 10, 11]);
         assert_eq!(captured_samples.lock().len(), 5);
         assert!(probe_samples.lock().is_empty());
+    }
+
+    #[test]
+    fn pre_roll_buffer_maintains_fixed_duration_and_retains_latest_samples() {
+        let mut preroll = super::PreRollBuffer::new(16_000, 300); // 4800 samples capacity
+        assert_eq!(preroll.capacity, 4800);
+        assert_eq!(preroll.len(), 0);
+
+        preroll.push_samples(&[1, 2, 3]);
+        assert_eq!(preroll.len(), 3);
+
+        // Push more samples than capacity: it should keep only the latest 4800
+        let big_chunk: Vec<i16> = (0..5000).map(|i| i as i16).collect();
+        preroll.push_samples(&big_chunk);
+        assert_eq!(preroll.len(), 4800);
+        assert_eq!(preroll.take()[0], 200); // 5000 - 4800 = 200
+        assert_eq!(preroll.len(), 0);
     }
 
     #[cfg(target_os = "windows")]

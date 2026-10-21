@@ -69,6 +69,7 @@ macro_rules! build_input_stream_dispatch {
 
 // ---------- 子模块 ----------
 
+pub(crate) mod audio_ducking;
 mod capture;
 mod finalize;
 mod interim;
@@ -92,6 +93,7 @@ mod windows_capture;
 // 保持外部引用点零改动：
 // `use crate::services::audio_service::X` 在拆分前后语义相同。
 
+pub use audio_ducking::{duck_audio, restore_audio};
 pub use capture::{list_input_devices_sync, spawn_audio_capture_thread, spawn_waveform_emitter};
 pub(crate) use finalize::flush_pending_paste;
 pub use finalize::{discard_recording, finalize_recording};
