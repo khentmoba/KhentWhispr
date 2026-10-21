@@ -8,7 +8,6 @@ use tauri_plugin_keyring::KeyringExt;
 use crate::services::codex_oauth_service;
 use crate::services::grok_build_oauth_service;
 use crate::state::user_profile::{ApiFormat, CustomProvider, LlmProviderConfig, LlmReasoningMode};
-use crate::state::AppState;
 
 /// LLM 提供商配置
 pub struct LlmEndpoint {
@@ -26,10 +25,19 @@ const OPENAI: &str = "openai";
 const XAI: &str = "xai";
 const DEEPSEEK: &str = "deepseek";
 const SILICONFLOW: &str = "siliconflow";
+const OPENROUTER: &str = "openrouter";
 const CUSTOM: &str = "custom";
 
 /// 预置服务商列表（用于判断是否为预置）
-const PRESET_PROVIDERS: &[&str] = &[CEREBRAS, OPENAI, XAI, DEEPSEEK, SILICONFLOW, CUSTOM];
+const PRESET_PROVIDERS: &[&str] = &[
+    CEREBRAS,
+    OPENAI,
+    XAI,
+    DEEPSEEK,
+    SILICONFLOW,
+    OPENROUTER,
+    CUSTOM,
+];
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LlmReasoningSupport {
@@ -65,12 +73,17 @@ static AUTO_REASONING_STRATEGY_CACHE: OnceLock<
 
 fn default_endpoint_parts(provider: &str) -> (&'static str, &'static str, u64) {
     match provider {
-        OPENAI => ("https://api.openai.com", "gpt-4.1-mini", 10),
-        XAI => ("https://api.x.ai", "grok-4.6", 10),
-        DEEPSEEK => ("https://api.deepseek.com", "deepseek-v4-flash", 10),
-        SILICONFLOW => ("https://api.siliconflow.cn", "Qwen/Qwen3-32B", 10),
-        CUSTOM => ("http://127.0.0.1:8000", "gpt-4.1-mini", 10),
-        _ => ("https://api.cerebras.ai", "gpt-oss-120b", 5),
+        OPENAI => ("https://api.openai.com", "gpt-6-luna", 10),
+        XAI => ("https://api.x.ai", "grok-4.7", 10),
+        DEEPSEEK => ("https://api.deepseek.com", "deepseek-flash", 10),
+        SILICONFLOW => ("https://api.siliconflow.cn", "Qwen/Qwen3.8-27B", 10),
+        OPENROUTER => (
+            "https://openrouter.ai/api",
+            "~deepseek/deepseek-flash-latest",
+            10,
+        ),
+        CUSTOM => ("http://127.0.0.1:8000", "gpt-6-luna", 10),
+        _ => ("https://api.cerebras.ai", "qwen-3.8-27b", 5),
     }
 }
 
@@ -212,7 +225,7 @@ fn endpoint_for_provider(
             provider: provider.to_string(),
             api_url,
             model: if model.trim().is_empty() {
-                "gpt-4.1-mini".to_string()
+                default_endpoint_parts(OPENAI).1.to_string()
             } else {
                 model.to_string()
             },
@@ -268,16 +281,6 @@ pub fn screen_vision_endpoint_for_config(config: &LlmProviderConfig) -> Option<L
     Some(endpoint_for_provider(config, &provider, Some(model)))
 }
 
-pub fn known_image_input_support(endpoint: &LlmEndpoint) -> Option<bool> {
-    // DeepSeek's official V4 Flash/Pro text endpoints do not accept image input.
-    // Keep this provider-scoped so a custom multimodal gateway with a similar
-    // model name can still be probed or tried normally.
-    if endpoint.provider == DEEPSEEK {
-        return Some(false);
-    }
-    None
-}
-
 pub fn image_support_probe_url(endpoint: &LlmEndpoint) -> Option<String> {
     if endpoint.api_format != ApiFormat::OpenaiCompat {
         return None;
@@ -290,7 +293,9 @@ pub fn image_support_probe_url(endpoint: &LlmEndpoint) -> Option<String> {
 
     let models_url = normalize_models_url(Some(&endpoint.api_url), &endpoint.api_url);
     let mut url = reqwest::Url::parse(&models_url).ok()?;
-    {
+    // DeepSeek publishes model capabilities through its model list endpoint.
+    // https://api-docs.deepseek.com/api/list-models/
+    if endpoint.provider != DEEPSEEK {
         let mut segments = url.path_segments_mut().ok()?;
         segments.pop_if_empty();
         segments.push(model);
@@ -363,9 +368,6 @@ pub async fn probe_image_support_from_provider_metadata(
     endpoint: &LlmEndpoint,
     api_key: &str,
 ) -> Option<bool> {
-    if let Some(supported) = known_image_input_support(endpoint) {
-        return Some(supported);
-    }
     if codex_oauth_service::decode_chatgpt_bearer_token(api_key).is_some() {
         return None;
     }
@@ -418,7 +420,23 @@ pub async fn probe_image_support_from_provider_metadata(
             }
         };
 
-        if let Some(supported) = parse_image_input_support_from_model_metadata(&payload) {
+        let metadata = if endpoint.provider == DEEPSEEK {
+            let Some(model) = payload
+                .get("data")
+                .and_then(Value::as_array)
+                .and_then(|models| {
+                    models.iter().find(|model| {
+                        model.get("id").and_then(Value::as_str) == Some(endpoint.model.trim())
+                    })
+                })
+            else {
+                continue;
+            };
+            model
+        } else {
+            &payload
+        };
+        if let Some(supported) = parse_image_input_support_from_model_metadata(metadata) {
             return Some(supported);
         }
     }
@@ -631,7 +649,7 @@ fn grok_supports_disabled_reasoning(model: &str) -> bool {
     tail.starts_with("grok-4.3") || tail.starts_with("grok-3")
 }
 
-/// Grok 4.5/4.6 cannot disable reasoning; omitted effort defaults to high.
+/// Grok 4.5 and later cannot disable reasoning; omitted effort defaults to high.
 fn grok_effort_for_mode(model: &str, mode: LlmReasoningMode) -> Option<&'static str> {
     match mode {
         LlmReasoningMode::Off => {
@@ -658,6 +676,13 @@ fn is_siliconflow_like_endpoint(endpoint: &LlmEndpoint) -> bool {
 
 pub fn is_cerebras_like_endpoint(endpoint: &LlmEndpoint) -> bool {
     endpoint.provider == CEREBRAS || endpoint_host_matches(endpoint, "cerebras.ai")
+}
+
+/// OpenRouter 统一使用 `reasoning` 对象控制思考强度，并与顶层 `reasoning_effort`
+/// 互为简写。按 host 判定，因此预置项与自定义接入都能命中。
+pub fn is_openrouter_like_endpoint(endpoint: &LlmEndpoint) -> bool {
+    endpoint.api_format == ApiFormat::OpenaiCompat
+        && (endpoint.provider == OPENROUTER || endpoint_host_matches(endpoint, "openrouter.ai"))
 }
 
 const GPT5_EFFORTS: &[&str] = &["minimal", "low", "medium", "high"];
@@ -751,6 +776,7 @@ fn supports_siliconflow_reasoning(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
     let tail = normalized.rsplit('/').next().unwrap_or(&normalized);
     normalized.contains("qwen/qwen3-")
+        || tail == "qwen3.8-27b"
         || normalized.contains("qwen/qwq-")
         || normalized.contains("thudm/glm-z1-")
         || normalized.contains("minimaxai/minimax-m2.1")
@@ -767,7 +793,7 @@ fn supports_siliconflow_reasoning(model: &str) -> bool {
 fn supports_cerebras_reasoning(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
     let tail = normalized.rsplit('/').next().unwrap_or(&normalized);
-    tail == "gpt-oss-120b"
+    matches!(tail, "gpt-oss-120b" | "qwen-3.8-27b")
 }
 
 fn supports_deepseek_thinking(model: &str) -> bool {
@@ -775,7 +801,11 @@ fn supports_deepseek_thinking(model: &str) -> bool {
     let tail = normalized.rsplit('/').next().unwrap_or(&normalized);
     matches!(
         tail,
-        "deepseek-v4-flash" | "deepseek-v4-pro" | "deepseek-chat" | "deepseek-reasoner"
+        "deepseek-flash"
+            | "deepseek-v4-flash"
+            | "deepseek-v4-pro"
+            | "deepseek-chat"
+            | "deepseek-reasoner"
     )
 }
 
@@ -789,6 +819,7 @@ enum ReasoningControlKind {
     CerebrasReasoningEffort,
     CerebrasGlmToggle,
     VolcengineThinkingType,
+    OpenRouterReasoning,
     AutoOpenaiCompat,
 }
 
@@ -803,6 +834,7 @@ impl ReasoningControlKind {
             Self::CerebrasReasoningEffort => "cerebras_reasoning_effort",
             Self::CerebrasGlmToggle => "cerebras_disable_reasoning",
             Self::VolcengineThinkingType => "volcengine_thinking_type",
+            Self::OpenRouterReasoning => "openrouter_reasoning",
             Self::AutoOpenaiCompat => "auto_openai_compat_probe",
         }
     }
@@ -813,7 +845,7 @@ impl ReasoningControlKind {
                 "This model supports reasoning effort; Off, Light, Balanced, and Deep map to the corresponding reasoning level."
             }
             Self::XaiReasoningEffort => {
-                "This Grok model supports reasoning.effort; Off and Light map to low (Grok 4.5/4.6 cannot disable thinking and defaults to high when omitted)."
+                "This Grok model supports reasoning.effort; Off and Light map to low (Grok 4.5 and later cannot disable thinking and default to high when omitted)."
             }
             Self::AnthropicThinking => {
                 "This model supports extended thinking and maps levels to thinking + budget_tokens."
@@ -833,6 +865,9 @@ impl ReasoningControlKind {
             Self::VolcengineThinkingType => {
                 "This model supports thinking.type; Off=disabled, Light/Balanced=auto, Deep=enabled."
             }
+            Self::OpenRouterReasoning => {
+                "当前是 OpenRouter 端点，使用统一 reasoning 参数；关闭档下发 reasoning.enabled=false，其余档位映射为 reasoning.effort。"
+            }
             Self::AutoOpenaiCompat => {
                 "OpenAI-compatible backend; automatically probes supported reasoning parameters and caches the working strategy."
             }
@@ -849,6 +884,12 @@ fn reasoning_control_kind(
     if endpoint.api_format == ApiFormat::Anthropic {
         return supports_anthropic_thinking(model)
             .then_some(ReasoningControlKind::AnthropicThinking);
+    }
+
+    // host 优先于模型名启发式：OpenRouter 会上游代理任意厂商模型
+    // （如 doubao/seed-* 会被 is_volcengine_like_endpoint 命中），必须在此提前返回。
+    if is_openrouter_like_endpoint(endpoint) {
+        return Some(ReasoningControlKind::OpenRouterReasoning);
     }
 
     if is_volcengine_like_endpoint(endpoint)
@@ -1228,6 +1269,16 @@ pub fn apply_reasoning_controls(
         }
         (ReasoningControlKind::CerebrasReasoningEffort, _) => {
             let effort = match mode {
+                LlmReasoningMode::Off
+                    if endpoint
+                        .model
+                        .trim()
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|model| model.eq_ignore_ascii_case("qwen-3.8-27b")) =>
+                {
+                    "none"
+                }
                 LlmReasoningMode::Off => return,
                 LlmReasoningMode::Light => "low",
                 LlmReasoningMode::Balanced => "medium",
@@ -1238,6 +1289,17 @@ pub fn apply_reasoning_controls(
         }
         (ReasoningControlKind::CerebrasGlmToggle, _) => {
             body["disable_reasoning"] = serde_json::json!(mode == LlmReasoningMode::Off);
+        }
+        (ReasoningControlKind::OpenRouterReasoning, _) => {
+            // OpenRouter 统一入口：enabled=false 关闭思考，effort 控制强度。
+            let reasoning = match mode {
+                LlmReasoningMode::ProviderDefault => return,
+                LlmReasoningMode::Off => serde_json::json!({ "enabled": false }),
+                LlmReasoningMode::Light => serde_json::json!({ "effort": "low" }),
+                LlmReasoningMode::Balanced => serde_json::json!({ "effort": "medium" }),
+                LlmReasoningMode::Deep => serde_json::json!({ "effort": "high" }),
+            };
+            body["reasoning"] = reasoning;
         }
         (ReasoningControlKind::AutoOpenaiCompat, _) => {
             let Some(strategy) = cached_auto_reasoning_strategy(endpoint, uses_responses_api, mode)
@@ -1332,6 +1394,7 @@ pub fn keyring_user_for_provider(provider: &str) -> String {
         XAI => "xai-api-key".to_string(),
         DEEPSEEK => "deepseek-api-key".to_string(),
         SILICONFLOW => "siliconflow-api-key".to_string(),
+        OPENROUTER => "openrouter-api-key".to_string(),
         CUSTOM => "custom-api-key".to_string(),
         CEREBRAS => "cerebras-api-key".to_string(),
         id => format!("custom-{id}-api-key"),
@@ -1392,8 +1455,8 @@ pub fn build_auth_headers(
 }
 
 /// 保存或删除 API Key：非空则写入密钥环，空则删除
-pub fn save_or_delete_api_key(
-    app_handle: &tauri::AppHandle,
+pub fn save_or_delete_api_key<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     keyring_user: &str,
     api_key: &str,
 ) -> Result<(), String> {
@@ -1445,7 +1508,10 @@ mod credential_persistence_tests {
     }
 }
 
-pub fn load_api_key_for_provider(app_handle: &tauri::AppHandle, provider: &str) -> String {
+pub fn load_api_key_for_provider<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    provider: &str,
+) -> String {
     let keyring_user = keyring_user_for_provider(provider);
     app_handle
         .keyring()
@@ -1455,26 +1521,138 @@ pub fn load_api_key_for_provider(app_handle: &tauri::AppHandle, provider: &str) 
         .unwrap_or_default()
 }
 
-pub fn load_api_key_for_active_provider(app_handle: &tauri::AppHandle, state: &AppState) -> String {
-    load_api_key_for_provider(app_handle, &state.active_llm_provider())
-}
-
-pub fn sync_assistant_api_key(app_handle: &tauri::AppHandle, state: &AppState) {
-    let provider = state.with_profile(|p| p.llm_provider.resolve_assistant_provider());
-    let key = load_api_key_for_provider(app_handle, &provider);
-    state.set_assistant_api_key(key);
-}
-
-pub fn sync_runtime_api_key(app_handle: &tauri::AppHandle, state: &AppState) -> String {
-    let api_key = load_api_key_for_active_provider(app_handle, state);
-    state.set_ai_polish_api_key(api_key.clone());
-    sync_assistant_api_key(app_handle, state);
-    api_key
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_builtin_defaults_apply_to_polish_assistant_and_preview() {
+        for (provider, model, api_url) in [
+            (OPENAI, "gpt-6-luna", "https://api.openai.com/v1/responses"),
+            (XAI, "grok-4.7", "https://api.x.ai/v1/responses"),
+            (
+                CEREBRAS,
+                "qwen-3.8-27b",
+                "https://api.cerebras.ai/v1/chat/completions",
+            ),
+            (
+                SILICONFLOW,
+                "Qwen/Qwen3.8-27B",
+                "https://api.siliconflow.cn/v1/chat/completions",
+            ),
+        ] {
+            let config = LlmProviderConfig {
+                active: provider.to_string(),
+                assistant_use_separate_model: true,
+                assistant_provider: Some(provider.to_string()),
+                ..LlmProviderConfig::default()
+            };
+
+            for endpoint in [
+                endpoint_for_config(&config),
+                assistant_endpoint_for_config(&config),
+                endpoint_for_preview(provider, None, None, ApiFormat::OpenaiCompat),
+            ] {
+                assert_eq!(endpoint.provider, provider);
+                assert_eq!(endpoint.model, model, "provider={provider}");
+                assert_eq!(endpoint.api_url, api_url, "provider={provider}");
+                assert_eq!(endpoint.api_format, ApiFormat::OpenaiCompat);
+            }
+        }
+    }
+
+    #[test]
+    fn current_builtin_defaults_preserve_explicitly_saved_models() {
+        for (provider, model) in [
+            (OPENAI, "gpt-4.1-mini"),
+            (XAI, "grok-4.6"),
+            (CEREBRAS, "gpt-oss-20b"),
+            (SILICONFLOW, "Qwen/Qwen3-32B"),
+        ] {
+            let config = LlmProviderConfig {
+                active: provider.to_string(),
+                custom_model: Some(model.to_string()),
+                assistant_use_separate_model: true,
+                assistant_provider: Some(provider.to_string()),
+                assistant_model: Some(model.to_string()),
+                ..LlmProviderConfig::default()
+            };
+
+            assert_eq!(endpoint_for_config(&config).model, model);
+            assert_eq!(assistant_endpoint_for_config(&config).model, model);
+            assert_eq!(
+                endpoint_for_preview(provider, None, Some(model), ApiFormat::OpenaiCompat).model,
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn empty_custom_models_use_current_openai_default_on_chat_endpoints() {
+        for (provider, base_url, api_url) in [
+            (CUSTOM, None, "http://127.0.0.1:8000/v1/chat/completions"),
+            (
+                "custom-gateway",
+                Some("https://gateway.example/custom/v1"),
+                "https://gateway.example/custom/v1/chat/completions",
+            ),
+        ] {
+            for model in [None, Some(" ")] {
+                let endpoint =
+                    endpoint_for_preview(provider, base_url, model, ApiFormat::OpenaiCompat);
+
+                assert_eq!(endpoint.provider, provider);
+                assert_eq!(endpoint.model, "gpt-6-luna", "provider={provider}");
+                assert_eq!(endpoint.api_url, api_url, "provider={provider}");
+                assert!(!endpoint_uses_responses_api(&endpoint));
+            }
+        }
+    }
+
+    #[test]
+    fn deepseek_defaults_to_canonical_flash_for_polish_and_separate_assistant() {
+        let polish_config = LlmProviderConfig {
+            active: DEEPSEEK.to_string(),
+            ..LlmProviderConfig::default()
+        };
+        let assistant_config = LlmProviderConfig {
+            assistant_use_separate_model: true,
+            assistant_provider: Some(DEEPSEEK.to_string()),
+            ..LlmProviderConfig::default()
+        };
+
+        for endpoint in [
+            endpoint_for_config(&polish_config),
+            assistant_endpoint_for_config(&assistant_config),
+        ] {
+            assert_eq!(endpoint.provider, DEEPSEEK);
+            assert_eq!(endpoint.model, "deepseek-flash");
+            assert_eq!(endpoint.api_format, ApiFormat::OpenaiCompat);
+        }
+    }
+
+    #[test]
+    fn deepseek_endpoints_preserve_explicitly_saved_models() {
+        for model in [
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+            "deepseek-chat",
+            "deepseek-reasoner",
+            "deepseek-future",
+        ] {
+            let config = LlmProviderConfig {
+                active: DEEPSEEK.to_string(),
+                custom_model: Some(model.to_string()),
+                assistant_use_separate_model: true,
+                assistant_provider: Some(DEEPSEEK.to_string()),
+                assistant_model: Some(model.to_string()),
+                ..LlmProviderConfig::default()
+            };
+
+            assert_eq!(endpoint_for_config(&config).model, model);
+            assert_eq!(assistant_endpoint_for_config(&config).model, model);
+        }
+    }
 
     #[test]
     fn named_presets_ignore_custom_endpoint_overrides() {
@@ -1965,6 +2143,73 @@ mod tests {
     }
 
     #[test]
+    fn openrouter_preset_defaults_to_chat_completions_endpoint() {
+        let endpoint = endpoint_for_preview("openrouter", None, None, ApiFormat::OpenaiCompat);
+
+        assert_eq!(
+            endpoint.api_url,
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        assert_eq!(endpoint.model, "~deepseek/deepseek-flash-latest");
+        assert_eq!(
+            reasoning_support(&endpoint, false).strategy.as_deref(),
+            Some("openrouter_reasoning")
+        );
+    }
+
+    #[test]
+    fn openrouter_off_sends_reasoning_enabled_false() {
+        let endpoint = endpoint_for_preview("openrouter", None, None, ApiFormat::OpenaiCompat);
+        let mut body = serde_json::json!({});
+
+        apply_reasoning_controls(&endpoint, false, &mut body, LlmReasoningMode::Off);
+
+        assert_eq!(body["reasoning"], serde_json::json!({ "enabled": false }));
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn openrouter_tiers_map_to_reasoning_effort() {
+        let endpoint = endpoint_for_preview("openrouter", None, None, ApiFormat::OpenaiCompat);
+
+        for (mode, effort) in [
+            (LlmReasoningMode::Light, "low"),
+            (LlmReasoningMode::Balanced, "medium"),
+            (LlmReasoningMode::Deep, "high"),
+        ] {
+            let mut body = serde_json::json!({});
+            apply_reasoning_controls(&endpoint, false, &mut body, mode);
+            assert_eq!(body["reasoning"], serde_json::json!({ "effort": effort }));
+        }
+
+        let mut default_body = serde_json::json!({});
+        apply_reasoning_controls(
+            &endpoint,
+            false,
+            &mut default_body,
+            LlmReasoningMode::ProviderDefault,
+        );
+        assert!(default_body.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn openrouter_custom_host_wins_over_model_name_heuristics() {
+        // doubao/seed-* 会命中火山启发式；按 host 识别的 OpenRouter 必须优先。
+        let endpoint = endpoint_for_preview(
+            "custom-openrouter",
+            Some("https://openrouter.ai/api"),
+            Some("doubao-seed-2-0-pro"),
+            ApiFormat::OpenaiCompat,
+        );
+
+        assert_eq!(
+            reasoning_support(&endpoint, false).strategy.as_deref(),
+            Some("openrouter_reasoning")
+        );
+    }
+
+    #[test]
     fn auto_openai_compatible_starts_with_chat_reasoning_effort() {
         let endpoint = endpoint_for_preview(
             "auto_reasoning_chat_start",
@@ -2270,18 +2515,25 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_v4_flash_reports_reasoning_support() {
-        let endpoint = endpoint_for_preview(
-            DEEPSEEK,
-            None,
-            Some("deepseek-v4-flash"),
-            ApiFormat::OpenaiCompat,
-        );
+    fn deepseek_flash_and_previous_models_report_reasoning_support() {
+        for model in [
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+            "deepseek-chat",
+        ] {
+            let endpoint =
+                endpoint_for_preview(DEEPSEEK, None, Some(model), ApiFormat::OpenaiCompat);
 
-        let support = reasoning_support(&endpoint, false);
+            let support = reasoning_support(&endpoint, false);
 
-        assert!(support.supported);
-        assert_eq!(support.strategy.as_deref(), Some("deepseek_thinking"));
+            assert!(support.supported, "model={model}");
+            assert_eq!(
+                support.strategy.as_deref(),
+                Some("deepseek_thinking"),
+                "model={model}"
+            );
+        }
     }
 
     #[test]
@@ -2365,6 +2617,90 @@ mod tests {
 
         assert_eq!(body["enable_thinking"], serde_json::json!(true));
         assert_eq!(body["thinking_budget"], serde_json::json!(4096));
+    }
+
+    #[test]
+    fn siliconflow_qwen_models_keep_native_thinking_controls() {
+        for model in ["Qwen/Qwen3.8-27B", "Qwen/Qwen3-32B"] {
+            let endpoint =
+                endpoint_for_preview(SILICONFLOW, None, Some(model), ApiFormat::OpenaiCompat);
+            let support = reasoning_support(&endpoint, false);
+
+            assert!(support.supported, "model={model}");
+            assert_eq!(
+                support.strategy.as_deref(),
+                Some("siliconflow_thinking_budget"),
+                "model={model}"
+            );
+            for (mode, expected) in [
+                (LlmReasoningMode::ProviderDefault, serde_json::json!({})),
+                (
+                    LlmReasoningMode::Off,
+                    serde_json::json!({ "enable_thinking": false }),
+                ),
+                (
+                    LlmReasoningMode::Light,
+                    serde_json::json!({ "enable_thinking": true, "thinking_budget": 1024 }),
+                ),
+                (
+                    LlmReasoningMode::Balanced,
+                    serde_json::json!({ "enable_thinking": true, "thinking_budget": 4096 }),
+                ),
+                (
+                    LlmReasoningMode::Deep,
+                    serde_json::json!({ "enable_thinking": true, "thinking_budget": 8192 }),
+                ),
+            ] {
+                let mut body = serde_json::json!({});
+                apply_reasoning_controls(&endpoint, false, &mut body, mode);
+
+                assert_eq!(body, expected, "model={model}, mode={mode:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn cerebras_qwen_and_gpt_oss_keep_native_reasoning_modes() {
+        for (model, expected) in [
+            (
+                "qwen-3.8-27b",
+                serde_json::json!(["low", "none", "low", "medium", "high"]),
+            ),
+            (
+                "gpt-oss-120b",
+                serde_json::json!(["low", null, "low", "medium", "high"]),
+            ),
+        ] {
+            let endpoint =
+                endpoint_for_preview(CEREBRAS, None, Some(model), ApiFormat::OpenaiCompat);
+            let support = reasoning_support(&endpoint, false);
+
+            assert!(support.supported, "model={model}");
+            assert_eq!(
+                support.strategy.as_deref(),
+                Some("cerebras_reasoning_effort"),
+                "model={model}"
+            );
+            let efforts: Vec<Value> = [
+                LlmReasoningMode::ProviderDefault,
+                LlmReasoningMode::Off,
+                LlmReasoningMode::Light,
+                LlmReasoningMode::Balanced,
+                LlmReasoningMode::Deep,
+            ]
+            .into_iter()
+            .map(|mode| {
+                let mut body = serde_json::json!({});
+                apply_reasoning_controls(&endpoint, false, &mut body, mode);
+                if model == "gpt-oss-120b" && mode == LlmReasoningMode::Off {
+                    assert!(body.get("reasoning_effort").is_none());
+                }
+                body["reasoning_effort"].clone()
+            })
+            .collect();
+
+            assert_eq!(serde_json::json!(efforts), expected, "model={model}");
+        }
     }
 
     #[test]
@@ -2480,22 +2816,221 @@ mod tests {
         assert!(body.get("reasoning_effort").is_none());
     }
 
+    async fn probe_mock_image_metadata(
+        provider: &str,
+        model: &str,
+        responses: Vec<(u16, String)>,
+    ) -> (Vec<Option<bool>>, Vec<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("metadata server should bind");
+        let address = listener.local_addr().expect("metadata server address");
+        let response_count = responses.len();
+        let mut server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let (mut socket, _) = listener.accept().await.expect("metadata request");
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0_u8; 1024];
+                    let count = socket
+                        .read(&mut chunk)
+                        .await
+                        .expect("read metadata request");
+                    assert!(count > 0, "metadata request must include complete headers");
+                    request.extend_from_slice(&chunk[..count]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                requests.push(String::from_utf8(request).expect("HTTP request headers"));
+                let response = format!(
+                    "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write metadata response");
+            }
+            requests
+        });
+        let mut endpoint =
+            endpoint_for_preview(provider, None, Some(model), ApiFormat::OpenaiCompat);
+        endpoint.api_url = format!("http://{address}/v1/chat/completions");
+        endpoint.model = model.to_string();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("local metadata client");
+        let mut support = Vec::new();
+        for _ in 0..response_count {
+            support.push(
+                probe_image_support_from_provider_metadata(
+                    &client,
+                    &endpoint,
+                    "FAKE_METADATA_TEST_KEY",
+                )
+                .await,
+            );
+        }
+        let requests =
+            match tokio::time::timeout(std::time::Duration::from_secs(1), &mut server).await {
+                Ok(result) => result.expect("metadata server should complete"),
+                Err(_) => {
+                    server.abort();
+                    let _ = server.await;
+                    Vec::new()
+                }
+            };
+        (support, requests)
+    }
+
+    fn assert_image_metadata_requests(requests: &[String], path: &str, count: usize) {
+        assert_eq!(
+            requests.len(),
+            count,
+            "each probe must read upstream metadata"
+        );
+        for request in requests {
+            assert_eq!(
+                request.lines().next(),
+                Some(format!("GET {path} HTTP/1.1").as_str())
+            );
+            let authorization = request.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("authorization")
+                    .then(|| value.trim())
+            });
+            assert_eq!(authorization, Some("Bearer FAKE_METADATA_TEST_KEY"));
+        }
+    }
+
+    #[tokio::test]
+    async fn deepseek_image_support_follows_metadata_for_legacy_current_and_future_models() {
+        for (model, modality) in [
+            ("deepseek-flash", "image"),
+            ("deepseek-chat", "image"),
+            ("deepseek-v4-pro", "input_image"),
+            ("deepseek-future-vision", "image"),
+        ] {
+            let payload = serde_json::json!({
+                "data": [{"id": model, "input_modalities": ["text", modality]}]
+            });
+            let (support, requests) =
+                probe_mock_image_metadata(DEEPSEEK, model, vec![(200, payload.to_string())]).await;
+
+            assert_eq!(support, vec![Some(true)], "model={model}");
+            assert_image_metadata_requests(&requests, "/v1/models", 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn deepseek_image_support_selects_exact_model_and_follows_upstream_changes() {
+        let responses = [
+            serde_json::json!({"data": [
+                {"id": "deepseek-v4-pro-preview", "input_modalities": ["text", "image"]},
+                {"id": "deepseek-v4-pro", "input_modalities": ["text"]}
+            ]}),
+            serde_json::json!({"data": [
+                {"id": "deepseek-v4-pro-preview", "input_modalities": ["text"]},
+                {"id": "deepseek-v4-pro", "input_modalities": ["text", "image"]}
+            ]}),
+        ];
+        let (support, requests) = probe_mock_image_metadata(
+            DEEPSEEK,
+            " deepseek-v4-pro ",
+            responses
+                .into_iter()
+                .map(|payload| (200, payload.to_string()))
+                .collect(),
+        )
+        .await;
+
+        assert_eq!(support, vec![Some(false), Some(true)]);
+        assert_image_metadata_requests(&requests, "/v1/models", 2);
+    }
+
+    #[tokio::test]
+    async fn deepseek_image_support_keeps_unknown_metadata_and_http_errors_unknown() {
+        let model = "deepseek-v4-pro";
+        let mut responses = [
+            serde_json::json!({"data": [{"id": "another-model", "input_modalities": ["image"]}]}),
+            serde_json::json!({"data": [{"id": model}]}),
+            serde_json::json!({"data": [{"id": model, "input_modalities": []}]}),
+            serde_json::json!({"data": [{"id": model, "input_modalities": "image"}]}),
+            serde_json::json!({"data": [{"id": model, "input_modalities": ["audio"]}]}),
+            serde_json::json!({"id": model, "input_modalities": ["image"]}),
+        ]
+        .into_iter()
+        .map(|payload| (200, payload.to_string()))
+        .collect::<Vec<_>>();
+        responses.push((200, "not valid JSON".to_string()));
+        responses.push((
+            503,
+            serde_json::json!({"data": [{"id": model, "input_modalities": ["image"]}]}).to_string(),
+        ));
+        let response_count = responses.len();
+        let (support, requests) = probe_mock_image_metadata(DEEPSEEK, model, responses).await;
+
+        assert_eq!(support, vec![None; response_count]);
+        assert_image_metadata_requests(&requests, "/v1/models", response_count);
+    }
+
     #[test]
-    fn official_deepseek_is_known_to_be_text_only() {
-        let official = endpoint_for_preview(
+    fn deepseek_image_support_canonical_flash_body_preserves_responses_image_content() {
+        use crate::services::llm_client::{
+            build_llm_body, LlmImageInput, LlmRequestOptions, LlmUserInput,
+        };
+
+        let endpoint = endpoint_for_preview(
             DEEPSEEK,
             None,
-            Some("deepseek-v4-pro"),
+            Some("deepseek-flash"),
             ApiFormat::OpenaiCompat,
         );
-        let custom = endpoint_for_preview(
-            CUSTOM,
-            Some("https://example.com/v1"),
-            Some("deepseek-v4-pro"),
-            ApiFormat::OpenaiCompat,
-        );
+        let image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=";
+        let input = LlmUserInput {
+            text: "Describe the synthetic image".to_string(),
+            images: vec![LlmImageInput {
+                mime_type: "image/png".to_string(),
+                data_base64: image_base64.to_string(),
+            }],
+        };
+        let body = build_llm_body(&endpoint, "system", &input, LlmRequestOptions::default());
+        let user = body["input"]
+            .as_array()
+            .expect("Responses request input")
+            .iter()
+            .find(|message| message["role"] == "user")
+            .expect("Responses user message");
+        let image = user["content"]
+            .as_array()
+            .expect("Responses user content")
+            .iter()
+            .find(|item| item["type"] == "input_image")
+            .expect("Responses image input");
 
-        assert_eq!(known_image_input_support(&official), Some(false));
-        assert_eq!(known_image_input_support(&custom), None);
+        assert_eq!(
+            image["image_url"],
+            format!("data:image/png;base64,{image_base64}")
+        );
+        assert!(body.get("messages").is_none());
+    }
+
+    #[tokio::test]
+    async fn custom_image_support_retains_model_detail_probe() {
+        let payload = serde_json::json!({
+            "id": "deepseek-v4-pro",
+            "input_modalities": ["text", "image"]
+        });
+        let (support, requests) =
+            probe_mock_image_metadata(CUSTOM, "deepseek-v4-pro", vec![(200, payload.to_string())])
+                .await;
+
+        assert_eq!(support, vec![Some(true)]);
+        assert_image_metadata_requests(&requests, "/v1/models/deepseek-v4-pro", 1);
     }
 }

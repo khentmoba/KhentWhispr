@@ -30,14 +30,14 @@ export function useAsrEngineSettings({
   const modelsRequestId = useRef(0);
   const mounted = useRef(false);
   const transitioning = useRef(false);
-  const [engine, setEngineState] = useState("qwen3-asr-0.6b");
+  const [engine, setEngineState] = useState("qwen3-asr-1.7b");
   const [engineLoading, setEngineLoading] = useState(true);
   const [onlineAsrApiKey, setOnlineAsrApiKeyState] = useState("");
   const [onlineAsrRegion, setOnlineAsrRegion] = useState("international");
   const [onlineAsrUrl, setOnlineAsrUrl] = useState("");
   const [onlineAsrRegionLoading, setOnlineAsrRegionLoading] = useState(false);
   const [alibabaAsrModelSaving, setAlibabaAsrModelSaving] = useState(false);
-  const [alibabaAsrModel, setAlibabaAsrModelState] = useState("qwen3-asr-flash");
+  const [alibabaAsrModel, setAlibabaAsrModelState] = useState("qwen-audio-3.1-asr-flash");
   const [alibabaAsrModels, setAlibabaAsrModelsState] = useState<readonly string[]>([]);
   const [alibabaAsrModelsSource, setAlibabaAsrModelsSource] = useState<"live" | "fallback">("fallback");
   const [alibabaAsrModelsLoading, setAlibabaAsrModelsLoading] = useState(false);

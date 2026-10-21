@@ -17,12 +17,51 @@ under GPL-3.0-only.
 ## transcribe.cpp and downloaded models
 
 [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) is distributed
-under the MIT License. Qwen3-ASR model files are downloaded separately and
-remain subject to the terms published by their respective upstream providers.
+under the MIT License. Qwen3-ASR, Parakeet and Canary-Qwen model files are
+downloaded separately and remain subject to the terms published by their
+respective upstream providers.
 
 Package-manager dependencies may carry additional licenses. Their inclusion in
 the source tree, Python engine, or application bundle does not change those
 licenses.
+
+## Parakeet models
+
+Parakeet Unified EN 0.6B and Parakeet TDT 0.6B v2 are downloaded separately as
+Q8_0 GGUF ports published by
+[handy-computer](https://huggingface.co/handy-computer) for transcribe.cpp. They
+derive from NVIDIA models and are not redistributed in SpeakFlow's installers.
+
+- [Parakeet Unified EN 0.6B GGUF](https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf)
+  is governed by the NVIDIA Open Model License, as stated by the
+  [upstream NVIDIA model card](https://huggingface.co/nvidia/parakeet-unified-en-0.6b)
+  and the GGUF repository metadata. The transcribe.cpp documentation states
+  CC-BY-4.0, which does not match the NVIDIA card. Review the NVIDIA license
+  before redistributing these weights.
+- [Parakeet TDT 0.6B v2 GGUF](https://huggingface.co/handy-computer/parakeet-tdt-0.6b-v2-gguf)
+  is licensed CC-BY-4.0, as stated by the
+  [upstream NVIDIA model card](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2).
+
+## Qwen3-ASR 1.7B model
+
+The [Qwen3-ASR 1.7B GGUF](https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf)
+is downloaded separately and its repository metadata states Apache-2.0.
+
+## Canary-Qwen 2.5B model
+
+The [Canary-Qwen 2.5B GGUF](https://huggingface.co/handy-computer/canary-qwen-2.5b-gguf)
+is downloaded separately. It is a GGUF port, published by handy-computer, of
+[NVIDIA Canary-Qwen 2.5B](https://huggingface.co/nvidia/canary-qwen-2.5b). The
+upstream model is licensed under
+[CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/legalcode.en), and its
+repository metadata states the same license.
+
+## Cohere Transcribe model
+
+The [Cohere Transcribe GGUF](https://huggingface.co/handy-computer/cohere-transcribe-03-2026-gguf)
+is downloaded separately. It is a GGUF port, published by handy-computer, of
+Cohere Labs' cohere-transcribe-03-2026 model. Its repository metadata states
+Apache-2.0. The upstream Cohere Labs card is gated and was not reviewed.
 
 ## Confucius4-R2T2 native runtime and model
 

@@ -65,21 +65,54 @@ pub fn get_engine_config_path() -> PathBuf {
     get_data_dir().join("engine.json")
 }
 
+/// Engine used when engine.json is missing or names an unknown engine.
+pub const DEFAULT_ENGINE: &str = "qwen3-asr-1.7b";
+
+/// Local engines with a downloadable model. Keep in sync with
+/// `src/lib/asrEngineOptions.ts` and `TRANSCRIBE_CPP_ASR_MODELS`/`LOCAL_ASR_MODELS`
+/// in `src-tauri/resources/hf_cache_utils.py`.
+pub const LOCAL_ASR_ENGINES: &[&str] = &[
+    "qwen3-asr-0.6b",
+    "qwen3-asr-1.7b",
+    "parakeet-unified-en-0.6b",
+    "parakeet-tdt-0.6b-v2",
+    "canary-qwen-2.5b",
+    "cohere-transcribe-03-2026",
+    "confucius4-r2t2",
+];
+
+pub const ONLINE_ASR_ENGINES: &[&str] = &["glm-asr", "alibaba-asr"];
+
 pub fn read_engine_config() -> String {
     configured_engine(read_engine_json().get("engine").and_then(|v| v.as_str())).to_string()
 }
 
 fn configured_engine(engine: Option<&str>) -> &str {
     match engine {
-        // Retain old model caches; only the selected engine is migrated.
-        Some("qwen3-asr-1.7b") => "confucius4-r2t2",
-        Some(value @ ("qwen3-asr-0.6b" | "confucius4-r2t2" | "glm-asr" | "alibaba-asr")) => value,
-        _ => "qwen3-asr-0.6b",
+        Some(value) if is_supported_engine(value) => value,
+        _ => DEFAULT_ENGINE,
     }
 }
 
+pub fn is_supported_engine(engine: &str) -> bool {
+    LOCAL_ASR_ENGINES.contains(&engine) || ONLINE_ASR_ENGINES.contains(&engine)
+}
+
+/// Local engines served by `qwen3_asr_server.py` (transcribe.cpp GGUF models).
+pub fn is_transcribe_cpp_engine(engine: &str) -> bool {
+    matches!(
+        engine,
+        "qwen3-asr-0.6b"
+            | "qwen3-asr-1.7b"
+            | "parakeet-unified-en-0.6b"
+            | "parakeet-tdt-0.6b-v2"
+            | "canary-qwen-2.5b"
+            | "cohere-transcribe-03-2026"
+    )
+}
+
 pub fn is_online_engine(engine: &str) -> bool {
-    matches!(engine, "glm-asr" | "alibaba-asr")
+    ONLINE_ASR_ENGINES.contains(&engine)
 }
 
 const GLM_ENDPOINT_INTERNATIONAL: &str = "https://api.z.ai";
@@ -88,15 +121,16 @@ const GLM_ENDPOINT_DOMESTIC: &str = "https://open.bigmodel.cn";
 const ALIBABA_ENDPOINT_INTERNATIONAL: &str = "https://dashscope-intl.aliyuncs.com";
 const ALIBABA_ENDPOINT_DOMESTIC: &str = "https://dashscope.aliyuncs.com";
 
-pub const ALIBABA_DEFAULT_MODEL: &str = "qwen3-asr-flash";
+pub const ALIBABA_DEFAULT_MODEL: &str = "qwen-audio-3.1-asr-flash";
 
-/// 运行时抓取失败时使用的静态兜底列表。包含 2026-04 已知在 DashScope 上架的
-/// 全部 Qwen ASR / Omni 家族模型；抓取成功后以实际结果为准，不受此列表限制。
+/// 运行时抓取失败时使用的 ASR / Omni 兜底列表，更新于 2026-10-18。
+/// 抓取成功后以账号实际可见模型为准，不受此列表限制。
 ///
 /// 走哪条 HTTP 路径由 `alibaba_model_uses_omni_chat` 运行时决定：
-/// - `qwen3-asr-*` → `/api/v1/services/aigc/multimodal-generation/generation`
+/// - Qwen Audio / Qwen3 ASR → `/api/v1/services/aigc/multimodal-generation/generation`
 /// - `*omni*` → `/compatible-mode/v1/chat/completions`
 pub const ALIBABA_FALLBACK_MODEL_IDS: &[&str] = &[
+    "qwen-audio-3.1-asr-flash",
     "qwen3-asr-flash",
     "qwen3-omni-flash",
     "qwen3-omni-plus",
@@ -141,7 +175,7 @@ pub fn is_asr_capable_model_id(id: &str) -> bool {
 }
 
 /// Omni 家族模型走 OpenAI-compat chat.completions 路径；
-/// 其它走 qwen3-asr-flash 专用的 multimodal-generation 路径。
+/// 其它走 ASR 专用的 multimodal-generation 路径。
 pub fn alibaba_model_uses_omni_chat(model: &str) -> bool {
     model.contains("omni")
 }
@@ -311,18 +345,17 @@ pub fn read_alibaba_endpoint() -> String {
     }
 }
 
-fn update_engine_json_field(key: &str, value: &str) -> Result<(), std::io::Error> {
+/// Serializes read-modify-write updates so concurrent writers keep each other's fields.
+fn update_engine_json(update: impl FnOnce(&mut serde_json::Value)) -> Result<(), std::io::Error> {
+    static MUTATION: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    let _mutation = MUTATION.lock();
     let mut obj = read_engine_json();
-    if !obj.is_object() {
-        obj = serde_json::json!({});
-    }
-    if let Some(map) = obj.as_object_mut() {
-        map.insert(
-            key.to_string(),
-            serde_json::Value::String(value.to_string()),
-        );
-    }
+    update(&mut obj);
     write_engine_json(&obj)
+}
+
+fn update_engine_json_field(key: &str, value: &str) -> Result<(), std::io::Error> {
+    update_engine_json(|obj| obj[key] = serde_json::Value::String(value.to_string()))
 }
 
 /// 写入 GLM-ASR 区域。`region`: `"international"` 或 `"domestic"`
@@ -436,29 +469,26 @@ pub fn write_gpu_idle_seconds(
     timeout_seconds: Option<u64>,
 ) -> Result<(), std::io::Error> {
     let seconds = seconds.min(MAX_GPU_IDLE_SECONDS);
-    let mut obj = read_engine_json();
-    if !obj.is_object() {
-        obj = serde_json::json!({});
-    }
-    // Keep the effective value (0 = off) separate from the user's last timeout.
-    let remembered = timeout_seconds
-        .filter(|value| *value > 0)
-        .unwrap_or_else(|| {
-            if seconds > 0 {
-                seconds
-            } else {
-                gpu_idle_timeout_from_config(&obj)
-            }
-        })
-        .min(MAX_GPU_IDLE_SECONDS);
-    if let Some(map) = obj.as_object_mut() {
-        map.insert("gpu_idle_seconds".to_string(), serde_json::json!(seconds));
-        map.insert(
-            "gpu_idle_timeout_seconds".to_string(),
-            serde_json::json!(remembered),
-        );
-    }
-    write_engine_json(&obj)
+    update_engine_json(|obj| {
+        // Keep the effective value (0 = off) separate from the user's last timeout.
+        let remembered = timeout_seconds
+            .filter(|value| *value > 0)
+            .unwrap_or_else(|| {
+                if seconds > 0 {
+                    seconds
+                } else {
+                    gpu_idle_timeout_from_config(obj)
+                }
+            })
+            .min(MAX_GPU_IDLE_SECONDS);
+        if let Some(map) = obj.as_object_mut() {
+            map.insert("gpu_idle_seconds".to_string(), serde_json::json!(seconds));
+            map.insert(
+                "gpu_idle_timeout_seconds".to_string(),
+                serde_json::json!(remembered),
+            );
+        }
+    })
 }
 
 /// 读取用户自定义模型目录（None 表示使用默认 HF 缓存）
@@ -472,24 +502,21 @@ pub fn read_models_dir() -> Option<String> {
 
 /// 写入自定义模型目录（None 表示恢复默认）
 pub fn write_models_dir(dir: Option<&str>) -> Result<(), std::io::Error> {
-    let mut obj = read_engine_json();
-    if !obj.is_object() {
-        obj = serde_json::json!({});
-    }
-    if let Some(map) = obj.as_object_mut() {
-        match dir.filter(|s| !s.is_empty()) {
-            Some(d) => {
-                map.insert(
-                    "models_dir".to_string(),
-                    serde_json::Value::String(d.to_string()),
-                );
-            }
-            None => {
-                map.remove("models_dir");
+    update_engine_json(|obj| {
+        if let Some(map) = obj.as_object_mut() {
+            match dir.filter(|s| !s.is_empty()) {
+                Some(d) => {
+                    map.insert(
+                        "models_dir".to_string(),
+                        serde_json::Value::String(d.to_string()),
+                    );
+                }
+                None => {
+                    map.remove("models_dir");
+                }
             }
         }
-    }
-    write_engine_json(&obj)
+    })
 }
 
 /// 默认 HF 缓存根目录（不考虑自定义配置）
@@ -512,25 +539,34 @@ pub fn get_effective_models_dir() -> PathBuf {
 }
 
 #[cfg(test)]
+#[path = "paths_concurrency_tests.rs"]
+mod concurrency_tests;
+
+#[cfg(test)]
 mod tests {
     use super::engine_json_object_or_empty;
 
     #[test]
-    fn engine_selection_migrates_17b_and_preserves_other_engines() {
+    fn alibaba_default_and_fallback_prefer_native_model_and_retain_legacy() {
+        assert_eq!(super::ALIBABA_DEFAULT_MODEL, "qwen-audio-3.1-asr-flash");
         assert_eq!(
-            super::configured_engine(Some("qwen3-asr-1.7b")),
-            "confucius4-r2t2"
+            super::ALIBABA_FALLBACK_MODEL_IDS.first().copied(),
+            Some("qwen-audio-3.1-asr-flash")
         );
-        for engine in [
-            "confucius4-r2t2",
-            "qwen3-asr-0.6b",
-            "glm-asr",
-            "alibaba-asr",
-        ] {
+        assert!(super::ALIBABA_FALLBACK_MODEL_IDS.contains(&"qwen3-asr-flash"));
+    }
+
+    #[test]
+    fn engine_selection_keeps_every_supported_engine() {
+        for engine in super::LOCAL_ASR_ENGINES
+            .iter()
+            .chain(super::ONLINE_ASR_ENGINES.iter())
+            .copied()
+        {
             assert_eq!(super::configured_engine(Some(engine)), engine);
         }
-        assert_eq!(super::configured_engine(None), "qwen3-asr-0.6b");
-        assert_eq!(super::configured_engine(Some("invalid")), "qwen3-asr-0.6b");
+        assert_eq!(super::configured_engine(None), "qwen3-asr-1.7b");
+        assert_eq!(super::configured_engine(Some("invalid")), "qwen3-asr-1.7b");
     }
 
     #[test]

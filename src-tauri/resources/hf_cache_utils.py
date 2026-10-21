@@ -25,6 +25,51 @@ QWEN3_ASR_MODELS = {
     },
 }
 
+PARAKEET_ASR_MODELS = {
+    "parakeet-unified-en-0.6b": {
+        "repo_id": "handy-computer/parakeet-unified-en-0.6b-gguf",
+        "filename": "parakeet-unified-en-0.6b-Q8_0.gguf",
+        "revision": "843b1b175ace04f5a89d379c79e2518c0d065b25",
+        "size": 731_357_568,
+        "sha256": "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795",
+    },
+    "parakeet-tdt-0.6b-v2": {
+        "repo_id": "handy-computer/parakeet-tdt-0.6b-v2-gguf",
+        "filename": "parakeet-tdt-0.6b-v2-Q8_0.gguf",
+        "revision": "58239cf6d0ecb0af921e7936c1e5e0a8dba91dbb",
+        "size": 729_574_912,
+        "sha256": "f0d0e99cebb6d3b83f1f7069b82b5d3c2e39a54545b0da039cb4bafd9c4e5caa",
+    },
+}
+
+CANARY_QWEN_ASR_MODELS = {
+    "canary-qwen-2.5b": {
+        "repo_id": "handy-computer/canary-qwen-2.5b-gguf",
+        "filename": "canary-qwen-2.5b-Q8_0.gguf",
+        "revision": "a4480da236b7d99d7a12186868de021ef4ff5ced",
+        "size": 2_797_548_928,
+        "sha256": "d89aad1285d5bd5aa441c464d3a4cf37bd5474f70705408e71558d8627415b34",
+    },
+}
+
+COHERE_ASR_MODELS = {
+    "cohere-transcribe-03-2026": {
+        "repo_id": "handy-computer/cohere-transcribe-03-2026-gguf",
+        "filename": "cohere-transcribe-03-2026-Q8_0.gguf",
+        "revision": "7353b6040bdc1be9e5a3823d99d5fe12afe88264",
+        "size": 2_410_655_232,
+        "sha256": "931916663432fd895423a4291a8400221802b288967ca2d435fc5e3141c9e71e",
+    },
+}
+
+# All families run through transcribe.cpp in the same resident server.
+TRANSCRIBE_CPP_ASR_MODELS = {
+    **QWEN3_ASR_MODELS,
+    **PARAKEET_ASR_MODELS,
+    **CANARY_QWEN_ASR_MODELS,
+    **COHERE_ASR_MODELS,
+}
+
 R2T2_MODEL = {
     "repo_id": "davidxifeng/Confucius4-R2T2-gguf",
     "filename": "r2t2-q8_0.gguf",
@@ -33,7 +78,7 @@ R2T2_MODEL = {
     "sha256": "19f5ccd624484bcb5d44301437de41560b0ecc40c430e8850dfeefefbe82ccf5",
 }
 
-LOCAL_ASR_MODELS = {**QWEN3_ASR_MODELS, "confucius4-r2t2": R2T2_MODEL}
+LOCAL_ASR_MODELS = {**TRANSCRIBE_CPP_ASR_MODELS, "confucius4-r2t2": R2T2_MODEL}
 
 _WEIGHT_EXTS = (".pt", ".bin", ".safetensors", ".onnx", ".gguf")
 _MIN_WEIGHT_SIZE = 1_000_000  # 与 Rust 端阈值一致

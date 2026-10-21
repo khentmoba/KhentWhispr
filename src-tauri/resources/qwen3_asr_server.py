@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""Low-latency local Qwen3-ASR GGUF server backed by transcribe.cpp."""
+"""Low-latency local GGUF ASR server backed by transcribe.cpp.
+
+Serves the Qwen3-ASR, Parakeet, Canary-Qwen and Cohere Transcribe engines. All
+run through the same transcribe.cpp session, FireRedVAD front end and offline transcription path.
+"""
 
 import importlib.metadata
 import os
@@ -22,12 +26,20 @@ from server_common import (
 
 apply_hf_env_defaults()
 ensure_safe_cuda_env()
-logger = setup_rotating_logger(__name__, "qwen3_asr_server.log", "Qwen3-ASR server")
+logger = setup_rotating_logger(__name__, "qwen3_asr_server.log", "Local ASR server")
 
-from hf_cache_utils import QWEN3_ASR_MODELS, find_hf_snapshot_file
+from hf_cache_utils import TRANSCRIBE_CPP_ASR_MODELS, find_hf_snapshot_file
 
 QWEN3_ASR_N_CTX = 32_768
 QWEN3_VAD_SAMPLE_RATE = 16_000
+ENGINE_DISPLAY_NAMES = {
+    "qwen3-asr-0.6b": "Qwen3-ASR 0.6B",
+    "qwen3-asr-1.7b": "Qwen3-ASR 1.7B",
+    "parakeet-unified-en-0.6b": "Parakeet Unified EN 0.6B",
+    "parakeet-tdt-0.6b-v2": "Parakeet TDT 0.6B v2",
+    "canary-qwen-2.5b": "Canary-Qwen 2.5B",
+    "cohere-transcribe-03-2026": "Cohere Transcribe",
+}
 
 
 class Qwen3ASRServer(BaseASRServer):
@@ -38,10 +50,11 @@ class Qwen3ASRServer(BaseASRServer):
     """
 
     def __init__(self, engine=None):
-        engine = engine or os.environ.get("SPEAK_FLOW_ASR_ENGINE", "qwen3-asr-0.6b")
-        if engine not in QWEN3_ASR_MODELS:
-            raise ValueError(f"Unsupported Qwen3-ASR engine: {engine}")
-        self.model_config = QWEN3_ASR_MODELS[engine]
+        engine = engine or os.environ.get("SPEAK_FLOW_ASR_ENGINE", "qwen3-asr-1.7b")
+        if engine not in TRANSCRIBE_CPP_ASR_MODELS:
+            raise ValueError(f"Unsupported transcribe.cpp ASR engine: {engine}")
+        self.model_config = TRANSCRIBE_CPP_ASR_MODELS[engine]
+        self.display_name = ENGINE_DISPLAY_NAMES[engine]
         super().__init__(engine=engine, logger=logger)
         self.model = None
         self.session = None
@@ -56,9 +69,9 @@ class Qwen3ASRServer(BaseASRServer):
     def _detect_device(self):
         """Avoid importing the 2 GB PyTorch runtime just to probe one CUDA driver."""
         if _has_nvidia_gpu():
-            logger.info("Detected NVIDIA CUDA driver; preferring CUDA for Qwen3-ASR")
+            logger.info("Detected NVIDIA CUDA driver; preferring CUDA for %s", self.display_name)
             return "cuda"
-        logger.info("NVIDIA CUDA driver not detected; Qwen3-ASR will automatically select Vulkan/CPU")
+        logger.info("NVIDIA CUDA driver not detected; %s will automatically select Vulkan/CPU", self.display_name)
         return "cpu"
 
     def _get_gpu_device_info(self):
@@ -110,7 +123,7 @@ class Qwen3ASRServer(BaseASRServer):
         self._close_runtime()
         self._gpu_suspended = True
         self.vad_model = vad
-        self.logger.info("Qwen3-ASR idle timeout reached; unloaded the GPU model; FireRedVAD remains on CPU")
+        self.logger.info("%s idle timeout reached; unloaded the GPU model; FireRedVAD remains on CPU", self.display_name)
         return True
 
     def _close_runtime(self):
@@ -146,7 +159,7 @@ class Qwen3ASRServer(BaseASRServer):
             except Exception as exc:
                 errors.append(f"{backend}: {exc}")
                 self._close_runtime()
-                logger.warning("Qwen3-ASR %s backend failed to load: %s", backend, exc)
+                logger.warning("%s %s backend failed to load: %s", self.display_name, backend, exc)
         raise RuntimeError("; ".join(errors))
 
     def _warmup_inference(self):
@@ -160,11 +173,16 @@ class Qwen3ASRServer(BaseASRServer):
             with self.stdout_suppressor.suppress():
                 self.session.run(audio, timestamps="none")
             logger.info(
-                "Qwen3-ASR and FireRedVAD warmup completed in %.3f seconds",
+                "%s and FireRedVAD warmup completed in %.3f seconds",
+                self.display_name,
                 time.perf_counter() - started,
             )
         except Exception as exc:
-            logger.warning("Qwen3-ASR warmup failed (the first transcription may be slower): %s", exc)
+            logger.warning(
+                "%s warmup failed (the first transcription may be slower): %s",
+                self.display_name,
+                exc,
+            )
 
     def _filter_speech(self, audio):
         import numpy as np
@@ -197,14 +215,14 @@ class Qwen3ASRServer(BaseASRServer):
         if not model_path:
             return {
                 "success": False,
-                "error": f"Qwen3-ASR Q8 model not downloaded: {self.model_config['filename']}",
+                "error": f"{self.display_name} Q8 model not downloaded: {self.model_config['filename']}",
                 "type": "models_not_downloaded",
                 "engine": self.engine,
             }
 
         started = time.perf_counter()
         try:
-            logger.info("Loading Qwen3-ASR: %s", model_path)
+            logger.info("Loading %s: %s", self.display_name, model_path)
             self._load_runtime(model_path)
             if self.vad_model is None:
                 self.vad_model = FireRedVad()
@@ -213,10 +231,10 @@ class Qwen3ASRServer(BaseASRServer):
             self._gpu_suspended = False
             self._last_load_error = None
             elapsed = time.perf_counter() - started
-            logger.info("Qwen3-ASR initialization completed; backend: %s; elapsed: %.3f seconds", self.backend, elapsed)
+            logger.info("%s initialization completed; backend: %s; elapsed: %.3f seconds", self.display_name, self.backend, elapsed)
             return {
                 "success": True,
-                "message": f"Qwen3-ASR initialized successfully in {elapsed:.2f} seconds",
+                "message": f"{self.display_name} initialized successfully in {elapsed:.2f} seconds",
                 "model_loaded": True,
                 "engine": self.engine,
                 "backend": self.backend,
@@ -226,11 +244,11 @@ class Qwen3ASRServer(BaseASRServer):
             self._close_runtime()
             self.vad_model = None
             self._last_load_error = str(exc)
-            logger.error("Failed to load Qwen3-ASR dependencies: %s", exc)
+            logger.error("Failed to load %s dependencies: %s", self.display_name, exc)
             logger.error(traceback.format_exc())
             return {
                 "success": False,
-                "error": f"Failed to load Qwen3-ASR dependencies: {exc}",
+                "error": f"Failed to load {self.display_name} dependencies: {exc}",
                 "type": "import_error",
                 "engine": self.engine,
             }
@@ -238,11 +256,11 @@ class Qwen3ASRServer(BaseASRServer):
             self._close_runtime()
             self.vad_model = None
             self._last_load_error = str(exc)
-            logger.error("Qwen3-ASR initialization failed: %s", exc)
+            logger.error("%s initialization failed: %s", self.display_name, exc)
             logger.error(traceback.format_exc())
             return {
                 "success": False,
-                "error": f"Qwen3-ASR initialization failed: {exc}",
+                "error": f"{self.display_name} initialization failed: {exc}",
                 "type": "init_error",
                 "engine": self.engine,
             }
@@ -268,7 +286,7 @@ class Qwen3ASRServer(BaseASRServer):
         if audio_base64:
             audio, duration = decode_inline_audio(audio_base64, audio_format, sample_rate)
             if not isinstance(audio, np.ndarray):
-                raise ValueError("Qwen3-ASR in-memory input supports PCM only")
+                raise ValueError(f"{self.display_name} in-memory input supports PCM only")
             source_rate = sample_rate or 16_000
             audio = self._resample(audio, source_rate)
             return np.ascontiguousarray(audio, dtype=np.float32), duration, "memory"
@@ -336,7 +354,7 @@ class Qwen3ASRServer(BaseASRServer):
 
             started = time.perf_counter()
             with self.stdout_suppressor.suppress():
-                # Qwen3-ASR does not advertise speculative decoding. Keeping a
+                # These models do not advertise speculative decoding. Keeping a
                 # persistent KV session is the supported low-latency path.
                 result = self.session.run(audio, timestamps="none")
             inference_ms = (time.perf_counter() - started) * 1000
@@ -363,7 +381,7 @@ class Qwen3ASRServer(BaseASRServer):
                 "inference_ms": round(inference_ms, 3),
             }
         except Exception as exc:
-            logger.error("Qwen3-ASR transcription failed: %s", exc)
+            logger.error("%s transcription failed: %s", self.display_name, exc)
             logger.error(traceback.format_exc())
             return {
                 "success": False,
@@ -417,7 +435,7 @@ class Qwen3ASRServer(BaseASRServer):
                 "success": False,
                 "installed": False,
                 "initialized": False,
-                "error": f"Failed to load Qwen3-ASR dependencies: {exc}",
+                "error": f"Failed to load {self.display_name} dependencies: {exc}",
                 "engine": self.engine,
             }
 

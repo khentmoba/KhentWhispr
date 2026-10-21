@@ -23,10 +23,12 @@ def _setup_frozen_paths():
 
 
 def cmd_serve(engine: str):
+    from hf_cache_utils import TRANSCRIBE_CPP_ASR_MODELS
+
     if engine == "confucius4-r2t2":
         from r2t2_asr_server import R2T2ASRServer
         server = R2T2ASRServer()
-    elif engine.startswith("qwen3-asr-"):
+    elif engine in TRANSCRIBE_CPP_ASR_MODELS:
         from qwen3_asr_server import Qwen3ASRServer
         server = Qwen3ASRServer(engine=engine)
     else:
@@ -46,7 +48,15 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve_p = sub.add_parser("serve")
-    engine_choices = ["qwen3-asr-0.6b", "confucius4-r2t2"]
+    engine_choices = [
+        "qwen3-asr-0.6b",
+        "qwen3-asr-1.7b",
+        "parakeet-unified-en-0.6b",
+        "parakeet-tdt-0.6b-v2",
+        "canary-qwen-2.5b",
+        "cohere-transcribe-03-2026",
+        "confucius4-r2t2",
+    ]
     serve_p.add_argument("--engine", required=True, choices=engine_choices)
 
     dl_p = sub.add_parser("download")

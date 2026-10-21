@@ -1,6 +1,6 @@
 # R2T2 native backend
 
-R2T2 replaces the Qwen3-ASR 1.7B option. Qwen 0.6B is unchanged. A resident Python IPC server calls audio.cpp through its C ABI on Windows, using CUDA or CPU. No WSL, vLLM or PyTorch is required; R2T2 does not support Vulkan.
+R2T2 is a separate local option. Qwen3-ASR 1.7B is available again through transcribe.cpp, and Qwen 0.6B is unchanged. A resident Python IPC server calls audio.cpp through its C ABI on Windows, using CUDA or CPU. No WSL, vLLM or PyTorch is required; R2T2 does not support Vulkan.
 
 ## Fixed model
 
@@ -23,12 +23,13 @@ in [R2T2-MODEL-LICENSE.txt](../src-tauri/resources/R2T2-MODEL-LICENSE.txt).
 - Language, topic hints and hotwords are fixed for each recording. They are separate from AI polish.
 - VAD retains its trailing audio window but skips inference while an active segment is too short to end. Native captions render directly, without running an unused character-reveal animation.
 - Stop flushes 320 ms of acoustic silence inside the native decoder before collecting the final result. This is inference input, with no timer or extra microphone recording. Paired CUDA checks recovered the missing Chinese tails “带” and “喝” and English sentence tails; 80/160 ms remained insufficient on the Chinese clips. Captured sample counts and the live-feed schedule are unchanged; ending a segment adds bounded decoder work. The opt-in Rust test `real_native_stop_before_caption_refresh_keeps_sentence_tail` covers immediate Stop through the actual server and checks sample accounting.
+- With native ABI 0.5+, CUDA rolling sessions append that complete context to the pending audio and decode it once in the final flush. The adapter enables `confucius4_r2t2.coalesced_finish` before session creation; the native option defaults to false. ABI 0.3/0.4, CPU and nonrolling sessions retain their previous finish path. Empty recordings add no context.
 
 ## Build and packaging
 
 Follow [Development](development.md) to build both native packages and the installer. Native builds require Visual Studio 2022 C++ tools, CMake and Ninja; CUDA builds were validated with CUDA 12.9 and MSVC 14.44. CUDA toolchains reject host compilers newer than Visual Studio 2022: when a newer Visual Studio is the latest installation on the machine, set `VS_INSTALLATION_PATH` to a VS 2022 installation path before running the build.
 
-The build pins audio.cpp revision `6c70f32d0d90a29a9863e556bd9712ce622f868b` and requires an exact match to `scripts/patches/audio-cpp-r2t2-windows-streaming.patch`. It writes libraries, licenses and SHA-256 manifests to ignored `src-tauri/resources/r2t2-native/{cpu,cuda}/`. CUDA targets architectures 75, 80, 86, 89 and 90.
+The build pins audio.cpp revision `6c70f32d0d90a29a9863e556bd9712ce622f868b` and requires an exact match to `scripts/patches/audio-cpp-r2t2-windows-streaming.patch`. Build `speak-flow-r2t2-6` writes libraries, licenses and SHA-256 manifests to ignored `src-tauri/resources/r2t2-native/{cpu,cuda}/`. CUDA targets architectures 75, 80, 86, 89 and 90.
 
 The engine builder validates both manifests and shares byte-identical CUDA/CRT DLLs in `_internal`. Shared files are listed in each copied manifest. Standalone native packages retain their dependencies. Qwen's pinned cu12 provider includes CUDA, Vulkan and CPU; its duplicate base provider is excluded. Model weights are not bundled.
 
@@ -48,6 +49,20 @@ Paired paced server playback for build `speak-flow-r2t2-5` measured:
 Each version ran three repetitions in separate Chinese-first and English-first processes. Later-recording values are medians. Warmup itself took about 0.19 seconds before readiness; total initialization varied from 4.8 to 5.5 seconds across these runs. First-prefix coalescing removes repeated decoding of queued audio. Committed traces and final transcripts matched on the regression clips. These are two latency fixtures, not microphone-to-screen guarantees or a broad accuracy benchmark. The former Qwen 1.7B repeated-recognition strategy still produced its first caption sooner on these clips.
 
 Capture scheduling was also simulated with real inference and 0, 20 and 150 ms of already-captured audio. At 150 ms of offset, two-run median first-caption time improved from 1.06 to 0.94 seconds in Chinese and 1.02 to 0.89 seconds in English; aligned inputs were effectively unchanged. These measurements isolate polling alignment, not the full desktop path. On the same full clips, redundant VAD calls fell from 43 to 5 and from 88 to 23 without changing committed traces or final text.
+
+### R2T2 final acoustic context
+
+Upstream build `light-whisper-asr-9` (the same audio.cpp revision, with the coalesced finish patch) combines the pending real tail and the complete 320 ms acoustic context in one final decode for CUDA rolling sessions. Models, precision, rolling windows and live feed boundaries are unchanged. The figures below were measured by the upstream project on an RTX 4070 SUPER with its own harness; SpeakFlow has not re-measured them.
+
+On that machine, separate resident-model processes ran two rounds in ABBA/BAAB order, with one warmup per case and three measured sweeps per process. Each variant has twelve measured recordings per case. The interval below is `NativeRuntime.finish`; model loading, microphone capture, VAD, IPC and AI polish are outside it.
+
+| Recording | Previous finish median | Combined finish median | Reduction |
+|:--|--:|--:|--:|
+| Chinese, 4.20 s | 85.90 ms | 30.42 ms | 64.6% |
+| English, 10.56 s | 82.04 ms | 38.64 ms | 52.9% |
+| Repeated Chinese, 36 s | 139.50 ms | 67.74 ms | 51.4% |
+
+Rebuilt packaged engines in the upstream run, replayed in old/new/new/old process order with one offline warmup and three paced 16-second streams plus a thirteen-sample tail per process, kept exact final text, language, 256,013 captured samples and the PCM hash in all twelve measured streams. Median finish-request latency including VAD and stdio IPC fell from 201.95 to 73.29 ms; simulated audio-stop-to-final latency fell from 269.59 to 138.63 ms (48.6%). First-caption median was 1,023.64 / 1,029.34 ms. This driver exercises the packaged Python server and scheduling policy; it does not measure Rust microphone capture, desktop rendering or AI polish.
 
 ## Reproduce checks
 

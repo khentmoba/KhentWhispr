@@ -685,6 +685,7 @@ mod tests {
             "openai",
             "deepseek",
             "siliconflow",
+            "openrouter",
             "custom",
             "registered-provider",
         ] {

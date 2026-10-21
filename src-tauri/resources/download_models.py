@@ -457,8 +457,8 @@ def main(engine=None):
         parser = argparse.ArgumentParser()
         parser.add_argument(
             "--engine",
-            default="qwen3-asr-0.6b",
-            choices=["qwen3-asr-0.6b", "confucius4-r2t2"],
+            default="qwen3-asr-1.7b",
+            choices=sorted(LOCAL_ASR_MODELS),
         )
         args = parser.parse_args()
         engine = args.engine

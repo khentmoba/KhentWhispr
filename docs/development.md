@@ -51,6 +51,11 @@ Optional local-model prefetch:
 
 ```bash
 uv run python src-tauri/resources/download_models.py --engine qwen3-asr-0.6b
+uv run python src-tauri/resources/download_models.py --engine qwen3-asr-1.7b
+uv run python src-tauri/resources/download_models.py --engine parakeet-unified-en-0.6b
+uv run python src-tauri/resources/download_models.py --engine parakeet-tdt-0.6b-v2
+uv run python src-tauri/resources/download_models.py --engine canary-qwen-2.5b
+uv run python src-tauri/resources/download_models.py --engine cohere-transcribe-03-2026
 uv run python src-tauri/resources/download_models.py --engine confucius4-r2t2
 ```
 
@@ -116,7 +121,7 @@ validated route/screen choices, probabilities and whether polishing was skipped.
 `Decision model fallback` records HTTP status, transport, malformed-response or
 timeout failures; these retain normal polishing and do not imply a `polish` decision.
 For example, Vercel's HTTP 403 can indicate unavailable model access, while Liquid's
-HTTP 429 can indicate temporary `d1:free` capacity limits. Decision logs omit transcript
+HTTP 429 can indicate temporary rate or capacity limits. Decision logs omit transcript
 content, request bodies and credentials.
 
 Auto-polish bypass and its automatic screen route use an 80% minimum choice
@@ -140,4 +145,5 @@ Generated native libraries, `engine.tar.xz`, model caches, `build/` and installe
 are intentionally ignored. Rebuild them from the tracked scripts and pinned
 dependencies; do not copy local caches or credentials into Git.
 
-See [release procedure](releasing.md) and [R2T2 backend](r2t2-native.md).
+See [release procedure](releasing.md), [R2T2 backend](r2t2-native.md) and
+[current API defaults](api-defaults.md).
