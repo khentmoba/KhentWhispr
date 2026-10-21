@@ -248,6 +248,7 @@ const en = {
     translationAutoPolish: "AI polish auto-enabled",
     translationSaveFailed: "Failed to save translation settings",
     customPromptSaveFailed: "Failed to save custom prompt",
+    profileSaveFailed: "Settings have not been saved to disk. Retry to keep your changes.",
     polishStructureSaveFailed: "Failed to save structure intensity",
     assistantPromptSaveFailed: "Failed to save assistant prompt",
     assistantScreenContextFailed: "Assistant screen context setting failed",

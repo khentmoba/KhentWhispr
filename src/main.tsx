@@ -9,6 +9,7 @@ import MainPage from "./pages/MainPage";
 import AppNavigation from "./components/AppNavigation";
 import { AppUpdateProvider, useAppUpdates } from "./contexts/AppUpdateContext";
 import { useTheme } from "./hooks/useTheme";
+import { useProfileSaveNotifications } from "./hooks/useProfileSaveNotifications";
 import i18n from "./i18n";
 import "./styles/theme.css";
 import "./styles/pages.css";
@@ -66,6 +67,7 @@ function AppWorkspace() {
   const [animClass, setAnimClass] = useState("");
   const isTransitioning = useRef(false);
   useTheme();
+  useProfileSaveNotifications();
 
   useEffect(() => {
     const preloadTimer = window.setTimeout(() => {
