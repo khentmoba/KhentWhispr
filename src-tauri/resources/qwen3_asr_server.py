@@ -50,7 +50,7 @@ class Qwen3ASRServer(BaseASRServer):
     """
 
     def __init__(self, engine=None):
-        engine = engine or os.environ.get("SPEAK_FLOW_ASR_ENGINE", "parakeet-tdt-0.6b-v2")
+        engine = engine or os.environ.get("SPEAK_FLOW_ASR_ENGINE", "qwen3-asr-1.7b")
         if engine not in TRANSCRIBE_CPP_ASR_MODELS:
             raise ValueError(f"Unsupported transcribe.cpp ASR engine: {engine}")
         self.model_config = TRANSCRIBE_CPP_ASR_MODELS[engine]

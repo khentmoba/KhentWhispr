@@ -66,7 +66,7 @@ pub fn get_engine_config_path() -> PathBuf {
 }
 
 /// Engine used when engine.json is missing or names an unknown engine.
-pub const DEFAULT_ENGINE: &str = "parakeet-tdt-0.6b-v2";
+pub const DEFAULT_ENGINE: &str = "qwen3-asr-1.7b";
 
 /// Local engines with a downloadable model. Keep in sync with
 /// `src/lib/asrEngineOptions.ts` and `TRANSCRIBE_CPP_ASR_MODELS`/`LOCAL_ASR_MODELS`
@@ -565,11 +565,8 @@ mod tests {
         {
             assert_eq!(super::configured_engine(Some(engine)), engine);
         }
-        assert_eq!(super::configured_engine(None), "parakeet-tdt-0.6b-v2");
-        assert_eq!(
-            super::configured_engine(Some("invalid")),
-            "parakeet-tdt-0.6b-v2"
-        );
+        assert_eq!(super::configured_engine(None), "qwen3-asr-1.7b");
+        assert_eq!(super::configured_engine(Some("invalid")), "qwen3-asr-1.7b");
     }
 
     #[test]

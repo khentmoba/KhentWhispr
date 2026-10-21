@@ -30,7 +30,7 @@ export function useAsrEngineSettings({
   const modelsRequestId = useRef(0);
   const mounted = useRef(false);
   const transitioning = useRef(false);
-  const [engine, setEngineState] = useState("parakeet-tdt-0.6b-v2");
+  const [engine, setEngineState] = useState("qwen3-asr-1.7b");
   const [engineLoading, setEngineLoading] = useState(true);
   const [onlineAsrApiKey, setOnlineAsrApiKeyState] = useState("");
   const [onlineAsrRegion, setOnlineAsrRegion] = useState("international");
