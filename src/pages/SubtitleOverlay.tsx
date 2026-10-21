@@ -1163,9 +1163,23 @@ export default function SubtitleOverlay() {
 
   const assistantOverlayDismissible = interactiveAssistantResult || conversationOpen;
 
-  const renderAssistantContent = (content: string) => (
+  const scrollRenderedAssistantContent = useCallback(() => {
+    const assistant = assistantTextRef.current;
+    if (assistant && shouldAutoScrollRef.current) assistant.scrollTop = assistant.scrollHeight;
+    const conversation = conversationListRef.current;
+    if (conversation && conversationShouldAutoScrollRef.current) {
+      conversation.scrollTop = conversation.scrollHeight;
+    }
+  }, []);
+
+  const renderAssistantContent = (content: string, streaming = false) => (
     <Suspense fallback={content}>
-      <MarkdownContent content={content} onOpenLink={handleOpenAssistantUrl} />
+      <MarkdownContent
+        content={content}
+        streaming={streaming}
+        onOpenLink={handleOpenAssistantUrl}
+        onContentRendered={scrollRenderedAssistantContent}
+      />
     </Suspense>
   );
 
@@ -1267,7 +1281,7 @@ export default function SubtitleOverlay() {
                       <MessageCircle size={12} />
                     </span>
                     <div className="subtitle-conversation-bubble">
-                      {conversationDraft ? renderAssistantContent(conversationDraft) : t("subtitle.conversation.thinking")}
+                      {conversationDraft ? renderAssistantContent(conversationDraft, true) : t("subtitle.conversation.thinking")}
                     </div>
                   </div>
                 </article>
@@ -1365,7 +1379,7 @@ export default function SubtitleOverlay() {
                       {interimSegments.tentativeText}
                     </span>
                   </>
-                ) : assistantPanelActive ? renderAssistantContent(phase === "result" ? text : smoothText)
+                ) : assistantPanelActive ? renderAssistantContent(phase === "result" ? text : smoothText, phase !== "result")
                   : phase === "result" ? text : segmentGraphemes(smoothText).map((g, i) => (
                   <span key={i} className="stream-char">{g}</span>
                 ))}

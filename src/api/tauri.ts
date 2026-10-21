@@ -211,20 +211,24 @@ export function setSoundEnabled(enabled: boolean): Promise<void> {
   return invokeCommand<void>("set_sound_enabled", { enabled });
 }
 
-export function setAiPolishConfig(enabled: boolean, apiKey: string): Promise<void> {
-  return invokeCommand<void>("set_ai_polish_config", { enabled, apiKey });
+export function setAiPolishConfig(enabled: boolean, apiKey?: string, provider?: string): Promise<void> {
+  return invokeCommand<void>("set_ai_polish_config", {
+    enabled,
+    ...(apiKey === undefined ? {} : { apiKey }),
+    ...(provider === undefined ? {} : { provider }),
+  });
 }
 
-export function getAiPolishApiKey(): Promise<string> {
-  return invokeCommand<string>("get_ai_polish_api_key");
+export function getAiPolishApiKey(provider?: string): Promise<string> {
+  return invokeCommand<string>("get_ai_polish_api_key", provider === undefined ? undefined : { provider });
 }
 
 export function setJevConfig(enabled: boolean, provider: JevProvider): Promise<void> {
   return invokeCommand<void>("set_jev_config", { enabled, provider });
 }
 
-export function saveAiPolishApiKey(apiKey: string): Promise<void> {
-  return invokeCommand<void>("set_ai_polish_api_key", { apiKey });
+export function saveAiPolishApiKey(apiKey: string, provider?: string): Promise<void> {
+  return invokeCommand<void>("set_ai_polish_api_key", { apiKey, ...(provider === undefined ? {} : { provider }) });
 }
 
 export function setJevProvider(provider: JevProvider): Promise<void> {
@@ -294,6 +298,12 @@ export interface AssistantConversationTurn {
 
 // Profile commands
 export const getUserProfile = createNoArgCommand<UserProfile>("get_user_profile");
+export interface ProfileSaveStatus {
+  revision: number;
+  state: "saved" | "saving" | "error";
+}
+export const getProfileSaveStatus = createNoArgCommand<ProfileSaveStatus>("get_profile_save_status");
+export const retryProfileSave = createNoArgCommand<void>("retry_profile_save");
 
 export function setAutostartMinimized(enabled: boolean): Promise<void> {
   return invokeCommand<void>("set_autostart_minimized", { enabled });

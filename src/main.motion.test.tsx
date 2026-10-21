@@ -21,6 +21,7 @@ vi.mock("./contexts/AppUpdateContext", () => ({
   AppUpdateProvider: ({ children }: { children: ReactNode }) => children,
   useAppUpdates: () => ({ latestAvailableVersion: null, updateInstalling: false }),
 }));
+vi.mock("./hooks/useProfileSaveNotifications", () => ({ useProfileSaveNotifications: vi.fn() }));
 vi.mock("sonner", () => ({ Toaster: () => null }));
 vi.mock("./i18n", () => ({ default: { t: (key: string) => key } }));
 
@@ -55,6 +56,7 @@ vi.mock("./pages/SettingsPage", () => ({
 vi.mock("./pages/UpdatesPage", () => ({ default: () => <main data-testid="updates-page">Updates workspace</main> }));
 
 import { App } from "./main";
+import { useProfileSaveNotifications } from "./hooks/useProfileSaveNotifications";
 
 function setReducedMotion(matches: boolean) {
   Object.defineProperty(window, "matchMedia", {
@@ -69,11 +71,21 @@ function setReducedMotion(matches: boolean) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.mocked(useProfileSaveNotifications).mockClear();
 });
 
 afterEach(() => {
   vi.runOnlyPendingTimers();
   vi.useRealTimers();
+});
+
+describe("App profile-save notifications", () => {
+  it("mounts the notification hook with the main app", () => {
+    setReducedMotion(true);
+    render(<App />);
+
+    expect(useProfileSaveNotifications).toHaveBeenCalled();
+  });
 });
 
 describe("App page motion", () => {

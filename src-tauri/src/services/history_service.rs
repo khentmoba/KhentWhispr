@@ -120,6 +120,14 @@ pub struct HistoryStats {
     pub total_latency: LatencyStats,
 }
 
+struct StatsCache {
+    // SQLite data_version is comparable only on the same connection.
+    connection: Connection,
+    value: Option<(i64, HistoryStats)>,
+}
+
+static STATS_CACHE: parking_lot::Mutex<Option<StatsCache>> = parking_lot::Mutex::new(None);
+
 fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -634,65 +642,104 @@ fn latency_stats(mut values: Vec<u64>) -> LatencyStats {
 pub async fn stats() -> Result<HistoryStats, String> {
     initialize().await?;
     tokio::task::spawn_blocking(move || {
-        let connection = open_connection()?;
-        let (total, success, failed, total_characters) = connection
-            .query_row(
-                r#"
+        let mut slot = STATS_CACHE.lock();
+        if slot.is_none() {
+            *slot = Some(StatsCache {
+                connection: open_connection()?,
+                value: None,
+            });
+        }
+        let cache = slot.as_mut().expect("statistics connection initialized");
+        let version = stats_data_version(&cache.connection)?;
+        if let Some((cached_version, value)) = &cache.value {
+            if *cached_version == version {
+                return Ok(value.clone());
+            }
+        }
+        // Both queries must see the same database snapshot, even during writes.
+        let transaction = cache
+            .connection
+            .transaction()
+            .map_err(|error| format!("Failed to begin history stats transaction: {error}"))?;
+        let result = read_stats(&transaction)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("Failed to commit history stats transaction: {error}"))?;
+        let current_version = stats_data_version(&cache.connection)?;
+        cache.value = (version == current_version).then(|| (version, result.clone()));
+        Ok(result)
+    })
+    .await
+    .map_err(|error| format!("Failed to execute transcription history stats task: {error}"))?
+}
+
+fn stats_data_version(connection: &Connection) -> Result<i64, String> {
+    connection
+        .pragma_query_value(None, "data_version", |row| row.get(0))
+        .map_err(|error| format!("Failed to read history data version: {error}"))
+}
+
+fn read_stats(connection: &Connection) -> Result<HistoryStats, String> {
+    #[cfg(test)]
+    tests::record_stats_scan();
+    let (total, success, failed, total_characters) = connection
+        .query_row(
+            r#"
                 SELECT COUNT(*),
                        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END),
                        SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END),
                        SUM(LENGTH(text))
                 FROM transcription_history
                 "#,
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, Option<i64>>(1)?.unwrap_or_default(),
-                        row.get::<_, Option<i64>>(2)?.unwrap_or_default(),
-                        row.get::<_, Option<i64>>(3)?.unwrap_or_default(),
-                    ))
-                },
-            )
-            .map_err(|error| format!("Failed to calculate history overview stats: {error}"))?;
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<i64>>(1)?.unwrap_or_default(),
+                    row.get::<_, Option<i64>>(2)?.unwrap_or_default(),
+                    row.get::<_, Option<i64>>(3)?.unwrap_or_default(),
+                ))
+            },
+        )
+        .map_err(|error| format!("Failed to calculate history overview stats: {error}"))?;
 
-        let mut asr = Vec::new();
-        let mut polish = Vec::new();
-        let mut total_latency = Vec::new();
-        let mut statement = connection
+    let mut asr = Vec::new();
+    let mut polish = Vec::new();
+    let mut total_latency = Vec::new();
+    let mut statement = connection
             .prepare(
                 "SELECT asr_ms, polish_ms, total_ms FROM transcription_history WHERE status = 'success'",
             )
             .map_err(|error| format!("Failed to prepare history latency query: {error}"))?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((
-                    optional_u64(row.get(0)?),
-                    optional_u64(row.get(1)?),
-                    optional_u64(row.get(2)?),
-                ))
-            })
-            .map_err(|error| format!("Failed to query history latency stats: {error}"))?;
-        for row in rows {
-            let (asr_ms, polish_ms, total_ms) =
-                row.map_err(|error| format!("Failed to parse history latency stats: {error}"))?;
-            asr.extend(asr_ms);
-            polish.extend(polish_ms);
-            total_latency.extend(total_ms);
-        }
-
-        Ok(HistoryStats {
-            total: u64::try_from(total).unwrap_or_default(),
-            success: u64::try_from(success).unwrap_or_default(),
-            failed: u64::try_from(failed).unwrap_or_default(),
-            total_characters: u64::try_from(total_characters).unwrap_or_default(),
-            asr: latency_stats(asr),
-            polish: latency_stats(polish),
-            total_latency: latency_stats(total_latency),
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                optional_u64(row.get(0)?),
+                optional_u64(row.get(1)?),
+                optional_u64(row.get(2)?),
+            ))
         })
-    })
-    .await
-    .map_err(|error| format!("Failed to execute transcription history stats task: {error}"))?
+        .map_err(|error| format!("Failed to query history latency stats: {error}"))?;
+    for row in rows {
+        let (asr_ms, polish_ms, total_ms) =
+            row.map_err(|error| format!("Failed to parse history latency stats: {error}"))?;
+        asr.extend(asr_ms);
+        polish.extend(polish_ms);
+        total_latency.extend(total_ms);
+    }
+
+    let result = HistoryStats {
+        total: u64::try_from(total).unwrap_or_default(),
+        success: u64::try_from(success).unwrap_or_default(),
+        failed: u64::try_from(failed).unwrap_or_default(),
+        total_characters: u64::try_from(total_characters).unwrap_or_default(),
+        asr: latency_stats(asr),
+        polish: latency_stats(polish),
+        total_latency: latency_stats(total_latency),
+    };
+    #[cfg(test)]
+    tests::after_stats_scan();
+    Ok(result)
 }
 
 fn cleanup_audio_if_unreferenced_with_connection(connection: &Connection, audio_file: &str) {
@@ -866,6 +913,8 @@ mod tests {
         latency_stats, map_stored_record, now_millis, release_audio_lease_with_connection,
         safe_audio_path, table_has_column, HISTORY_COLUMNS, HISTORY_SCHEMA_VERSION,
     };
+
+    include!("history_stats_tests.rs");
 
     #[test]
     fn latency_percentiles_are_stable() {

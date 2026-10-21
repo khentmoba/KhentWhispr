@@ -116,17 +116,17 @@ Upstream and SpeakFlow share no git merge base (SpeakFlow's history starts at
 | Commit | Subject | Disposition | Reason and evidence |
 |:--|:--|:--|:--|
 | [`145bf29`](https://github.com/sypsyp97/light-whisper/commit/145bf297cca2562b65fcea6cde3ef8c3922b8d9d) | fix(security): upgrade all KaTeX dependency paths | Ported | `katex` 0.18.2 with a pnpm override so `rehype-katex` no longer pulls 0.16.47; ported `MarkdownContentSecurity.test.tsx`. The upstream formal evidence note was not copied because `formal/` artifacts are hashed. |
-| [`40f2dcb`](https://github.com/sypsyp97/light-whisper/commit/40f2dcb561a9f2616c70dc526a193f976169d93e) | refactor(app): harden settings and streamline runtime paths | Partly ported | Ported: `engine.json` writers (engine, endpoints, models directory, GPU idle) now run one locked read-modify-write, with the upstream concurrency tests renamed to `SPEAK_FLOW_*`. Deferred: `build_engine.py`, `release.sh` and the atomicity test changes (our `build_engine.py` already differs from the ledger baseline, and the engine archive was not rebuilt here); `app_state`, profile and `lib.rs` changes; the `qwen_hotword_service` refactor was skipped as behavior-neutral without evidence. |
-| [`47064e2`](https://github.com/sypsyp97/light-whisper/commit/47064e24525b36b4b539d2c95cd6ab9d316931ab) | perf(asr): coalesce R2T2 final acoustic context | Evaluate separately | The Python change in `r2t2_native.py` is gated on native ABI 5 and the `confucius4_r2t2.coalesced_finish` option. It needs the patched audio.cpp runtime rebuilt; the benefit is unmeasured here. |
-| [`c64c7f1`](https://github.com/sypsyp97/light-whisper/commit/c64c7f1) | perf(asr): reuse exact streaming prefixes and log-mel work | Evaluate separately | Native C++ patch and runtime rebuild required. Not verified here. |
-| [`507ed50`](https://github.com/sypsyp97/light-whisper/commit/507ed50) | perf(asr): verify temporal drafts with scalar weight reuse | Evaluate separately | Native C++ patch and runtime rebuild required. Not verified here. |
-| [`56d37cf`](https://github.com/sypsyp97/light-whisper/commit/56d37cf) | Refactor LLM model defaults and update API documentation | Evaluate separately (maintainer decision) | Changes the default Alibaba ASR model to `qwen-audio-3.1-asr-flash` and adds a new DashScope request body and response parser for `qwen-audio-3.*-asr-flash`. This changes a cloud default and the API contract, and it cannot be checked against DashScope here. The LLM default changes are not reviewed. |
-| [`22a4128`](https://github.com/sypsyp97/light-whisper/commit/22a4128) | feat(llm): add OpenRouter provider and fix reasoning controls | Evaluate separately | Optional LLM provider feature outside ASR. |
-| [`f644f3e`](https://github.com/sypsyp97/light-whisper/commit/f644f3e) | chore(jev): change default OpenRouter decisions model | Deferred | Depends on `22a4128`. |
-| [`c651fda`](https://github.com/sypsyp97/light-whisper/commit/c651fda) | fix(llm): remove fixed output caps and harden provider fallback | Evaluate separately | LLM transport change; needs provider-level evidence. |
-| [`7651eba`](https://github.com/sypsyp97/light-whisper/commit/7651eba) | test(llm): simplify the streaming expectation | Deferred | Test-only follow-up to `c651fda`. |
-| [`f83acfd`](https://github.com/sypsyp97/light-whisper/commit/f83acfd) | fix(llm): discover DeepSeek image capabilities from metadata | Evaluate separately | LLM capability discovery outside ASR. |
-| [`af52448`](https://github.com/sypsyp97/light-whisper/commit/af52448) | Add profile save notifications and related tests | Evaluate separately | UI feature that also touches history and profile code. |
+| [`40f2dcb`](https://github.com/sypsyp97/light-whisper/commit/40f2dcb561a9f2616c70dc526a193f976169d93e) | refactor(app): harden settings and streamline runtime paths | Ported, adapted | Earlier pass: locked `engine.json` read-modify-write. This pass: provider-explicit polish credentials (the `sync_*_api_key` helpers removed; polish key IPC takes an optional provider), `app_state`, profile, `lib.rs`, `qwen_hotword_service`, `useTheme`, `tauri.ts`, the CI and `release.sh` changes, and new `polish_credential_tests.rs` (keyring service changed to SpeakFlow's). `build_engine.py` gained the R2T2 native file-map, manifest-provenance and `shared_files` checks. Not taken: the retired-package and Vulkan name checks (SpeakFlow still bundles `transcribe_cpp_native_cu12` and Vulkan); four CI checks for upstream's shared-runtime packager scripts, which SpeakFlow does not have; and `SettingsPage`/`RecordingContext` polish-UI and startup-sync code. Formal command anchors updated for the now-generic polish commands. |
+| [`47064e2`](https://github.com/sypsyp97/light-whisper/commit/47064e24525b36b4b539d2c95cd6ab9d316931ab) | perf(asr): coalesce R2T2 final acoustic context | Ported | `r2t2_native.py` coalesced-finish path, the audio.cpp patch and the runtime build ID (`speak-flow-r2t2-6`), with `test_r2t2_finish_context.py`. The CPU runtime was rebuilt locally; CUDA was not, because the native build needs Visual Studio 2022. `scripts/benchmark_r2t2_finish.py` was not ported, so the speedup is not measured here. |
+| [`c64c7f1`](https://github.com/sypsyp97/light-whisper/commit/c64c7f1) | perf(asr): reuse exact streaming prefixes and log-mel work | Blocked | Builds on upstream's shared native ASR runtime from `8e97604`, which SpeakFlow deliberately defers (Vulkan, model package and split installer; see above). Needs a maintainer decision on `8e97604` first. |
+| [`507ed50`](https://github.com/sypsyp97/light-whisper/commit/507ed50) | perf(asr): verify temporal drafts with scalar weight reuse | Blocked | Same dependency on `8e97604` as `c64c7f1`. |
+| [`56d37cf`](https://github.com/sypsyp97/light-whisper/commit/56d37cf) | Refactor LLM model defaults and update API documentation | Ported, adapted | LLM defaults, the Alibaba `qwen-audio-3.1-asr-flash` default with the native `input_audio` request path (legacy `qwen3-asr-flash` kept as a fallback), JEV defaults and the Vercel legacy transport. SpeakFlow's hotword system message is kept. Skipped: the selection-assistant and provider-discovery UI tests, `DEFAULT_SCREEN_VISION_*` and the JEV connection-map tests, none of which exist here. The DashScope request was not exercised against the live service. |
+| [`22a4128`](https://github.com/sypsyp97/light-whisper/commit/22a4128) | feat(llm): add OpenRouter provider and fix reasoning controls | Ported | `zh.ts` is not carried; `en.ts` gets the OpenRouter line. |
+| [`f644f3e`](https://github.com/sypsyp97/light-whisper/commit/f644f3e) | chore(jev): change default OpenRouter decisions model | Ported | `JevSettingsSection.test.tsx` skipped; that component does not exist here. |
+| [`c651fda`](https://github.com/sypsyp97/light-whisper/commit/c651fda) | fix(llm): remove fixed output caps and harden provider fallback | Ported, code only | The fixed 4096 output caps are removed. The new `formal/LlmRequestParameters.*` model and the `formal/README.md` and `verification.json` edits were not copied: our hashed `formal/` files already differ from upstream's parent. |
+| [`7651eba`](https://github.com/sypsyp97/light-whisper/commit/7651eba) | test(llm): simplify the streaming expectation | Ported | One-line test expectation in `llm_client.rs`. |
+| [`f83acfd`](https://github.com/sypsyp97/light-whisper/commit/f83acfd) | fix(llm): discover DeepSeek image capabilities from metadata | Ported | Clean apply to `llm_provider.rs` and `docs/api-defaults.md`. |
+| [`af52448`](https://github.com/sypsyp97/light-whisper/commit/af52448) | Add profile save notifications and related tests | Ported | Save-status toasts with retry (`get_profile_save_status`, `retry_profile_save`), cached transactional history statistics, window-targeted selection events and streaming Markdown, with their Rust and frontend tests (env names `SPEAK_FLOW_*`). Its `formal/verification.json` inventory entries and the formal README counts were applied; `formal/evidence/optimization-20261020.md` was not copied. Two new user-facing strings are English; `zh.ts` is not carried. |
 | [`1e8cc10`](https://github.com/sypsyp97/light-whisper/commit/1e8cc10) | fix(windows): use full-resolution default window icon | Skipped | Upstream branding asset; SpeakFlow keeps its own icons. |
 | [`69497ea`](https://github.com/sypsyp97/light-whisper/commit/69497ea) | chore(release): bump version to 1.7.8 | Skipped | SpeakFlow keeps its own version, signed updater key and release process. |
 
@@ -158,7 +158,21 @@ modified checkout. Local results are recorded below. Live microphone/focus
 behavior, packaged GPU inference and the deferred engine's performance require
 separate checks.
 
-### Results 2026-10-21
+### Results 2026-10-21, upstream completion pass
+
+- Rust: `cargo test --all-targets --locked --no-fail-fast` with a fresh temporary `SPEAK_FLOW_DATA_DIR`,
+  skipping only the documented hotword timing test: library 764 passed, 0 failed, 12 ignored;
+  integration tests passed. `cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings` passed.
+- Frontend: `vitest run --exclude src/perf/** --maxWorkers=2`: 58 files and 520 tests passed.
+  `tsc --noEmit`, `pnpm lint`, `pnpm build`, `pnpm check:bundle` and `pnpm perf:fluidity` passed.
+- Python: `unittest discover` on `src-tauri/resources` passed 149 tests; `compileall` passed;
+  `test_build_engine_atomicity`, `test_release_ci`, `test_generate_update_manifest`, `test_check_formal`,
+  `test_async_ownership_traces` and `test_async_output_wiring` passed; `test_ci_fail_fast` skipped its 2
+  platform tests. `check_formal.py --inventory-only` passed (128 commands, 20 event families).
+- Not run here: the TLC/Lean model suite, live DashScope, OpenRouter or Vercel requests, the packaged app,
+  and the CUDA R2T2 runtime.
+
+### Results 2026-10-21, first pass
 
 - Frontend: full `vitest run --exclude src/perf/** --maxWorkers=2`: 56 files and 455
   tests passed. `pnpm perf:fluidity`, `tsc --noEmit`, `pnpm lint`, `pnpm build` and
