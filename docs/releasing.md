@@ -30,6 +30,13 @@ Use `--reuse-engine` only when the packaged Python code, native libraries and de
 
 For a manual release, follow the same gates: [local checks](development.md#checks), verified engine and installer, candidate commit, matching remote CI, then tag and Release. For multiline notes, use `gh release create --notes-file <file> --verify-tag`. Do not publish a tag for a failed candidate.
 
+## Announce
+
+Announce the published build in the project's Discord release channel. The
+`/skill:speakflow-release` step 4 holds the destination, the poster and the
+announcement format; run it rather than posting by hand, so a release produces
+exactly one announcement.
+
 ## Recovery and edits
 
 - Before tagging: fix the failure and validate a new candidate.

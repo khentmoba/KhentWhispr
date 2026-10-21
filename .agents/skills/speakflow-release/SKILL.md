@@ -1,11 +1,12 @@
 ---
 name: speakflow-release
-description: Publish a SpeakFlow release with signed in-app updates. Use when asked to trigger a release, ship a version, or publish an app update.
+description: Publish a SpeakFlow release with signed in-app updates, then announce it on Discord. Use when asked to trigger a release, ship a version, publish an app update, or announce a release.
 ---
 
 # SpeakFlow release
 
-Create an actual GitHub Release for `khentmoba/SpeakFlow`, not a release PR.
+Create an actual GitHub Release for `khentmoba/SpeakFlow`, not a release PR, and
+announce the published build in the project's Discord release channel.
 Creating or editing this skill is not authorization to publish.
 Run commands from the repository root.
 
@@ -86,3 +87,53 @@ update success after a maintainer-authorized test from an older compatible
 installed build through Settings, including restart and version confirmation.
 Publishing alone does not update the developer's installed app; versions through
 1.0.1 need a one-time manual installation to gain the native updater.
+
+## 4. Announce the release on Discord
+
+The release is not finished until the announcement exists. Users find new builds
+through the channel, not through the GitHub tag, so publishing without an
+announcement ships a release nobody hears about.
+
+- **Destination:** the **Felary** server (`1537573945992024125`), channel
+  `#speakflow-releases` (`1562407200259837978`), posted by the
+  **SpeakFlow Release Bot** webhook (`1562407289510436894`).
+- **Poster:** `~/.config/speakflow/post-release.mjs`. It reads the webhook ID and
+  token from `~/.config/speakflow/discord-release-webhook.json`, so the token
+  never reaches a command line or a transcript. It prints the payload and
+  sends nothing until `--send` is passed.
+- The Discord MCP tools post plain text only, and the announcement format needs
+  an embed. Use the helper instead of adding a second posting path.
+
+Write one notes file and use it for both the GitHub release and the
+announcement. The helper turns each non-empty line into a `- ` bullet, so one
+concrete user-facing change per line is the unit. Keep the file outside the
+checkout: the release script rejects untracked files in the working tree.
+
+```bash
+node ~/.config/speakflow/post-release.mjs --version <X.Y.Z> \
+  --notes <notes-file> \
+  --link https://github.com/khentmoba/SpeakFlow/releases/download/<X.Y.Z>/SpeakFlow_<X.Y.Z>_x64-setup.exe \
+  --configuration "Windows x64 (NSIS)"
+```
+
+Run it without `--send` first and read the printed payload: it must name the
+version you published and a download URL that resolves to that release's
+installer. Add `--send` to post.
+
+The installer is around 28 MB, above Discord's 10 MB webhook upload limit, so
+the announcement links to the published asset instead of attaching it. The
+helper rejects an oversized `--file` with that explanation; switch to `--link`.
+
+Post once. After an uncertain response, read `#speakflow-releases` before
+retrying so a second announcement is not created. The announcement is authored
+by the webhook, so the MCP bot cannot edit it; a correction means deleting the
+post and posting again, which needs the maintainer's approval.
+
+If the helper or its config is missing, finish the release and report the
+announcement as blocked, with what is missing.
+
+Done when the channel holds exactly one announcement for this version, and the
+report below includes its message ID and link.
+
+Report the release URL, version/tag, candidate SHA, CI result, feed
+verification, and the Discord message ID and link.
