@@ -10,7 +10,9 @@ let mountedConsumers = 0;
 let sharedTheme: ThemeMode | undefined;
 
 function themeMode(value: string | null): ThemeMode {
-  return value === "light" || value === "dark" ? value : "system";
+  if (value === "light" || value === "dark" || value === "system") return value;
+  // A fresh install has no stored choice, so the app opens in the dark theme.
+  return "dark";
 }
 
 interface UseThemeReturn {
