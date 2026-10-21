@@ -104,7 +104,9 @@ fn endpoint_for(provider: JevProvider, endpoint_override: Option<&str>) -> Strin
     let trimmed = endpoint.trim_end_matches('/');
     let path = provider.path();
     let lower = trimmed.to_ascii_lowercase();
-    if lower.ends_with(&path.to_ascii_lowercase())
+    if provider == JevProvider::Vercel && lower.ends_with("/v4/ai") {
+        format!("{trimmed}/evaluation-model")
+    } else if lower.ends_with(&path.to_ascii_lowercase())
         || (provider == JevProvider::Vercel && lower.ends_with(LEGACY_VERCEL_PATH))
     {
         trimmed.to_string()

@@ -87,17 +87,16 @@ async fn transcribe_via_dashscope_asr(
     let data_url = format!("data:audio/wav;base64,{}", b64(&audio_wav));
     let system_text = hotword_context(state);
 
-    let mut messages = Vec::new();
-    if !system_text.is_empty() {
-        messages.push(serde_json::json!({
+    let messages = vec![
+        serde_json::json!({
             "role": "system",
             "content": [{"text": system_text}]
-        }));
-    }
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": [{"audio": data_url}]
-    }));
+        }),
+        serde_json::json!({
+            "role": "user",
+            "content": [{"audio": data_url}]
+        }),
+    ];
 
     let native_asr = model.starts_with("qwen-audio-3.")
         && model.contains("-asr-flash")

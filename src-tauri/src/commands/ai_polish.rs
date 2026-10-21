@@ -80,9 +80,9 @@ pub async fn get_ai_polish_api_key(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    Ok(llm_provider::load_api_key_for_active_provider(
+    Ok(llm_provider::load_api_key_for_provider(
         &app_handle,
-        state.inner(),
+        &state.active_llm_provider(),
     ))
 }
 
