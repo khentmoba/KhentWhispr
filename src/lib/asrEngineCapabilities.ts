@@ -1,6 +1,10 @@
 export type AsrEngineKey =
   | "qwen3-asr-0.6b"
   | "confucius4-r2t2"
+  | "qwen3-asr-1.7b"
+  | "parakeet-unified-en-0.6b"
+  | "parakeet-tdt-0.6b-v2"
+  | "canary-qwen-2.5b"
   | "glm-asr"
   | "alibaba-asr";
 
@@ -17,6 +21,10 @@ export type AsrEngineCapability = AsrEngineCapabilityBase & (
 export const ASR_ENGINE_CAPABILITIES: Record<AsrEngineKey, AsrEngineCapability> = {
   "qwen3-asr-0.6b": { execution: "local", final: true, interim: true, downloadSize: "850 MB" },
   "confucius4-r2t2": { execution: "local", final: true, interim: true, downloadSize: "2.48 GB" },
+  "qwen3-asr-1.7b": { execution: "local", final: true, interim: true, downloadSize: "2.19 GB" },
+  "parakeet-unified-en-0.6b": { execution: "local", final: true, interim: true, downloadSize: "731 MB" },
+  "parakeet-tdt-0.6b-v2": { execution: "local", final: true, interim: true, downloadSize: "730 MB" },
+  "canary-qwen-2.5b": { execution: "local", final: true, interim: true, downloadSize: "2.80 GB" },
   "glm-asr": { execution: "cloud", final: true, interim: false, downloadSize: null },
   "alibaba-asr": { execution: "cloud", final: true, interim: false, downloadSize: null },
 };

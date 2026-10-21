@@ -236,17 +236,13 @@ pub async fn set_engine(
     state: tauri::State<'_, AppState>,
     engine: String,
 ) -> Result<String, AppError> {
-    const VALID: &[&str] = &[
-        "qwen3-asr-0.6b",
-        "confucius4-r2t2",
-        "glm-asr",
-        "alibaba-asr",
-    ];
-    if !VALID.contains(&engine.as_str()) {
+    if !paths::is_supported_engine(&engine) {
         return Err(AppError::Other(format!(
             "Unsupported engine type: {}. Valid values: {}",
             engine,
-            VALID.join(", ")
+            [paths::LOCAL_ASR_ENGINES, paths::ONLINE_ASR_ENGINES]
+                .concat()
+                .join(", ")
         )));
     }
 

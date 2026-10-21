@@ -1,6 +1,6 @@
 # R2T2 native backend
 
-R2T2 replaces the Qwen3-ASR 1.7B option. Qwen 0.6B is unchanged. A resident Python IPC server calls audio.cpp through its C ABI on Windows, using CUDA or CPU. No WSL, vLLM or PyTorch is required; R2T2 does not support Vulkan.
+R2T2 is a separate local option. Qwen3-ASR 1.7B is available again through transcribe.cpp, and Qwen 0.6B is unchanged. A resident Python IPC server calls audio.cpp through its C ABI on Windows, using CUDA or CPU. No WSL, vLLM or PyTorch is required; R2T2 does not support Vulkan.
 
 ## Fixed model
 

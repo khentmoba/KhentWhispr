@@ -38,11 +38,15 @@ Basic local dictation works without an LLM account. For rewriting, translation o
 | Engine | Processing | Setup |
 |:--|:--|:--|
 | **Qwen3-ASR 0.6B Q8** | Local · CUDA / Vulkan / CPU | Download ~850 MB; multilingual dictation. |
+| **Qwen3-ASR 1.7B Q8** | Local · CUDA / Vulkan / CPU | Download ~2.19 GB; larger multilingual model. |
+| **Parakeet Unified EN 0.6B Q8** | Local · CUDA / Vulkan / CPU | Download ~731 MB; English dictation. |
+| **Parakeet TDT 0.6B v2 Q8** | Local · CUDA / Vulkan / CPU | Download ~730 MB; English dictation. |
+| **Canary-Qwen 2.5B Q8** | Local · CUDA / Vulkan / CPU | Download ~2.80 GB; English dictation. |
 | **Confucius4-R2T2 Q8** | Local · CUDA / CPU | Download ~2.48 GB; native streaming with language and topic hints. |
 | **GLM-ASR** | Cloud · final results | API key and region. |
 | **Alibaba DashScope** | Cloud · final results | API key, region and model. |
 
-Both local engines run on Windows without WSL. Models download separately and are cached; FireRedVAD is bundled. GPU acceleration is optional. R2T2's committed subtitle text does not roll back, while its preview can change. Streaming alone does not guarantee lower latency; see [measured behavior and limitations](docs/r2t2-native.md).
+All local engines run on Windows without WSL. Models download separately and are cached; FireRedVAD is bundled. GPU acceleration is optional. R2T2's committed subtitle text does not roll back, while its preview can change. Streaming alone does not guarantee lower latency; see [measured behavior and limitations](docs/r2t2-native.md).
 
 ### Learning corrections in other apps
 
@@ -68,7 +72,7 @@ Search options include provider-native search where supported, keyless Bing snip
 <details>
 <summary><strong>Upgrading from before 1.6</strong></summary>
 
-Saved Qwen 1.7B selections migrate to R2T2, which needs its own model download. Qwen 0.6B and existing model caches are preserved. R2T2 has a separate [model license](src-tauri/resources/R2T2-MODEL-LICENSE.txt).
+Saved Qwen 1.7B selections are honored again and use Qwen3-ASR 1.7B. If that model is not cached yet, the app asks you to download it (about 2.19 GB). Qwen 0.6B, R2T2 and existing model caches are preserved. R2T2 has a separate [model license](src-tauri/resources/R2T2-MODEL-LICENSE.txt).
 
 </details>
 
@@ -107,6 +111,6 @@ See the [Code signing policy](docs/code-signing.md).
 
 [Build & troubleshoot](docs/development.md) · [Release procedure](docs/releasing.md) · [R2T2 backend](docs/r2t2-native.md) · [Formal verification](formal/README.md)
 
-Built with Tauri, React and Rust, using Qwen3-ASR / transcribe.cpp, Confucius4-R2T2 / audio.cpp and FireRedVAD.
+Built with Tauri, React and Rust, using Qwen3-ASR, Parakeet and Canary-Qwen through transcribe.cpp, Confucius4-R2T2 through audio.cpp, and FireRedVAD.
 
 SpeakFlow is open-source software under [GPL-3.0-only](LICENSE). Third-party code and models retain their own terms; see [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

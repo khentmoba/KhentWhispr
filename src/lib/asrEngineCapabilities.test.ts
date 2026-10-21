@@ -8,6 +8,10 @@ describe("ASR engine capabilities", () => {
   it.each([
     ["qwen3-asr-0.6b", { execution: "local", final: true, interim: true, downloadSize: "850 MB" }],
     ["confucius4-r2t2", { execution: "local", final: true, interim: true, downloadSize: "2.48 GB" }],
+    ["qwen3-asr-1.7b", { execution: "local", final: true, interim: true, downloadSize: "2.19 GB" }],
+    ["parakeet-unified-en-0.6b", { execution: "local", final: true, interim: true, downloadSize: "731 MB" }],
+    ["parakeet-tdt-0.6b-v2", { execution: "local", final: true, interim: true, downloadSize: "730 MB" }],
+    ["canary-qwen-2.5b", { execution: "local", final: true, interim: true, downloadSize: "2.80 GB" }],
     ["glm-asr", { execution: "cloud", final: true, interim: false, downloadSize: null }],
     ["alibaba-asr", { execution: "cloud", final: true, interim: false, downloadSize: null }],
   ] as const)("%s exposes its product capability contract", (engineKey, expected) => {

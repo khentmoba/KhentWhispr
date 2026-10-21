@@ -331,5 +331,76 @@ class Qwen3ASRServerTests(unittest.TestCase):
         self.assertEqual(result["error"], "reload")
 
 
+class TranscribeCppEngineTests(unittest.TestCase):
+    def test_parakeet_engine_loads_through_transcribe_cpp_with_its_display_name(self):
+        FakeModel.instances = []
+        fake_module = types.SimpleNamespace(Model=FakeModel)
+        with (
+            mock.patch.object(qwen3_asr_server.Qwen3ASRServer, "_detect_device", return_value="cpu"),
+            mock.patch.object(
+                qwen3_asr_server.Qwen3ASRServer, "_resolve_model_path", return_value="model.gguf"
+            ),
+            mock.patch.object(qwen3_asr_server.Qwen3ASRServer, "_warmup_inference"),
+            mock.patch.object(qwen3_asr_server, "FireRedVad", return_value=FakeVad([])),
+            mock.patch.dict(sys.modules, {"transcribe_cpp": fake_module}),
+        ):
+            server = qwen3_asr_server.Qwen3ASRServer(engine="parakeet-unified-en-0.6b")
+            result = server.initialize()
+
+        self.assertEqual(server.display_name, "Parakeet Unified EN 0.6B")
+        self.assertTrue(result["success"])
+        self.assertTrue(result["message"].startswith("Parakeet Unified EN 0.6B initialized successfully in "))
+        self.assertTrue(result["message"].endswith(" seconds"))
+        self.assertEqual(FakeModel.instances[0].path, "model.gguf")
+
+    def test_missing_parakeet_model_names_the_engine_and_file(self):
+        with mock.patch.object(qwen3_asr_server.Qwen3ASRServer, "_resolve_model_path", return_value=None):
+            server = qwen3_asr_server.Qwen3ASRServer(engine="parakeet-tdt-0.6b-v2")
+            result = server.initialize()
+
+        self.assertFalse(result["success"])
+        self.assertEqual(
+            result["error"],
+            "Parakeet TDT 0.6B v2 Q8 model not downloaded: parakeet-tdt-0.6b-v2-Q8_0.gguf",
+        )
+        self.assertEqual(result["type"], "models_not_downloaded")
+
+    def test_canary_qwen_engine_loads_through_transcribe_cpp_with_its_display_name(self):
+        FakeModel.instances = []
+        fake_module = types.SimpleNamespace(Model=FakeModel)
+        with (
+            mock.patch.object(qwen3_asr_server.Qwen3ASRServer, "_detect_device", return_value="cpu"),
+            mock.patch.object(
+                qwen3_asr_server.Qwen3ASRServer, "_resolve_model_path", return_value="model.gguf"
+            ),
+            mock.patch.object(qwen3_asr_server.Qwen3ASRServer, "_warmup_inference"),
+            mock.patch.object(qwen3_asr_server, "FireRedVad", return_value=FakeVad([])),
+            mock.patch.dict(sys.modules, {"transcribe_cpp": fake_module}),
+        ):
+            server = qwen3_asr_server.Qwen3ASRServer(engine="canary-qwen-2.5b")
+            result = server.initialize()
+
+        self.assertEqual(server.display_name, "Canary-Qwen 2.5B")
+        self.assertTrue(result["success"])
+        self.assertTrue(result["message"].startswith("Canary-Qwen 2.5B initialized successfully in "))
+        self.assertEqual(FakeModel.instances[0].path, "model.gguf")
+
+    def test_missing_canary_model_names_the_engine_and_file(self):
+        with mock.patch.object(qwen3_asr_server.Qwen3ASRServer, "_resolve_model_path", return_value=None):
+            server = qwen3_asr_server.Qwen3ASRServer(engine="canary-qwen-2.5b")
+            result = server.initialize()
+
+        self.assertFalse(result["success"])
+        self.assertEqual(
+            result["error"],
+            "Canary-Qwen 2.5B Q8 model not downloaded: canary-qwen-2.5b-Q8_0.gguf",
+        )
+        self.assertEqual(result["type"], "models_not_downloaded")
+
+    def test_unknown_engine_is_rejected_by_the_shared_server(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported transcribe.cpp ASR engine: whisper"):
+            qwen3_asr_server.Qwen3ASRServer(engine="whisper")
+
+
 if __name__ == "__main__":
     unittest.main()

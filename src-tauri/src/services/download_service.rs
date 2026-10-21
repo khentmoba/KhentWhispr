@@ -165,9 +165,10 @@ pub async fn run_download(
     // 启动下载脚本（逐行读取 stdout 以转发进度）
     // 模型从 HuggingFace 下载，使用 HF 默认缓存目录
     let engine = paths::read_engine_config();
-    let engine_arg = match engine.as_str() {
-        "qwen3-asr-0.6b" | "confucius4-r2t2" => engine.as_str(),
-        _ => "qwen3-asr-0.6b",
+    let engine_arg = if paths::LOCAL_ASR_ENGINES.contains(&engine.as_str()) {
+        engine.as_str()
+    } else {
+        paths::DEFAULT_ENGINE
     };
 
     let mut cmd = match &runtime {
