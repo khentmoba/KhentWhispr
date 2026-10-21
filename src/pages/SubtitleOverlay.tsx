@@ -308,13 +308,13 @@ export default function SubtitleOverlay() {
   useEffect(() => {
     const applyTheme = () => {
       const stored = readLocalStorage(THEME_STORAGE_KEY);
-      if (stored === "dark") {
-        document.documentElement.setAttribute("data-theme", "dark");
-      } else if (stored === "light") {
+      if (stored === "light") {
         document.documentElement.setAttribute("data-theme", "light");
-      } else {
+      } else if (stored === "system") {
         const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
         document.documentElement.setAttribute("data-theme", prefersDark ? "dark" : "light");
+      } else {
+        document.documentElement.setAttribute("data-theme", "dark");
       }
     };
 

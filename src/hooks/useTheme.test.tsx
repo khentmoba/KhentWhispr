@@ -55,6 +55,24 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
+it("opens in the dark theme when no choice has been stored", () => {
+  mockMedia();
+  const { result } = renderHook(() => useTheme());
+  expect(result.current).toMatchObject({ theme: "dark", isDark: true });
+  expectDOM(true);
+});
+
+it("honours an explicitly stored system choice", () => {
+  const media = mockMedia(false);
+  localStorage.setItem(THEME_STORAGE_KEY, "system");
+  const { result } = renderHook(() => useTheme());
+  expect(result.current).toMatchObject({ theme: "system", isDark: false });
+  expectDOM(false);
+  act(() => media.setSystemDark(true));
+  expect(result.current).toMatchObject({ theme: "system", isDark: true });
+  expectDOM(true);
+});
+
 it("synchronizes all mounted consumers when either selects a theme", () => {
   const media = mockMedia();
   const main = renderHook(() => useTheme());
@@ -137,7 +155,7 @@ it("keeps the latest stored preference when an older storage event arrives after
   expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
 });
 
-it.each(["invalid", null])("uses system mode when a storage event contains %s", (value) => {
+it.each(["invalid", null])("falls back to dark mode when a storage event contains %s", (value) => {
   mockMedia();
   localStorage.setItem(THEME_STORAGE_KEY, "dark");
   const main = renderHook(() => useTheme());
@@ -145,12 +163,12 @@ it.each(["invalid", null])("uses system mode when a storage event contains %s", 
   act(() => receiveStoredTheme(value));
 
   for (const consumer of [main, settings]) {
-    expect(consumer.result.current).toMatchObject({ theme: "system", isDark: false });
+    expect(consumer.result.current).toMatchObject({ theme: "dark", isDark: true });
   }
-  expectDOM(false);
+  expectDOM(true);
 });
 
-it("uses system mode after another window clears storage", () => {
+it("returns to dark mode after another window clears storage", () => {
   const media = mockMedia();
   localStorage.setItem(THEME_STORAGE_KEY, "dark");
   const main = renderHook(() => useTheme());
@@ -160,10 +178,11 @@ it("uses system mode after another window clears storage", () => {
     window.dispatchEvent(new StorageEvent("storage", { key: null, storageArea: localStorage }));
   });
   for (const consumer of [main, settings]) {
-    expect(consumer.result.current).toMatchObject({ theme: "system", isDark: false });
+    expect(consumer.result.current).toMatchObject({ theme: "dark", isDark: true });
   }
-  expectDOM(false);
-  act(() => media.setSystemDark(true));
+  expectDOM(true);
+  // Dark is a manual choice, so an OS change must not move it back to light.
+  act(() => media.setSystemDark(false));
   expectDOM(true);
 });
 
@@ -188,6 +207,7 @@ it("ignores unrelated keys and session storage events", () => {
 
 it("keeps remaining consumers live and removes event effects after the final unmount", () => {
   const media = mockMedia();
+  localStorage.setItem(THEME_STORAGE_KEY, "system");
   const main = renderHook(() => useTheme());
   const settings = renderHook(() => useTheme());
   settings.unmount();
@@ -273,6 +293,7 @@ it.each(["dark", "light"] as const)("keeps manual %s for consumers mounted later
 
 it("changes themes immediately without support and uses one transition when supported, except for reduced motion", () => {
   const media = mockMedia();
+  localStorage.setItem(THEME_STORAGE_KEY, "light");
   const { result } = renderHook(() => useTheme());
   expectDOM(false);
   act(() => result.current.setTheme("dark"));
@@ -297,6 +318,7 @@ it("changes themes immediately without support and uses one transition when supp
 
 it("keeps the latest shared preference when a reversed transition callback arrives late", () => {
   mockMedia();
+  localStorage.setItem(THEME_STORAGE_KEY, "light");
   const main = renderHook(() => useTheme());
   const settings = renderHook(() => useTheme());
   const callbacks: (() => void)[] = [];
