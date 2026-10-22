@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -63,6 +64,25 @@ class FireRedVadPostprocessingTests(unittest.TestCase):
 
 
 class FireRedVadAssetTests(unittest.TestCase):
+    def test_thread_budget_respects_single_core_and_unknown_cpu_count(self):
+        for cores, expected in [(1, 1), (None, 1), (16, 2)]:
+            with self.subTest(cores=cores), mock.patch("firered_vad.os.cpu_count", return_value=cores):
+                vad = FireRedVad()
+                self.assertEqual(vad._session.get_session_options().intra_op_num_threads, expected)
+                self.assertEqual(vad._session.get_session_options().inter_op_num_threads, 1)
+
+    def test_two_threads_preserve_model_probabilities_and_boundaries(self):
+        baseline = FireRedVad(intra_op_num_threads=1)
+        candidate = FireRedVad(intra_op_num_threads=2)
+        rng = np.random.default_rng(42)
+        audio = np.concatenate([
+            np.zeros(16000, dtype=np.float32),
+            rng.standard_normal(32000).astype(np.float32) * 0.1,
+            np.zeros(16000, dtype=np.float32),
+        ])
+        np.testing.assert_array_equal(baseline.probabilities(audio), candidate.probabilities(audio))
+        self.assertEqual(baseline.speech_timestamps(audio), candidate.speech_timestamps(audio))
+
     def test_bundled_model_rejects_one_second_of_silence(self):
         vad = FireRedVad()
         probabilities = vad.probabilities(np.zeros(16_000, dtype=np.float32))

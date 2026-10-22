@@ -75,6 +75,61 @@ class Qwen3ASRServerTests(unittest.TestCase):
         self.gpu_info_patcher = gpu_info_patcher
         self.addCleanup(gpu_info_patcher.stop)
 
+    def test_backend_preferences_are_scoped_to_the_selected_model(self):
+        with (
+            mock.patch.object(qwen3_asr_server.Qwen3ASRServer, "_detect_device", return_value="cuda"),
+            mock.patch.dict(os.environ, {
+                "SPEAK_FLOW_ASR_BACKEND": "cuda",
+                "SPEAK_FLOW_ASR_BACKEND_QWEN3_ASR_1_7B": " Vulkan ",
+            }),
+        ):
+            large = qwen3_asr_server.Qwen3ASRServer(engine="qwen3-asr-1.7b")
+            small = qwen3_asr_server.Qwen3ASRServer(engine="qwen3-asr-0.6b")
+            self.assertEqual(large._preferred_backends(), ["vulkan", "cuda", "cpu"])
+            self.assertEqual(small._preferred_backends(), ["cuda", "vulkan", "cpu"])
+
+    def test_auto_preference_preserves_device_fallbacks(self):
+        for device, expected in [("cuda", ["cuda", "vulkan", "cpu"]), ("cpu", ["auto", "cpu"])]:
+            with (
+                self.subTest(device=device),
+                mock.patch.object(qwen3_asr_server.Qwen3ASRServer, "_detect_device", return_value=device),
+                mock.patch.dict(os.environ, {"SPEAK_FLOW_ASR_BACKEND": "auto"}),
+            ):
+                server = qwen3_asr_server.Qwen3ASRServer(engine="qwen3-asr-1.7b")
+                self.assertEqual(server._preferred_backends(), expected)
+
+    def test_failed_preferred_session_closes_model_before_fallback(self):
+        failed_model = mock.Mock()
+        failed_model.session.side_effect = RuntimeError("session allocation failed")
+        working_model = FakeModel("model.gguf", "vulkan")
+
+        def load_model(_path, backend):
+            if backend == "cuda":
+                return failed_model
+            failed_model.close.assert_called_once()
+            return working_model
+
+        with (
+            mock.patch.object(qwen3_asr_server.Qwen3ASRServer, "_detect_device", return_value="cuda"),
+            mock.patch.dict(os.environ, {"SPEAK_FLOW_ASR_BACKEND_QWEN3_ASR_1_7B": "auto"}),
+            mock.patch.dict(sys.modules, {"transcribe_cpp": types.SimpleNamespace(Model=load_model)}),
+        ):
+            server = qwen3_asr_server.Qwen3ASRServer(engine="qwen3-asr-1.7b")
+            server._load_runtime("model.gguf")
+        self.assertEqual(server.backend, "vulkan")
+        self.assertIs(server.model, working_model)
+        self.assertIs(server.session, working_model.session_instance)
+
+    def test_invalid_backend_preference_does_not_load_a_model(self):
+        with (
+            mock.patch.dict(os.environ, {"SPEAK_FLOW_ASR_BACKEND_QWEN3_ASR_1_7B": "typo"}),
+            mock.patch.dict(sys.modules, {"transcribe_cpp": types.SimpleNamespace(Model=mock.Mock())}),
+        ):
+            server = qwen3_asr_server.Qwen3ASRServer(engine="qwen3-asr-1.7b")
+            with self.assertRaisesRegex(ValueError, "Unsupported ASR backend preference"):
+                server._load_runtime("model.gguf")
+            sys.modules["transcribe_cpp"].Model.assert_not_called()
+
     def test_gpu_metadata_failure_does_not_discard_loaded_runtime(self):
         self.gpu_info_patcher.stop()
         for error in (FileNotFoundError("nvidia-smi"), subprocess.TimeoutExpired("nvidia-smi", 3)):
