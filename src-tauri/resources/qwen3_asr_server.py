@@ -141,18 +141,29 @@ class Qwen3ASRServer(BaseASRServer):
                 pass
             self.model = None
 
+    def _preferred_backends(self):
+        preferred = ["cuda", "vulkan", "cpu"] if self.device == "cuda" else ["auto", "cpu"]
+        suffix = self.engine.upper().replace("-", "_").replace(".", "_")
+        requested = (
+            os.environ.get(f"SPEAK_FLOW_ASR_BACKEND_{suffix}")
+            or os.environ.get("SPEAK_FLOW_ASR_BACKEND", "auto")
+        ).strip().lower()
+        if requested not in ("auto", "cuda", "vulkan", "cpu"):
+            raise ValueError(f"Unsupported ASR backend preference: {requested}")
+        if requested == "auto":
+            return preferred
+        return list(dict.fromkeys([requested, *preferred]))
+
     def _load_runtime(self, model_path):
         import transcribe_cpp
 
-        preferred = ["cuda", "vulkan", "cpu"] if self.device == "cuda" else ["auto", "cpu"]
+        preferred = self._preferred_backends()
         errors = []
         for backend in preferred:
             try:
                 with self.stdout_suppressor.suppress():
-                    model = transcribe_cpp.Model(model_path, backend=backend)
-                    session = model.session(kv_type="f16", n_ctx=QWEN3_ASR_N_CTX)
-                self.model = model
-                self.session = session
+                    self.model = transcribe_cpp.Model(model_path, backend=backend)
+                    self.session = self.model.session(kv_type="f16", n_ctx=QWEN3_ASR_N_CTX)
                 self.backend = backend
                 self.device = "cuda" if backend == "cuda" else backend
                 return

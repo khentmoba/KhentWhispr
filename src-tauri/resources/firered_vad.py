@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +44,7 @@ class FireRedVad:
         model_path: str | Path | None = None,
         cmvn_path: str | Path | None = None,
         options: FireRedVadOptions | None = None,
+        intra_op_num_threads: int | None = None,
     ):
         import kaldi_native_fbank as knf
         import onnxruntime as ort
@@ -75,7 +77,10 @@ class FireRedVad:
 
         session_options = ort.SessionOptions()
         session_options.inter_op_num_threads = 1
-        session_options.intra_op_num_threads = 1
+        session_options.intra_op_num_threads = (
+            min(2, os.cpu_count() or 1)
+            if intra_op_num_threads is None else intra_op_num_threads
+        )
         session_options.enable_cpu_mem_arena = False
         session_options.log_severity_level = 4
         self._session = ort.InferenceSession(
