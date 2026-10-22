@@ -109,6 +109,29 @@ pub struct R2T2Config {
     pub language: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextSources {
+    pub application: bool,
+    pub selected_text: bool,
+    pub clipboard: bool,
+}
+
+impl Default for ContextSources {
+    fn default() -> Self {
+        Self {
+            application: true,
+            selected_text: true,
+            clipboard: true,
+        }
+    }
+}
+
+impl ContextSources {
+    pub fn enabled(&self) -> bool {
+        self.application || self.selected_text || self.clipboard
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserProfile {
     /// Local learning from edits in the field receiving automatic dictation; enabled by default.

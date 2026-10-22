@@ -1,6 +1,6 @@
 /* ============================================================
    SpeakFlow Design System
-   Focused Workspace — electric aqua and midnight navy surfaces, native type, and clear state,
+   Black-first Workspace — neutral charcoal surfaces and restrained blue, native type, and clear state,
    comfortable reading, and restrained motion.
    ============================================================ */
 
@@ -8,32 +8,32 @@
 :root {
   color-scheme: light;
   /* Surfaces — neutral layers keep long settings sessions visually quiet */
-  --color-bg-primary: #F8FAFC;
-  --color-bg-secondary: #F1F5F9;
-  --color-bg-tertiary: #E2E8F0;
+  --color-bg-primary: #F7F8FA;
+  --color-bg-secondary: #EEEFF2;
+  --color-bg-tertiary: #E4E6EA;
   --color-bg-elevated: #FFFFFF;
   --color-bg-overlay: rgba(248, 250, 252, 0.94);
-  --color-bg-sunken: #E2E8F0;
+  --color-bg-sunken: #E4E6EA;
 
   /* Text — compact product hierarchy with WCAG AA contrast */
-  --color-text-primary: #0F172A;
-  --color-text-secondary: #475569;
-  --color-text-tertiary: #64748B;
+  --color-text-primary: #191C21;
+  --color-text-secondary: #515863;
+  --color-text-tertiary: #626976;
   --color-text-inverse: #FFFFFF;
   --color-text-brand: var(--color-accent);
 
   /* Brand signal — recording, polish, and primary actions */
-  --color-accent: #0284C7;
-  --color-accent-hover: #0369A1;
-  --color-accent-active: #075985;
-  --color-accent-subtle: rgba(2, 132, 199, 0.10);
-  --color-accent-muted: rgba(2, 132, 199, 0.05);
-  --color-accent-rgb: 2, 132, 199;
+  --color-accent: #315EAB;
+  --color-accent-hover: #254B8C;
+  --color-accent-active: #1D3C72;
+  --color-accent-subtle: rgba(49, 94, 171, 0.10);
+  --color-accent-muted: rgba(49, 94, 171, 0.05);
+  --color-accent-rgb: 49, 94, 171;
 
   /* Borders */
   --color-border: #CBD5E1;
   --color-border-subtle: rgba(0, 0, 0, 0.07);
-  --color-border-accent: rgba(2, 132, 199, 0.30);
+  --color-border-accent: rgba(49, 94, 171, 0.30);
 
   /* Status */
   --color-success: #16A34A;
@@ -42,7 +42,7 @@
   --color-error-bg: rgba(191, 77, 67, 0.08);
   --color-warning: #D97706;
   --color-warning-bg: rgba(212, 137, 10, 0.08);
-  --color-info: #0284C7;
+  --color-info: #315EAB;
   --color-info-bg: rgba(44, 111, 187, 0.08);
 
   /* Semantic — assistant remains distinct from polish */
@@ -59,7 +59,7 @@
   --shadow-glow: 0 0 0 3px rgba(var(--color-accent-rgb), 0.15);
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
   --shadow-card-hover: 0 4px 16px rgba(23, 32, 48, 0.10), 0 1px 3px rgba(23, 32, 48, 0.05);
-  --glow-acoustic: 0 0 20px rgba(2, 132, 199, 0.22);
+  --glow-acoustic: 0 0 20px rgba(49, 94, 171, 0.22);
   --shadow-record-ring: 0 0 0 4px rgba(var(--color-accent-rgb), 0.20);
 
   /* Radii */
@@ -138,33 +138,33 @@
   --bg-gradient: var(--color-bg-primary);
 }
 
-/* ---------- Dark theme — deep midnight navy, matching the official identity ---------- */
+/* ---------- Dark theme — neutral black with a restrained blue signal ---------- */
 [data-theme="dark"],
 .dark {
   color-scheme: dark;
-  --color-bg-primary: #081124;
-  --color-bg-secondary: #0E1935;
-  --color-bg-tertiary: #162447;
-  --color-bg-elevated: #111D3B;
-  --color-bg-overlay: rgba(8, 17, 36, 0.94);
-  --color-bg-sunken: #050B18;
+  --color-bg-primary: #101112;
+  --color-bg-secondary: #17191C;
+  --color-bg-tertiary: #222529;
+  --color-bg-elevated: #1B1D20;
+  --color-bg-overlay: rgba(16, 17, 18, 0.96);
+  --color-bg-sunken: #0B0C0D;
 
-  --color-text-primary: #F0F6FC;
-  --color-text-secondary: #94A3B8;
-  --color-text-tertiary: #64748B;
-  --color-text-inverse: #081124;
+  --color-text-primary: #F3F4F5;
+  --color-text-secondary: #A4A8B0;
+  --color-text-tertiary: #858B95;
+  --color-text-inverse: #101112;
   --color-text-brand: var(--color-accent);
 
-  --color-accent: #00D2F7;
-  --color-accent-hover: #38E1FF;
-  --color-accent-active: #00B4D8;
-  --color-accent-subtle: rgba(0, 210, 247, 0.14);
-  --color-accent-muted: rgba(0, 210, 247, 0.07);
-  --color-accent-rgb: 0, 210, 247;
+  --color-accent: #79A9FF;
+  --color-accent-hover: #9BBFFF;
+  --color-accent-active: #6395ED;
+  --color-accent-subtle: rgba(121, 169, 255, 0.14);
+  --color-accent-muted: rgba(121, 169, 255, 0.07);
+  --color-accent-rgb: 121, 169, 255;
 
-  --color-border: #1E2D4A;
+  --color-border: #34383E;
   --color-border-subtle: rgba(255, 255, 255, 0.06);
-  --color-border-accent: rgba(0, 210, 247, 0.30);
+  --color-border-accent: rgba(121, 169, 255, 0.30);
 
   --color-success: #22C55E;
   --color-success-bg: rgba(34, 197, 94, 0.10);
@@ -187,7 +187,7 @@
   --shadow-glow: 0 0 0 3px rgba(var(--color-accent-rgb), 0.20);
   --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(255, 255, 255, 0.04);
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.40), 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --glow-acoustic: 0 0 28px rgba(0, 210, 247, 0.35);
+  --glow-acoustic: 0 0 28px rgba(121, 169, 255, 0.35);
   --shadow-record-ring: 0 0 0 4px rgba(var(--color-accent-rgb), 0.12);
 
   --bg-gradient: var(--color-bg-primary);
@@ -867,7 +867,7 @@ textarea,
 
 .title-bar-logo {
   flex-shrink: 0;
-  filter: drop-shadow(0 1px 3px rgba(0, 210, 247, 0.35));
+  filter: drop-shadow(0 1px 3px rgba(121, 169, 255, 0.35));
   transition: transform var(--dur-2) var(--ease-out-expo);
 }
 
@@ -1126,4 +1126,4 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 svg.lucide { stroke-width: 1.5; }
 
 ::view-transition-old(root),
-::view-transition-new(root) { animation-duration: var(--dur-3); }
+::view-transition-new(root) { animation-duration: var(--dur-3); }

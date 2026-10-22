@@ -199,6 +199,8 @@ fn resolve_recording_app_profile(
 
 pub async fn finalize_recording(app_handle: tauri::AppHandle, session: RecordingSession) {
     let RecordingSession {
+        context_capture,
+        context_sources,
         session_id,
         subtitle_show_gen,
         trigger,
@@ -214,6 +216,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
         ..
     } = session;
     let finalize_start = Instant::now();
+    let state = app_handle.state::<AppState>();
 
     if let Some(h) = audio_thread {
         let _ = tokio::task::spawn_blocking(move || {
@@ -222,6 +225,26 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
         .await;
     }
     // 等待 interim 任务自然结束；超时则 abort 以释放 funasr_process 锁
+    let mut reference_context = match context_capture {
+        Some(mut task) => match tokio::time::timeout(Duration::from_millis(300), &mut task).await {
+            Ok(Ok(context)) => context,
+            _ => {
+                task.abort();
+                crate::services::context_awareness::CapturedContext {
+                    sources: context_sources.clone(),
+                    ..Default::default()
+                }
+            }
+        },
+        None => crate::services::context_awareness::CapturedContext {
+            sources: context_sources,
+            ..Default::default()
+        },
+    };
+    if state.recording.session_counter.load(Ordering::Acquire) == session_id {
+        reference_context.refresh_clipboard(&app_handle);
+    }
+
     if let Some(t) = interim_task {
         let abort_handle = t.abort_handle();
         if tokio::time::timeout(std::time::Duration::from_secs(5), t)
@@ -279,7 +302,6 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
         }
     };
 
-    let state = app_handle.state::<AppState>();
     let app_profile = state
         .with_profile(|profile| resolve_recording_app_profile(profile, foreground_app.as_ref()));
     if foreground_app
@@ -292,9 +314,16 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
     let history_enabled = app_profile
         .history_enabled
         .unwrap_or(history_settings.enabled);
-    let app_context = foreground_app.as_ref().and_then(|app| {
+    let mut app_context = foreground_app.as_ref().and_then(|app| {
         crate::utils::foreground::prompt_context_from_parts(&app.process_name, &app.window_title)
     });
+    let references =
+        reference_context.prompt_sections(&crate::state::user_profile::ContextSources::default());
+    if !references.is_empty() {
+        app_context
+            .get_or_insert_with(String::new)
+            .push_str(&format!("\n{references}"));
+    }
     let history_engine = paths::read_engine_config();
 
     let final_count = samples.lock().len();
@@ -470,6 +499,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
             &text,
             &app_handle,
             session_id,
+            &references,
         )
         .await
         {
@@ -777,7 +807,7 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
             session_id,
             ai_polish_service::PolishOverrides {
                 ai_polish_enabled: Some(ai_polish_enabled),
-                allow_jev_gate: true,
+                allow_jev_gate: references.is_empty(),
                 translation_target: translation_override,
                 custom_prompt: app_profile.custom_prompt.clone(),
                 screen_context_enabled: Some(allow_screen_context),
@@ -861,6 +891,9 @@ pub async fn finalize_recording(app_handle: tauri::AppHandle, session: Recording
 }
 
 pub async fn discard_recording(session: RecordingSession) {
+    if let Some(task) = session.context_capture {
+        task.abort();
+    }
     crate::services::audio_service::restore_audio();
     // 中止本会话持有的 grab handle（spawn_blocking 不可抢占，但 abort 会让
     // JoinHandle 提前 detach，结果被丢弃，不会影响后续会话）。

@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
-import { ArrowUpRight, FileText, Keyboard, Minus, Settings, X } from "lucide-react";
+import { ArrowUpRight, AudioLines, FileText, Keyboard, Minus, Settings, X } from "lucide-react";
 import { toast } from "sonner";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRecordingContext } from "@/contexts/RecordingContext";
@@ -13,7 +13,7 @@ import { useAsrEngineSettings } from "@/hooks/useAsrEngineSettings";
 import { engineOptions, engineOptionLabel } from "@/lib/asrEngineOptions";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 import { useTranslation } from "react-i18next";
-import { PADDING, ONBOARDING_DISMISSED_KEY, RECORDING_MODE_KEY } from "@/lib/constants";
+import { ONBOARDING_DISMISSED_KEY, RECORDING_MODE_KEY } from "@/lib/constants";
 import { readLocalStorage, writeLocalStorage } from "@/lib/storage";
 import { prefersReducedMotion } from "@/lib/motion";
 
@@ -165,20 +165,55 @@ export default function MainPage({ onNavigate, animClass = "" }: {
       <div className={`${pageContentClass} dictation-content`}>
         <header className="workspace-heading">
           <div>
-            <h1>{t("main.heroTitle")}</h1>
-            <p>{t("main.heroSubtitle")}</p>
+            <h1>{t("main.dashboardTitle")}</h1>
+            <p>{t("main.dashboardSubtitle")}</p>
           </div>
           <button className="workspace-settings-link" onClick={() => flushPendingEditAndNavigate("settings")}>
             <Settings size={15} aria-hidden="true" /> {t("main.configure")}
           </button>
         </header>
-        <div className="dictation-grid">
+        <div className="dictation-dashboard">
+
+        {(recordingError || modelError) && !errorDismissed && (
+          <div className="error-section animate-shake">
+            <div className="error-banner">
+              <div className="error-banner-inner">
+                <p className="settings-error" style={{ lineHeight: 1.6, flex: 1 }}>{recordingError || modelError}</p>
+                <button onClick={() => setErrorDismissed(true)} aria-label={t("common.close")} className="error-dismiss-btn">
+                  <X size={12} />
+                </button>
+              </div>
+              {stage === "error" && <button onClick={retryModel} className="error-retry-link">{t("common.retry")}</button>}
+            </div>
+          </div>
+        )}
+
         <section className="recording-panel" data-recording={isRecording || isStarting} aria-label={t("main.recordingControlsLabel")}>
+          <div className="recording-dock-action">
+            <RecordingButton
+              isStarting={isStarting}
+              isRecording={isRecording}
+              isProcessing={isProcessing}
+              isReady={isReady}
+              onToggle={handleToggleRecording}
+            />
+            <div className="recording-dock-copy">
         <div className="recording-panel-heading">
-          <h2>{isRecording ? t("main.statusListening") : isStarting ? t("main.statusConnecting") : isProcessing ? t("main.statusProcessing") : isReady ? t("main.statusReady") : stage === "error" ? t("main.statusError") : t("main.statusPreparing")}</h2>
+          <h2>{isRecording ? t("main.statusListening") : isStarting ? t("main.statusConnecting") : isProcessing ? t("main.statusProcessing") : isReady ? t("main.dashboardReady") : stage === "error" ? t("main.statusError") : t("main.statusPreparing")}</h2>
           <p>{isRecording ? t("main.hintListening") : isReady ? t("main.hintReady") : t("main.hintDefault")}</p>
-        </div>
-        <div className="recording-zone">
+        </div>          {isReady && !recordingError && !modelError && (
+            <div className="tactile-hotkey-bar" aria-hidden="true">
+              <span className={`tactile-hotkey-badge${isRecording ? " is-active" : ""}`}>
+                <kbd className="tactile-key">{hotkeyDisplay || "F2"}</kbd>
+                <span className="tactile-hotkey-label">
+                  {isToggleMode ? t("main.hotkeyHintToggle") : t("main.hotkeyHintHold")}
+                </span>
+              </span>
+            </div>
+          )}
+            </div>
+          </div>
+          <div className="recording-dock-engine">
           <div className="dictation-model-selector">
             <label htmlFor="dictation-model">{t("main.modelLabel")}</label>
             <select
@@ -208,6 +243,7 @@ export default function MainPage({ onNavigate, animClass = "" }: {
               </>
             )}
           </div>
+          <div className="recording-dock-status">
           <StatusIndicator
             stage={stage}
             isReady={isReady}
@@ -222,59 +258,26 @@ export default function MainPage({ onNavigate, animClass = "" }: {
             downloadModels={triggerDownload}
             cancelDownload={cancelDownload}
           >
-            <RecordingButton
-              isStarting={isStarting}
-              isRecording={isRecording}
-              isProcessing={isProcessing}
-              isReady={isReady}
-              onToggle={handleToggleRecording}
-            />
+
           </StatusIndicator>
-
-          {/* Tactile Hotkey Bar */}
-          {isReady && !recordingError && !modelError && (
-            <div className="tactile-hotkey-bar" aria-hidden="true">
-              <span className={`tactile-hotkey-badge${isRecording ? " is-active" : ""}`}>
-                <kbd className="tactile-key">{hotkeyDisplay || "F2"}</kbd>
-                <span className="tactile-hotkey-label">
-                  {isToggleMode ? t("main.hotkeyHintToggle") : t("main.hotkeyHintHold")}
-                </span>
-              </span>
-            </div>
-          )}
-        </div>
-        <div className="recording-panel-footer">
-          <Keyboard size={16} aria-hidden="true" />
-          <p>{t("main.footerActiveApp")}<br /><span>{t("main.footerNoSwitch")}</span></p>
-        </div>
-        </section>
-
-        {/* Error */}
-        {(recordingError || modelError) && !errorDismissed && (
-          <div className="error-section animate-shake" style={{ margin: `0 ${PADDING}px 8px` }}>
-            <div className="error-banner">
-              <div className="error-banner-inner">
-                <p className="settings-error" style={{ lineHeight: 1.6, flex: 1 }}>{recordingError || modelError}</p>
-                <button onClick={() => setErrorDismissed(true)} aria-label={t("common.close")} className="error-dismiss-btn">
-                  <X size={12} />
-                </button>
-              </div>
-              {stage === "error" && <button onClick={retryModel} className="error-retry-link">{t("common.retry")}</button>}
-            </div>
           </div>
-        )}
-
+          </div>
+        </section>
+        <div className="dashboard-grid">
         {/* Results */}
         <section ref={resultsRef} className="results-area" aria-label={t("main.workspaceLabel")}>
           <div className="transcript-heading">
-            <h2>{t("main.transcriptTitle")}</h2>
-            <button onClick={() => flushPendingEditAndNavigate("history")}>{t("historyPage.title")} <ArrowUpRight size={14} aria-hidden="true" /></button>
+            <h2><FileText size={16} aria-hidden="true" />{t("main.recentDictations")}</h2>
+            <div className="studio-toolbar-actions">
+            <button onClick={() => flushPendingEditAndNavigate("history")}>{t("main.viewHistory")} <ArrowUpRight size={14} aria-hidden="true" /></button>
+            </div>
           </div>
-          {!transcriptionResult && !isProcessing && (
+          {!transcriptionResult && !isProcessing && history.length === 0 && (
             <div className="transcript-empty">
-              <FileText size={32} strokeWidth={1.25} aria-hidden="true" />
-              <h3>{t("main.emptyTitle")}</h3>
-              <p>{t("main.emptySubtitle")}</p>
+              <div className="studio-empty-mark"><AudioLines size={28} strokeWidth={1.3} aria-hidden="true" /></div>
+              <h3>{t("main.dashboardEmptyTitle")}</h3>
+              <p>{t("main.dashboardEmptySubtitle")}</p>
+              <div className="studio-shortcut"><kbd>{hotkeyDisplay || "F2"}</kbd><span>{isToggleMode ? t("main.studioToggleHint") : t("main.studioHoldHint")}</span></div>
             </div>
           )}
           {polishAuditWarning && (
@@ -299,11 +302,24 @@ export default function MainPage({ onNavigate, animClass = "" }: {
             timing={timing}
           />
           <TranscriptionHistory
-            history={history}
+            history={history.slice(0, 5)}
             currentResult={transcriptionResult}
             copiedId={copiedId}
             onCopy={handleCopy}
           />
+
+        </section>
+
+        <aside className="dashboard-setup" aria-label={t("main.yourSetup")}>
+          <h2><Settings size={16} aria-hidden="true" />{t("main.yourSetup")}</h2>
+          <dl className="setup-details">
+            <div><dt>{t("main.modelLabel")}</dt><dd>{engineLabel(engine)}</dd></div>
+            <div><dt>{t("main.shortcutLabel")}</dt><dd><kbd>{hotkeyDisplay || "F2"}</kbd><span>{isToggleMode ? t("main.studioToggleHint") : t("main.studioHoldHint")}</span></dd></div>
+          </dl>
+          <button className="workspace-settings-link" onClick={() => flushPendingEditAndNavigate("settings")}>
+            {t("main.configure")}<ArrowUpRight size={14} aria-hidden="true" />
+          </button>
+          <p className="setup-app-hint"><Keyboard size={15} aria-hidden="true" />{t("main.footerActiveApp")} {t("main.footerNoSwitch")}</p>
           {/* First-use onboarding hint */}
           {!onboardingDismissed && !transcriptionResult && !isProcessing && isReady && history.length === 0 && (
             <div className="onboarding-hero-card">
@@ -338,7 +354,8 @@ export default function MainPage({ onNavigate, animClass = "" }: {
                 </div>
             </div>
           )}
-        </section>
+        </aside>
+        </div>
         </div>
       </div>
     </div>

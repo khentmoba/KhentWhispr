@@ -195,6 +195,7 @@ export default function SettingsPage({
     container.scrollTo({ top, behavior: "smooth" });
   }, []);
 
+
   // Auto-scroll the nav bar to keep active tab visible + measure indicator position
   useEffect(() => {
     const navEl = navScrollRef.current;
@@ -202,8 +203,12 @@ export default function SettingsPage({
     const updateIndicator = () => {
       const activeBtn = navEl.querySelector(`[data-nav-tab="${activeNavSection}"]`) as HTMLElement | null;
       if (!activeBtn) return;
-      const left = activeBtn.offsetLeft - navEl.offsetWidth / 2 + activeBtn.offsetWidth / 2;
-      navEl.scrollTo({ left, behavior: prefersReducedMotion() ? "instant" : "smooth" });
+      const behavior = prefersReducedMotion() ? "instant" : "smooth";
+      if (window.getComputedStyle(navEl).flexDirection === "column") {
+        navEl.scrollTo({ top: activeBtn.offsetTop - navEl.clientHeight / 2 + activeBtn.clientHeight / 2, behavior });
+      } else {
+        navEl.scrollTo({ left: activeBtn.offsetLeft - navEl.offsetWidth / 2 + activeBtn.offsetWidth / 2, behavior });
+      }
       setNavIndicatorStyle({ left: activeBtn.offsetLeft, width: activeBtn.offsetWidth });
     };
     updateIndicator();
@@ -395,7 +400,7 @@ export default function SettingsPage({
   }, []);
 
   return (
-    <div className="page-root">
+    <div className="page-root settings-page">
 
       <TitleBar
         title={t("settings.title")}
@@ -416,7 +421,7 @@ export default function SettingsPage({
         }
       />
 
-      <div className={pageContentClass} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
+      <div className={`${pageContentClass} settings-layout`}>
         {!settingsReady ? (
           <div className="settings-content settings-load-state" role={profileLoadError ? "alert" : "status"}>
             {profileLoadError ? (
@@ -432,7 +437,7 @@ export default function SettingsPage({
         ) : (
           <>
         {/* Settings nav */}
-        <nav className="settings-nav" ref={navScrollRef}>
+        <nav className="settings-nav" aria-label={t("settings.title")} ref={navScrollRef}>
           {navIndicatorStyle && (
             <div
               className="settings-nav-indicator"
@@ -444,6 +449,7 @@ export default function SettingsPage({
               key={id}
               type="button"
               className="settings-nav-tab"
+              aria-current={activeNavSection === id ? "location" : undefined}
               data-active={activeNavSection === id}
               data-nav-tab={id}
               onClick={() => handleNavClick(id)}

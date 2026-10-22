@@ -67,9 +67,9 @@ export default function RecordingButton({
         style={{
           border: "1px solid",
           borderColor: isRecording ? "transparent" : "var(--color-border)",
-          background: isRecording ? "var(--color-accent)" : isProcessing ? "var(--color-bg-tertiary)" : "var(--color-bg-elevated)",
-          color: isRecording ? "var(--color-text-inverse)" : isProcessing ? "var(--color-text-tertiary)" : "var(--color-accent)",
-          boxShadow: isRecording ? "var(--shadow-record-ring), var(--shadow-lg)" : "var(--shadow-md)",
+          background: isRecording ? "var(--color-accent)" : isProcessing ? "var(--color-bg-tertiary)" : isReady ? "var(--color-accent)" : "var(--color-bg-elevated)",
+          color: isRecording ? "var(--color-text-inverse)" : isProcessing ? "var(--color-text-tertiary)" : isReady ? "var(--color-text-inverse)" : "var(--color-text-tertiary)",
+          boxShadow: "none",
           cursor: !isReady ? "not-allowed" : isProcessing ? "wait" : "pointer",
           opacity: !isReady ? 0.4 : 1,
         }}

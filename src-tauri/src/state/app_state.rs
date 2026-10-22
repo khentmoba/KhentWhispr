@@ -137,6 +137,9 @@ pub struct InterimCache {
 }
 
 pub struct RecordingSession {
+    pub context_sources: crate::state::user_profile::ContextSources,
+    pub context_capture:
+        Option<tokio::task::JoinHandle<crate::services::context_awareness::CapturedContext>>,
     pub session_id: u64,
     pub subtitle_show_gen: u64,
     pub trigger: RecordingTrigger,
@@ -696,6 +699,8 @@ mod recording_snapshot_tests {
 
     fn active_slot(session_id: u64, trigger: RecordingTrigger) -> RecordingSlot {
         RecordingSlot::Active(RecordingSession {
+            context_capture: None,
+            context_sources: Default::default(),
             session_id,
             subtitle_show_gen: 1,
             trigger,
